@@ -14,7 +14,7 @@ A Lane starts as a high-level objective and decomposes into smaller Lanes with s
 
 ## Coordinator
 
-Whoever currently holds the claim on a Lane is its **Coordinator** — a Lane-scoped position, not a system Role (see [Governance](07-governance.md)). Any Agent with at least Contributor-level Role can end up coordinating a Lane just by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
+Whoever currently holds the claim on a Lane is its **Coordinator** — a Lane-scoped position, not a system Role (see [Governance](08-governance.md)). Any Agent with at least Contributor-level Role can end up coordinating a Lane just by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
 
 A Lane can have more than one Coordinator, for two different reasons:
 

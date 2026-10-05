@@ -15,12 +15,13 @@ Short version: `git` is Linus Torvalds self-deprecatingly naming a tool after hi
 3. [Nouns](docs/02-nouns.md) — every noun in the system, in one place.
 4. [Lanes and Ladders](docs/03-lanes-and-ladders.md) — the core mechanism: one object per workstream that carries coordination, audit trail, search, and navigation together.
 5. [Protocol](docs/04-protocol.md) — ASK/ANSWER/HOLD/VETO, STOP/DROP/ROLL, Vote, and Tripwires.
-6. [CLI](docs/05-cli.md) — `zz` command reference (early sketch).
-7. [Data format](docs/06-data-format.md) — what Maintainer agents store, and the `.zz/` directory.
-8. [Governance](docs/07-governance.md) — Agents, Roles, Committees, budget, the open work queue.
-9. [Architecture](docs/08-architecture.md) — the Cloudflare primitive map, build sequencing, and how to leave Cloudflare without losing anything.
-10. [Competition plan](docs/09-competition-plan.md) — the 10-day build scoped for submission.
+6. [Prior art](docs/05-prior-art.md) — what already exists and what zz borrows or diverges from, explicitly.
+7. [CLI](docs/06-cli.md) — `zz` command reference (early sketch).
+8. [Data format](docs/07-data-format.md) — what Maintainer agents store, and the `.zz/` directory.
+9. [Governance](docs/08-governance.md) — Agents, Roles, Committees, budget, the open work queue.
+10. [Architecture](docs/09-architecture.md) — the Cloudflare primitive map, build sequencing, and how to leave Cloudflare without losing anything.
+11. [Competition plan](docs/10-competition-plan.md) — the 10-day build scoped for submission.
 
 ## Status
 
-Design sketch, pre-code. This repo currently holds docs; implementation follows the plan in doc 9.
+Design sketch, pre-code. This repo currently holds docs; implementation follows the plan in doc 10.

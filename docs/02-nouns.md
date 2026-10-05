@@ -4,13 +4,13 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 ## Who acts
 
-**Agent** — an authenticatable identity, human or synthetic. One noun for both: there's no capability a synthetic Agent has that a human Agent couldn't exercise too, just slower. Elaborated in [Governance](07-governance.md).
+**Agent** — an authenticatable identity, human or synthetic. One noun for both: there's no capability a synthetic Agent has that a human Agent couldn't exercise too, just slower. Elaborated in [Governance](08-governance.md).
 
-**Role** — a collection of permissions *and* operational expectations, granted to an Agent on a Repo: **Owner**, **Maintainer**, **Committer**, **Contributor**, **Reader**. The coarse capability class — what kinds of things an Agent can ask for. [Governance](07-governance.md).
+**Role** — a collection of permissions *and* operational expectations, granted to an Agent on a Repo: **Owner**, **Maintainer**, **Committer**, **Contributor**, **Reader**. The coarse capability class — what kinds of things an Agent can ask for. [Governance](08-governance.md).
 
-**Committee** — not an individual Role but a body: the set of Agents (Maintainers, by default) who jointly govern a Repo that opts into collective governance. [Governance](07-governance.md).
+**Committee** — not an individual Role but a body: the set of Agents (Maintainers, by default) who jointly govern a Repo that opts into collective governance. [Governance](08-governance.md).
 
-**Auth Token** — a scoped credential an Agent authenticates with: a Repo, a permission level, an expiry. [Data format](06-data-format.md).
+**Auth Token** — a scoped credential an Agent authenticates with: a Repo, a permission level, an expiry. [Data format](07-data-format.md).
 
 ## Where work lives
 
@@ -36,7 +36,7 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 **Ladder** — a Lane's standing, continuously-updating summary: the decomposition tree itself, each rung regenerating whenever a state transition lands in the Lane's log. Unlike `git log`/`git blame`, which are derived on demand, a Ladder already exists while work is in progress. [Lanes and Ladders](03-lanes-and-ladders.md#ladder).
 
-**Decision** — the append-only record of why one commit merged: checks run, read/write sets, the merge grant that authorized it. System-written, read-only. [Data format](06-data-format.md).
+**Decision** — the append-only record of why one commit merged: checks run, read/write sets, the merge grant that authorized it. System-written, read-only. [Data format](07-data-format.md).
 
 ## Deciding things
 
@@ -54,7 +54,7 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 ## Rules and safety
 
-**Policy** — an Owner's governance configuration for a Repo: budget, review requirements, escalation rules, which governance model (`single_maintainer` or `committee`) applies. [Data format](06-data-format.md).
+**Policy** — an Owner's governance configuration for a Repo: budget, review requirements, escalation rules, which governance model (`single_maintainer` or `committee`) applies. [Data format](07-data-format.md).
 
 **Tripwire** — a standing, declarative condition that forces the incident runbook or a review escalation regardless of what OCC's fast path would otherwise allow. [Protocol](04-protocol.md#tripwires).
 

@@ -35,7 +35,7 @@ Pause a Lane or a claim. Reversible, low severity, invokable by the Agent workin
 
 ## VETO
 
-A hard rejection of one specific proposed change — a Coordinator's or Committee's decision, not a pause. Used for genuine design or priority disagreements, after negotiating toward a generalized solution has failed or isn't warranted (see [Governance](07-governance.md)). A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying differently.
+A hard rejection of one specific proposed change — a Coordinator's or Committee's decision, not a pause. Used for genuine design or priority disagreements, after negotiating toward a generalized solution has failed or isn't warranted (see [Governance](08-governance.md)). A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying differently.
 
 ## Lazy consensus
 
@@ -43,7 +43,7 @@ The default resolution mechanism, not a new noun — a timing rule on VETO. An A
 
 ## Vote
 
-For decisions lazy consensus isn't enough for — Role grants above Contributor, Policy changes, Owner succession — a Committee (see [Governance](07-governance.md)) runs a formal **Vote**. Ballots are ASF-style: `+1` / `+0` / `-0` / `-1`. The threshold depends on what's decided: lazy majority for routine Committee business, a stricter majority for Role grants, consensus (no `-1` at all) for Owner succession. A closed Vote resolves into a Decision, logged exactly like a merge.
+For decisions lazy consensus isn't enough for — Role grants above Contributor, Policy changes, Owner succession — a Committee (see [Governance](08-governance.md)) runs a formal **Vote**. Ballots are ASF-style: `+1` / `+0` / `-0` / `-1`. The threshold depends on what's decided: lazy majority for routine Committee business, a stricter majority for Role grants, consensus (no `-1` at all) for Owner succession. A closed Vote resolves into a Decision, logged exactly like a merge.
 
 This exists specifically so that authority only ever comes from an explicit grant. The real incident this project is named after shows the failure mode without it: no formal voting occurred, and when the nominal "owner" of a shared resource went quiet, one agent (identified only by its task ID) ended up issuing roughly 10% of all coordination messages and others just started deferring to it — an unaccountable leader that emerged from activity volume, not from any grant. A Tripwire watching for that exact pattern (one Agent originating an outsized share of ASKs/ANSWERs with no corresponding Role) is a sensible default, not a hypothetical.
 
@@ -56,6 +56,8 @@ This exists specifically so that authority only ever comes from an explicit gran
 5. The Coordinator's ANSWER is what actually issues the **merge grant** — single-use, scoped to that Agent and that Changeset, consumed the moment it's pushed. Even when Policy pre-authorizes the fast path and the ANSWER is effectively instant, this ASK/ANSWER pair always happens; it's never bypassed, which is what keeps the Coordinator the accountable party for everything that merges.
 
 A VETO at step 3 sends the Changeset back with a `change_request` — more budget, a revised plan, specific revisions — and the cycle repeats from step 1.
+
+Steps 2–3 can run instantly instead of waiting on a human when the Changeset's read/write set — computed against the dependency graph, independently verified from the actual diff rather than trusting what's declared — doesn't overlap anything else in flight. This is optimistic concurrency control: proceed without waiting, because the absence of mechanical conflict is provable in advance. It catches overlapping symbols, not behavioral incompatibility between disjoint changes — see [Prior art](05-prior-art.md) for where that fast path comes from and what it doesn't cover.
 
 ## Incident response: the runbook
 
@@ -89,4 +91,4 @@ A whistleblow feeds the reported party's credit and can itself trigger a Tripwir
 
 ## `zz top` / `zz ps`
 
-Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](05-cli.md).
+Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](06-cli.md).

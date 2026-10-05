@@ -1,6 +1,6 @@
 # Data format
 
-Two layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), and a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`). Nothing in the DO layer should be the only copy of anything that matters — see [Architecture](08-architecture.md) on portability.
+Two layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), and a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`). Nothing in the DO layer should be the only copy of anything that matters — see [Architecture](09-architecture.md) on portability.
 
 ## Why `.zz/` and not git notes
 
