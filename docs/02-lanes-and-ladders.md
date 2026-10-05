@@ -1,6 +1,6 @@
 # Lanes and Ladders
 
-A **Lane** is a workstream: a named, scoped objective with a status and a history. "Add OAuth provider support," "fix CVE-2026-XXXX," "migrate off the old client API" are all Lanes. It's the one concrete object this design is built from.
+A **Lane** is four familiar things combined into one object: a chat room (the ASK/ANSWER/VETO threads), a work queue (open Lanes are work offers; Claims track who's working what), a feature branch (its actual git representation), and an issue with all of its PRs (the objective, plus the Changesets produced toward it). "Add OAuth provider support," "fix CVE-2026-XXXX," "migrate off the old client API" are all Lanes. It's the one concrete object this design is built from, and the decision log tying those four things together is what everything else — audit trail, search index, Ladder — is built on top of.
 
 ## Identity
 
@@ -35,7 +35,9 @@ A cascade is just a Lane whose `trigger` is `dependency_cascade` instead of `man
 
 ## Ladder
 
-A Lane's **Ladder** is its own summary plus its children's summaries, rolled up recursively — the rungs are literally the decomposition tree, not an abstract zoom level. Climbing moves toward the root Lane's summary; descending moves toward a specific child, down to the exact commits a summary was built from. Every rung must be able to point back to the sources it summarizes — never lose recall for precision.
+`git log` and `git blame` are derived — computed on demand from raw commits, and someone (human or model) has to do the interpretive work fresh every time. A **Ladder** is standing instead: already-interpreted, continuously, from the beginning of the Lane's work, not reconstructed after the fact. Asking "what's going on in this Lane" at any point mid-work gets a summary that already exists, not a pile of raw ASK/ANSWER/VETO events someone has to re-read and make sense of. It's the oldest OSS practice there is — the changelog — generalized to every level of the tree and generated continuously instead of curated once at release time.
+
+Mechanically: a Lane's Ladder is its own summary plus its children's summaries, rolled up recursively — the rungs are literally the decomposition tree, not an abstract zoom level. A rung **regenerates whenever a state transition lands in the Lane's log** — a Changeset merges, a child Lane completes, an ANSWER changes the plan, a Tripwire fires — and each regeneration bubbles up, so a parent Lane's rung is always current with respect to its children, never stale until someone asks for a rollup. Climbing moves toward the root Lane's summary; descending moves toward a specific child, down to the exact commits a summary was built from. Every rung must be able to point back to the sources it summarizes — never lose recall for precision.
 
 The *global* summary ladder (package-, repo-level) is this same mechanism applied one level further up: a repo's top-level Lanes rolling up into the repo's own summary.
 
