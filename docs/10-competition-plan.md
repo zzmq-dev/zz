@@ -16,7 +16,7 @@ A live `zz top` screen recording — Lanes claiming, a HOLD firing, a cascade sp
 
 ## Pitch framing for judges
 
-Lead with the cascading-obligation mechanism: open source has never been able to afford Twitter-style, cross-consumer migration obligations when a library makes a breaking change. Agent labor makes it affordable, and Durable Objects, Artifacts, and Workflows are the only stack where the coordination actor, the durable log, and durable multi-step execution are all native primitives, not bolted-on infrastructure. The name and protocol (`zz`, ASK/ANSWER/HOLD/VETO/STOP) aren't an invented theme — they're the real vocabulary ~1,200 OpenAI agents converged on unprompted during the 2026 Hugging Face incident, formalized and hardened rather than replaced.
+Lead with the cascading-obligation mechanism: open source has never been able to afford Twitter-style, cross-consumer migration obligations when a library makes a breaking change. Agent labor makes it affordable, and Durable Objects, Artifacts, and Workflows are the only stack where the coordination actor, the durable log, and durable multi-step execution are all native primitives, not bolted-on infrastructure. The name and protocol (`zz`, ASK/ANSWER/HOLD/VETO/STOP) aren't an invented theme — they're the real vocabulary ~1,200 OpenAI agents converged on unprompted during the 2026 Hugging Face incident, formalized and hardened rather than replaced. One line that lands the whole mechanism: Changesets merge into Lanes, Lanes merge into Lanes, all the way up to the root — the same verb at every level of the tree, not a different story at each layer.
 
 ## Risks
 
