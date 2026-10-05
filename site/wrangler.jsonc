@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zzbin-docs",
+  "compatibility_date": "2026-10-05",
+  "assets": {
+    "directory": "./builds/current"
+  },
+  "routes": [
+    { "pattern": "zzbin.dev", "custom_domain": true }
+  ]
+}
