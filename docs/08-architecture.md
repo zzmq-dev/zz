@@ -32,7 +32,7 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 
 ## Cloudflare Artifacts, as of October 2026
 
-Confirmed directly against current Cloudflare docs: Artifacts went to open beta on October 1, 2026, requires a Workers Paid plan, and repos behave as real git remotes — `git push` over HTTPS with a Bearer token minted by a Worker via `env.ARTIFACTS.create()`. There is currently **no web UI, no browsing, and no public discoverability** — it's purely programmatic, accessed only through git clients with a worker-issued token or the REST API. That's not a missing feature to work around; it's the exact gap this project exists to fill. Until zz has working software, the project's own repo stays on GitHub for visibility.
+Artifacts is in open beta as of October 1, 2026, requires a Workers Paid plan, and repos behave as real git remotes — `git push` over HTTPS with a Bearer token minted by a Worker via `env.ARTIFACTS.create()`. There is currently **no web UI, no browsing, and no public discoverability**: it's purely programmatic, reachable only through git clients with a worker-issued token or the REST API. That gap — primitives with no human-facing surface on top — is precisely the layer zz exists to provide.
 
 ## Off-boarding: staying portable away from Cloudflare
 
@@ -42,6 +42,6 @@ Leaving Cloudflare means:
 2. Replay the published, open rebuild algorithm (dependency-graph computation plus Ladder generation) against that mirror, on any compute substrate — it's a specified algorithm, not Cloudflare-proprietary logic.
 3. Re-host the Maintainer as a plain stateful service — a single-process daemon, a Temporal workflow, or a human — since the protocol itself (ASK/ANSWER/HOLD/VETO, STOP/DROP/ROLL, the OCC algorithm, the cascade protocol) is published separately from the Cloudflare binding code that implements it.
 
-## The non-goal that keeps this honest
+## Never the only copy
 
-Never store the only copy of a governance decision, review verdict, or dependency-graph snapshot purely in D1 or DO storage without also committing a human- and agent-readable record into `.zz/`. The moment any load-bearing fact exists only in Cloudflare's infrastructure, the portability story is false regardless of what this document claims.
+No governance decision, review verdict, or dependency-graph snapshot lives purely in D1 or DO storage — each is also committed as a human- and agent-readable record in `.zz/`. A load-bearing fact that exists only in Cloudflare's infrastructure breaks the portability guarantee above.

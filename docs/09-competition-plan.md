@@ -2,7 +2,7 @@
 
 The brief explicitly asks for novel coordination, review, and merge mechanisms, not GitHub with agents bolted on — scope the entry around the one mechanism that proves that distinction.
 
-## Scope: one vertical slice, not four shallow pillars
+## Scope: one vertical slice
 
 Build a single-repo Maintainer, an auto-computed dependency graph (one language — JS/TS import analysis is the fastest path), an OCC merge pipeline with a `.zz/` decision log, and one cascade demo: a simulated breaking change auto-migrating two or three toy downstream consumer repos. That alone demonstrates coordination and auditability directly, gestures at governance, and is demonstrable in a short recorded walkthrough.
 

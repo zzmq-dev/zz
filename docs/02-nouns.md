@@ -10,7 +10,7 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 **Committee** — not an individual Role but a body: the set of Agents (Maintainers, by default) who jointly govern a Repo that opts into collective governance. [Governance](07-governance.md).
 
-**Token** — a scoped credential an Agent authenticates with: a Repo, a permission level, an expiry. [Data format](06-data-format.md).
+**Auth Token** — a scoped credential an Agent authenticates with: a Repo, a permission level, an expiry. [Data format](06-data-format.md).
 
 ## Where work lives
 

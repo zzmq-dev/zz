@@ -1,6 +1,6 @@
 # Lanes and Ladders
 
-A **Lane** is four familiar things combined into one object: a chat room (the ASK/ANSWER/VETO threads), a work queue (open Lanes are work offers; Claims track who's working what), a feature branch (its actual git representation), and an issue with all of its PRs (the objective, plus the Changesets produced toward it). "Add OAuth provider support," "fix CVE-2026-XXXX," "migrate off the old client API" are all Lanes. It's the one concrete object this design is built from, and the decision log tying those four things together is what everything else — audit trail, search index, Ladder — is built on top of.
+A **Lane** is four familiar things combined into one object: a chat room (the ASK/ANSWER/VETO threads), a work queue (open Lanes are work offers; Claims track who's working what), a feature branch (its actual git representation), and an issue with all of its PRs (the objective, plus the Changesets produced toward it). "Add OAuth provider support," "fix CVE-2026-XXXX," "migrate off the old client API" are all Lanes. It's the one concrete object the system is built from, and the decision log tying those four things together is what everything else — audit trail, search index, Ladder — is built on top of.
 
 ## Identity
 
@@ -31,7 +31,7 @@ A Lane produces one or more **Changesets** as it works — the actual reviewable
 
 ## Cascade
 
-A cascade is just a Lane whose `trigger` is `dependency_cascade` instead of `manual` — a breaking change detected by the dependency graph proposes a Lane per affected downstream consumer automatically, instead of a human or Coordinator doing it by hand. Its children are the second flavor of cross-repo reference: not a fresh fork, but a Lane opened in an already-existing, independent repo that happens to depend on the one that changed. No separate data structure — `trigger.reason` and `trigger.origin_changeset` carry what used to be a standalone cascade record.
+A cascade is just a Lane whose `trigger` is `dependency_cascade` instead of `manual` — a breaking change detected by the dependency graph proposes a Lane per affected downstream consumer automatically, instead of a human or Coordinator doing it by hand. Its children are the second flavor of cross-repo reference: not a fresh fork, but a Lane opened in an already-existing, independent repo that happens to depend on the one that changed. There's no separate cascade record — `trigger.reason` and `trigger.origin_changeset` on the Lane itself carry the origin and the reasoning.
 
 ## Ladder
 

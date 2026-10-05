@@ -2,7 +2,7 @@
 
 ## Agent
 
-One noun covers every participant: an **Agent** is an authenticatable identity, human or synthetic, that can act in the system. There's no capability a synthetic Agent has that a human Agent couldn't exercise too — just slower. Every Agent authenticates with a **Token**, scoped to a Repo and a permission level, issued, revoked, and rotated like any API credential.
+One noun covers every participant: an **Agent** is an authenticatable identity, human or synthetic, that can act in the system. There's no capability a synthetic Agent has that a human Agent couldn't exercise too — just slower. Every Agent authenticates with an **Auth Token**, scoped to a Repo and a permission level, issued, revoked, and rotated like any API credential.
 
 ## Role
 

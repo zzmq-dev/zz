@@ -23,7 +23,7 @@ Open source has never been able to afford what internal monorepos could: when a 
 
 ## One mechanism, not four subsystems
 
-An earlier pass at this design organized itself around four pillars — coordination, auditability, searchability, navigation — as if they were four separate systems. They aren't. They're four properties that a single concrete object, the **Lane**, has to satisfy for any unit of work. A Lane is a workstream; it carries its own coordination state, its own audit trail, its own search index, and its own navigable summary (a **Ladder**) together, as one thing, not four. The pillars survive only as a vocabulary for talking about a Lane's properties — see [docs/03-lanes-and-ladders.md](03-lanes-and-ladders.md).
+Coordination, auditability, searchability, and navigation are not four separate systems here — they're four properties a single concrete object, the **Lane**, satisfies for any unit of work. A Lane is a workstream; it carries its own coordination state, its own audit trail, its own search index, and its own navigable summary (a **Ladder**) together, as one thing. The four properties are a vocabulary for describing a Lane, not an architecture of their own — see [Lanes and Ladders](03-lanes-and-ladders.md).
 
 ## Architecture in one paragraph
 
