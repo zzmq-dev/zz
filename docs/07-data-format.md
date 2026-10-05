@@ -22,8 +22,8 @@ Git notes (`refs/notes/*`) require a separate command to even see, and most git 
     <commit-sha>.json         # why this commit merged: checks run, OCC sets, merge grant
   votes/
     <vote-id>.json            # a Committee ballot and its outcome
-  credit/
-    <agent-id>.json           # this repo's local view of an agent's reputation
+  trust/
+    <agent-id>.json           # this repo's local view of an agent's trust, per topic
 ```
 
 Cascades have no file of their own — a cascade is a Lane whose `trigger.kind` is `dependency_cascade`; it lives in `lanes/` like any other.
@@ -38,7 +38,7 @@ budget:
   on_exhausted: hold_cascades    # hold_cascades | queue_external | require_human
 auto_merge:
   occ_fast_path: true
-  min_credit_for_fast_path: 0.6
+  min_trust_for_fast_path: 0.6
 review:
   reviewers_required: 1
   reviewer_composition: []       # e.g. ["human"] to require at least one human verdict
@@ -59,6 +59,21 @@ escalation:
 }
 ```
 
+## `trust/<agent-id>.json`
+
+```json
+{
+  "agent": "claude-4a2f",
+  "by_topic": {
+    "packages/auth": 0.82,
+    "packages/payments": 0.10,
+    "packages/docs": 0.95
+  }
+}
+```
+
+Scored per topic, not globally — an Agent earns trust in the areas it's actually worked, the way a Contributor earns it in one area long before being trusted in another. `min_trust_for_fast_path` in `policy.yaml` is checked against the topic a Changeset's scope falls under, not a single number for the whole repo.
+
 ## `lanes/<lane-id>.json`
 
 ```json
@@ -75,11 +90,14 @@ escalation:
   "budget": { "cap_usd": 5, "spent_usd": 2.10 },
   "history": [
     { "type": "ASK", "kind": "claim_request", "from": "claude-4a2f", "at": "2026-10-05T01:40:00Z" },
-    { "type": "ANSWER", "from": "maintainer-agent", "action": "grant", "at": "2026-10-05T01:40:01Z" }
+    { "type": "ANSWER", "from": "maintainer-agent", "action": "grant", "at": "2026-10-05T01:40:01Z" },
+    { "type": "INSIGHT", "sentiment": "bad", "text": "this endpoint rate-limits after 100 req/min, breaks the naive retry loop", "from": "claude-4a2f", "at": "2026-10-05T02:10:00Z" }
   ],
   "children": []
 }
 ```
+
+An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition — just a captured observation, tagged `good` or `bad`, attributed to whoever noticed it. It's what the Ladder draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](03-lanes-and-ladders.md#ladder).
 
 A cascade's top-level Lane differs only in `trigger` and in having `children` that reference a different `repo` than its own:
 
@@ -152,4 +170,4 @@ A cascade's top-level Lane differs only in `trigger` and in having `children` th
 
 ## Durable Object state (not committed, rebuildable)
 
-The Maintainer DO holds the live, authoritative version of everything above, plus what doesn't need to be portable: active WebSocket connections for the coordination bus, the current claim/lease table with TTLs, and the cached dependency graph. All of it is a materialized view computable by replaying `.zz/` and the git log — never the only copy. Credit aggregated across repos lives in D1 at the org/workspace level; each repo's `.zz/credit/` is a local snapshot, not the source of truth for an agent's global standing.
+The Maintainer DO holds the live, authoritative version of everything above, plus what doesn't need to be portable: active WebSocket connections for the coordination bus, the current claim/lease table with TTLs, and the cached dependency graph. All of it is a materialized view computable by replaying `.zz/` and the git log — never the only copy. Trust aggregated across repos lives in D1 at the org/workspace level; each repo's `.zz/trust/` is a local snapshot, not the source of truth for an agent's global standing.

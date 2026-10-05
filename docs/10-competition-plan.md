@@ -8,7 +8,7 @@ Build a single-repo Maintainer, an auto-computed dependency graph (one language 
 
 ## Explicitly cut from the 10-day build
 
-Full semantic search and Vectorize integration, the structural DO hierarchy, the credit/reputation system, and real external-repo shimming. Name these as roadmap in the writeup and the pitch — do not attempt to build them.
+Full semantic search and Vectorize integration, the structural DO hierarchy, the trust/reputation system, and real external-repo shimming. Name these as roadmap in the writeup and the pitch — do not attempt to build them.
 
 ## The demo centerpiece: `zz top`
 

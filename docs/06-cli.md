@@ -59,6 +59,7 @@ zz top                 # live view of all Lanes
 zz ps                  # point-in-time snapshot, scriptable
 zz log <lane>           # the Lane's full ASK/ANSWER/HOLD/VETO/merge history
 zz show <lane> --ladder # the Lane's current summary, with links down to source commits
+zz insight <lane> --good|--bad "<note>"   # capture an in-the-flow insight
 ```
 
 ## Governance and policy
@@ -66,7 +67,7 @@ zz show <lane> --ladder # the Lane's current summary, with links down to source 
 ```
 zz tripwire add <scope> --when "<condition>" --then "<runbook step>"
 zz tripwire list
-zz credit <agent>        # reputation lookup
+zz trust <agent> [--topic <scope>]   # trust lookup, per topic
 zz whistleblow <agent|lane> "<report>"
 ```
 
@@ -80,8 +81,8 @@ $ zz ask auth-oauth --claim
   → claimed by you, lease 4h
 
 $ zz top
-  LANE          AGENT        STATE     CREDIT    AGE     LAST ASK
-  auth-oauth    you          active    0.00/5    1m      claim granted
+  LANE          AGENT        STATE     TRUST     AGE     LAST ASK
+  auth-oauth    you          active    0.82      1m      claim granted
 
 $ zz ask auth-oauth --review cs-001
   → review_request sent, policy requires 1 reviewer

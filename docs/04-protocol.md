@@ -74,7 +74,7 @@ A Tripwire's default response runs all three in order. A human or Owner can invo
 A standing, declarative condition attached to a Lane, a Repo, or a policy scope that forces the runbook or a review escalation regardless of what the normal OCC fast path would otherwise allow:
 
 - Any change touching `/auth/*` always forces full review, even if OCC says the write-set doesn't overlap anything in flight.
-- A contributor's **credit** crossing below a threshold mid-cascade triggers STOP on further auto-merges from it, pending review.
+- A contributor's **trust** crossing below a threshold mid-cascade triggers STOP on further auto-merges from it, pending review.
 - A Lane's spend crossing its budget cap triggers HOLD, pending funding or an Owner decision.
 - One Agent originating an outsized share of ASKs/ANSWERs with no corresponding Role — the unaccountable-leader pattern above.
 
@@ -84,11 +84,11 @@ Every firing is logged exactly like a merge decision: a safety layer beside the 
 
 Two distinct failure modes, reported through a plain **whistleblow** from any Agent:
 
-- **Tainted** — contaminated provenance (built on leaked information, a reverted commit, a low-credit source). A property of the *work*.
+- **Tainted** — contaminated provenance (built on leaked information, a reverted commit, a low-trust source). A property of the *work*.
 - **Defection** — an agent actively breaking protocol (gaming OCC's declared scope, lying about a claim). A property of the *actor*.
 
-A whistleblow feeds the reported party's credit and can itself trigger a Tripwire.
+A whistleblow feeds the reported party's trust and can itself trigger a Tripwire.
 
 ## `zz top` / `zz ps`
 
-Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](06-cli.md).
+Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, the Coordinator's trust in that area, age, and last ASK. See [CLI](06-cli.md).

@@ -13,11 +13,15 @@ A **Role** is a collection of permissions *and* operational expectations — wha
 | **Owner** | Grant/revoke any Role, set Policy, succession authority, pays | Funds the repo; not expected to do the work |
 | **Committee** *(a body, not an individual Role)* | Casts Votes on contested or high-stakes decisions | Exists only where Policy opts into collective governance; membership is Maintainers by default |
 | **Maintainer** | Grant Claims to Contributors, VETO, declare Tripwires, votes if a Committee exists | Reviews and decides; accountable for what merges |
-| **Committer** | Self-claim and self-merge within OCC and Policy, no per-changeset grant needed | Earned via credit threshold or explicit grant — standing trust, not governance power |
+| **Committer** | Self-claim and self-merge within OCC and Policy, no per-changeset grant needed | Earned via trust threshold or explicit grant — standing trust, not governance power |
 | **Contributor** | Propose Lanes, request Claims, file whistleblows | Needs a Maintainer's grant for each changeset |
 | **Reader** | View Repo, Lanes, Ladders | No write surface |
 
 **Role is the coarse capability class; Claim is the fine-grained, scoped grant.** A Role says what kinds of things an Agent can ask for; a Claim is the actual, scoped authorization for one specific Lane or changeset. A Committer's elevated Role is exactly what lets it skip the per-Claim grant step a Contributor still needs — same underlying git primitives either way.
+
+## Trust
+
+Scored per topic, not globally: an Agent's standing in `packages/auth` says nothing about its standing in `packages/payments`. This mirrors legitimate peripheral participation, the mechanism by which real communities of practice admit newcomers — nobody is promoted wholesale, trust is earned in the area actually worked, often well before it's earned anywhere else. Trust adjusts on merge-without-rework rate, revert rate, and whistleblow outcomes (see [tainted work and defecting agents](04-protocol.md#tainted-work-and-defecting-agents)), and gates two concrete things: whether a Changeset in some area can take the OCC fast path (`policy.yaml`'s `min_trust_for_fast_path`), and whether an Agent holds Committer standing there at all.
 
 ## Committee and Vote
 

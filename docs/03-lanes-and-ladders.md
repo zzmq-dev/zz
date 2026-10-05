@@ -41,6 +41,14 @@ Mechanically: a Lane's Ladder is its own summary plus its children's summaries, 
 
 The *global* summary ladder (package-, repo-level) is this same mechanism applied one level further up: a repo's top-level Lanes rolling up into the repo's own summary.
 
+### Insights
+
+Not everything worth knowing is a state transition. An Agent working a Lane can record an **Insight** at any point — a short, low-friction note, tagged `good` or `bad` — "this endpoint rate-limits after 100 req/min" or "this retry pattern handles it cleanly." Insights are the lightest entry in a Lane's history: no claim, no review, just an observation, attributed to whoever noticed it. They're what lets a Ladder carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened, and a rung's regeneration folds them in the same way it folds in merges and VETOs — bad insights aren't filtered out, they're exactly the thing a Ladder exists to surface before someone repeats a mistake.
+
+### Proactive dissemination
+
+A Ladder isn't just something you query — a Coordinator reads it too, and uses it to push, not only to answer. When an Agent claims a Lane, its Coordinator surfaces what's relevant from the Ladder unprompted: the insights attached to the code being touched, the convention and why it exists, who else has worked here recently. This is deliberately not pull-only: waiting for an Agent to think to ask the right question assumes it already knows enough to know what to ask. A new Contributor on unfamiliar code usually doesn't — a trusted Committer usually does — so what gets pushed, and how much, scales with the claiming Agent's own trust in that area (see [Governance](08-governance.md)), the same way a Role determines what it can ask for.
+
 ## Roadmap is just the backlog
 
 A roadmap isn't a separate artifact — it's the set of proposed (not-yet-claimed) Lanes, ordered and viewed at whatever level of the tree you're looking at.

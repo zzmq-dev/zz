@@ -34,7 +34,9 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 ## The trace
 
-**Ladder** — a Lane's standing, continuously-updating summary: the decomposition tree itself, each rung regenerating whenever a state transition lands in the Lane's log. Unlike `git log`/`git blame`, which are derived on demand, a Ladder already exists while work is in progress. [Lanes and Ladders](03-lanes-and-ladders.md#ladder).
+**Ladder** — a Lane's standing, continuously-updating summary: the decomposition tree itself, each rung regenerating whenever a state transition lands in the Lane's log. Unlike `git log`/`git blame`, which are derived on demand, a Ladder already exists while work is in progress. Carries tacit knowledge (Insights) alongside the structural record, and a Coordinator pushes it proactively to an Agent claiming a Lane rather than waiting to be asked. [Lanes and Ladders](03-lanes-and-ladders.md#ladder).
+
+**Insight** — not a separate noun: the lightest entry in a Lane's history, a short observation tagged `good` or `bad`, captured in the flow of work with no claim or review attached. What makes a Ladder carry tacit knowledge, not just formal decisions. [Lanes and Ladders](03-lanes-and-ladders.md#insights).
 
 **Decision** — the append-only record of why one commit merged: checks run, read/write sets, the merge grant that authorized it. System-written, read-only. [Data format](07-data-format.md).
 
@@ -58,9 +60,9 @@ A reference for every noun in the system, in one place. Each entry is deliberate
 
 **Tripwire** — a standing, declarative condition that forces the incident runbook or a review escalation regardless of what OCC's fast path would otherwise allow. [Protocol](04-protocol.md#tripwires).
 
-**Credit** — a per-Agent reputation score, adjusted by merge-without-rework rate, revert rate, and whistleblow outcomes. Plain word on purpose — no invented term needed.
+**Trust** — an Agent's standing, scored per topic rather than globally: high in the packages it's actually worked, low or absent elsewhere. Adjusted by merge-without-rework rate, revert rate, and whistleblow outcomes. [Data format](07-data-format.md).
 
-**Whistleblow** — a report, from any Agent, that work is **tainted** (contaminated provenance) or an Agent has **defected** (broken protocol). Feeds Credit and can trigger a Tripwire. [Protocol](04-protocol.md#tainted-work-and-defecting-agents).
+**Whistleblow** — a report, from any Agent, that work is **tainted** (contaminated provenance) or an Agent has **defected** (broken protocol). Feeds Trust and can trigger a Tripwire. [Protocol](04-protocol.md#tainted-work-and-defecting-agents).
 
 ## Incident response
 

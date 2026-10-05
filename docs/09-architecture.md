@@ -11,7 +11,7 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 | Workflows | Review pipelines, cascade-migration generation | Durable multi-step execution that survives restarts |
 | Queues | Repo events (push, fork, clone, delete), cross-scope fan-out | Durable, at-least-once delivery for cascades and backlog notices |
 | DO + WebSocket Hibernation | Live in-scope coordination chatter (`zz top`'s live feed) | Cheap to hold thousands of idle agent connections per scope |
-| D1 | Dependency graph, backlog, credit scores, governance policy | Structured, relational, exact queries |
+| D1 | Dependency graph, backlog, trust scores, governance policy | Structured, relational, exact queries |
 | Vectorize | Code and Ladder summary embeddings | Semantic search |
 | R2 | Build logs, large summaries, generated human-facing reports | Cheap blob storage |
 | Workers AI | Cheap embeddings, lightweight judging | Low-cost, in-platform inference |
@@ -27,7 +27,7 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 1. Single-repo Maintainer, dependency graph, OCC merge, `.zz/` decision log.
 2. Cross-repo cascading changes and the open backlog.
 3. Search and the Ladder (Vectorize plus summary generation).
-4. Governance, credit, and the economics layer.
+4. Governance, trust, and the economics layer.
 5. The structural DO hierarchy, for org- and monorepo-scale graphs.
 
 ## Cloudflare Artifacts, as of October 2026
