@@ -30,6 +30,10 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 4. Governance, credit, and the economics layer.
 5. The structural DO hierarchy, for org- and monorepo-scale graphs.
 
+## Cloudflare Artifacts, as of October 2026
+
+Confirmed directly against current Cloudflare docs: Artifacts went to open beta on October 1, 2026, requires a Workers Paid plan, and repos behave as real git remotes — `git push` over HTTPS with a Bearer token minted by a Worker via `env.ARTIFACTS.create()`. There is currently **no web UI, no browsing, and no public discoverability** — it's purely programmatic, accessed only through git clients with a worker-issued token or the REST API. That's not a missing feature to work around; it's the exact gap this project exists to fill. Until zz has working software, the project's own repo stays on GitHub for visibility.
+
 ## Off-boarding: staying portable away from Cloudflare
 
 Leaving Cloudflare means:

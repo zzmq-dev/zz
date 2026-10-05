@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang='en' data-theme='auto'>
+<head>
+<meta ht-include='fragments/head.html'></meta>
+</head>
+<body class='home'>
+<header ht-include='fragments/header.html'></header>
+<main class='hero'>
+  <h1 ht-content='page.title'></h1>
+  <div class='tagline' ht-content='markdown:page.content'></div>
+  <div class='card-grid'>
+    <a class='card' ht-attrs='href:item.url' ht-content='item.title' ht-template='item:site.nav'></a>
+  </div>
+</main>
+<footer ht-include='fragments/footer.html'></footer>
+</body>
+</html>

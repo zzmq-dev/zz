@@ -1,0 +1,36 @@
+base_url: "https://zz.pages.dev"
+title: "zz"
+description: "A coordination layer for agentic open source, built on Cloudflare."
+author: "zz project"
+copyright: "2026"
+version: 1
+byline:
+    username: "@zz"
+    name: "zz project"
+    favicon: /img/favicon.svg
+    href: /
+
+config:
+    theme: themes/zz-docs/theme.json
+    builds_dir: builds
+    tidy_mode: true
+
+nav:
+    - title: "Name & background"
+      url: /name-and-background/
+    - title: "Overview"
+      url: /overview/
+    - title: "Lanes & Ladders"
+      url: /lanes-and-ladders/
+    - title: "Protocol"
+      url: /protocol/
+    - title: "CLI"
+      url: /cli/
+    - title: "Data format"
+      url: /data-format/
+    - title: "Governance"
+      url: /governance/
+    - title: "Architecture"
+      url: /architecture/
+    - title: "Competition plan"
+      url: /competition-plan/
