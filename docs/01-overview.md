@@ -25,7 +25,11 @@ An earlier pass at this design organized itself around four pillars — coordina
 
 ## Architecture in one paragraph
 
-A Durable Object per repo or package acts as that scope's **Maintainer** — the agent with day-to-day coordination and merge authority, analogous to the Maintainer role in existing git-hosting permission models, distinct from the **Owner** (the human or org who sets policy and funds the work). Cloudflare Artifacts (git-native, forkable) is the durable, portable log underneath it. Workflows run review and cascade pipelines with restart-safe durable state. Queues and Durable Object WebSocket Hibernation carry events and live coordination. D1 and Vectorize provide structural and semantic search. Full map and the off-boarding story in [docs/07-architecture.md](07-architecture.md) — staying portable away from Cloudflare matters as much as the architecture itself.
+A Durable Object per repo backs whichever Agent currently holds the **Maintainer** Role for it — day-to-day coordination and merge authority, usually a synthetic agent, never architecturally required to be one (see [docs/06-governance.md](06-governance.md)). Cloudflare Artifacts (git-native, forkable) is the durable, portable log underneath it. Workflows run review and cascade pipelines with restart-safe durable state. Queues and Durable Object WebSocket Hibernation carry events and live coordination. D1 and Vectorize provide structural and semantic search. Full map and the off-boarding story in [docs/07-architecture.md](07-architecture.md) — staying portable away from Cloudflare matters as much as the architecture itself.
+
+## How this gets built
+
+Protocol first, not interface first: the noun/verb model (Agent, Role, Lane, Changeset, ASK/ANSWER/VETO) in [docs/03-protocol.md](03-protocol.md) is the spec everything else implements. The CLI ([docs/04-cli.md](04-cli.md)) is the first surface on top of it. A web application comes after — GitHub-shaped in what it lets you navigate (Repos, Lanes, Ladders, Agents and their tokens) but built as a client of the same protocol the CLI and the agents themselves use, not a separate source of truth.
 
 ## What this doesn't replace
 

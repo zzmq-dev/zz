@@ -1,56 +1,44 @@
 # Lanes and Ladders
 
-A **Lane** is a workstream: a named, addressable unit of work with a scope, a status, and a history. "Add OAuth provider support," "fix CVE-2026-XXXX," "the OCC merge pipeline refactor" are all Lanes. It's the one concrete object this whole design is built from — everything that used to be described as four separate pillars (coordination, auditability, searchability, navigation) is really just a property every Lane has.
+A **Lane** is a workstream: a named, scoped objective with a status and a history. "Add OAuth provider support," "fix CVE-2026-XXXX," "migrate off the old client API" are all Lanes. It's the one concrete object this design is built from.
 
-## Anatomy of a Lane
+## Identity
 
-- **Identity** — an ID, a name, a scope (what it touches, derived from the dependency graph as work happens, not declared upfront), and a status: proposed → open → claimed → active → merged/closed, or vetoed, or stopped.
-- **Coordination surface** — ASK/ANSWER for requests and questions, HOLD/VETO for normal control, STOP/DROP/ROLL for incident response (full semantics in [docs/03-protocol.md](03-protocol.md)). Its OCC read/write-set is the union of what's been touched by work claimed under it. A "work queue item" and "a Lane" are the same object at different lifecycle stages — proposed Lane = backlog item, claimed Lane = active workstream.
-- **Audit trail** — every ASK, ANSWER, HOLD, VETO, STOP, DROP, ROLL, merge, and Tripwire firing on the Lane is append-only, recorded in the repo's `.zz/` directory, tied to the commits it produces. The Lane's history and the code's history are the same artifact, never something you cross-reference between two places.
-- **Ladder** — the Lane's own zoom levels: commits and sessions roll up into a Lane-level summary, which rolls up into the package- and repo-level summaries. The *global* summary ladder is literally built from Lane ladders rolling up, not computed as a separate pass.
-- **Search unit** — independently indexed, structurally (what it touches, in D1) and semantically (what it's about, in Vectorize), so "which open lanes touch auth" or "find a lane like this one" are first-class queries.
-- **Dual interface, one source of truth** — agents read and act on a Lane through ASK (structured RPC against the Maintainer). Humans get a rendered report, ad-hoc search, and raw clickthrough of the same underlying commits, summaries, and Tripwire firings. Different doors, same state — never two copies of the truth.
+A Lane is identified by `{repo, lane_id}` — never a bare ID. Most Lanes reference children in their own repo, but a Lane's children can live in a different repo entirely (below), so the pair is the real identity.
 
-## Lifecycle
+Fields: `name`, `objective`, `scope` (files/symbols touched, derived from the dependency graph as work happens, not declared upfront), `status` (proposed → open → claimed → active → merged/closed, or vetoed, or stopped), `trigger`, `coordinators`.
 
-```
-proposed → open → claimed → active → merged/closed
-                      │
-                      ├─ HOLD  (paused, reversible)
-                      ├─ VETO  (rejected by the Maintainer/Owner policy)
-                      └─ STOP  (halted by a Tripwire's runbook)
-```
+## Lanes nest
 
-A Lane is proposed either by a human/Owner, by the Maintainer's own backlog grooming, by a Tripwire, or automatically as part of a cascade (below). It becomes open (claimable) once it has acceptance criteria. Claiming it starts a lease; abandoned leases expire and the Lane reopens.
+A Lane starts as a high-level objective and decomposes into smaller Lanes with smaller objectives — a Lane can contain many Lanes. Decomposition is just the Coordinator proposing child Lanes via a broadcast ASK (a "work offer"): any eligible Agent can ANSWER to claim one. There's no separate "work offer" noun — an open, broadcast-solicited Lane *is* a work offer. Claiming it makes the claiming Agent that child Lane's Coordinator.
 
-## Durable Object nesting
+## Coordinator
 
-Two axes, not one:
+Whoever currently holds the claim on a Lane is its **Coordinator** — a Lane-scoped position, not a system Role (see [Governance](06-governance.md)). Any Agent with at least Contributor-level Role can end up coordinating a Lane just by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
 
-1. **Structural** — a DO per package, aggregated under a DO per workspace, aggregated under a DO per org, mirroring the dependency graph.
-2. **Workstream** — a repo or package's Maintainer DO spawns and indexes N concurrent Lane DOs, one per active workstream. OCC conflict checks happen at the Lane level first (narrow, fast) and only consult sibling Lanes via the parent Maintainer's registry when scopes might overlap.
+A Lane can have more than one Coordinator, for two different reasons:
 
-## Cascades are bundles of linked Lanes
+- **Joint coordination** — several Agents decide together on the same decisions, for a Lane where the *judgment* benefits from more than one perspective. Decisions resolve by [Vote](03-protocol.md#vote) or lazy consensus among them, the same mechanism used at the repo/Committee level, just scoped to one Lane.
+- **Sharded coordination** — a Coordinator facing a volume problem, not a judgment problem (a cascade with thousands of children, say), ASKs for additional coordinators and delegates coordination-of-record over a disjoint subset of its existing children to each. The Ladder's structural tree is unaffected — those children are still this Lane's children for rollup and audit purposes — only the "who currently answers ASKs here" pointer changes per batch.
 
-A breaking-change cascade isn't a single Lane — it's a bundle of linked Lanes, one auto-opened in each affected consumer repo, all sharing a common origin pointer back to the change that caused them. This gives cascades full auditability for free: navigate from the origin to every spawned migration Lane and back, because they're just Lanes with a shared cascade ID.
+## Fork pattern
+
+Claiming a Lane typically forks the repo: the claiming Agent gets full, autonomous access to work at its own pace, and the only required coordination point back to the parent is asking to merge. This is the ordinary GitHub fork/PR pattern, formalized as the default way any Contributor gets a Lane to work in — not a special case.
+
+## Changeset
+
+A Lane produces one or more **Changesets** as it works — the actual reviewable unit of code, not the Lane itself. A Changeset is what gets ASKed-for-review, ANSWERed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](03-protocol.md) for the full review and merge-grant flow.
+
+## Cascade
+
+A cascade is just a Lane whose `trigger` is `dependency_cascade` instead of `manual` — a breaking change detected by the dependency graph proposes a Lane per affected downstream consumer automatically, instead of a human or Coordinator doing it by hand. Its children are the second flavor of cross-repo reference: not a fresh fork, but a Lane opened in an already-existing, independent repo that happens to depend on the one that changed. No separate data structure — `trigger.reason` and `trigger.origin_changeset` carry what used to be a standalone cascade record.
+
+## Ladder
+
+A Lane's **Ladder** is its own summary plus its children's summaries, rolled up recursively — the rungs are literally the decomposition tree, not an abstract zoom level. Climbing moves toward the root Lane's summary; descending moves toward a specific child, down to the exact commits a summary was built from. Every rung must be able to point back to the sources it summarizes — never lose recall for precision.
+
+The *global* summary ladder (package-, repo-level) is this same mechanism applied one level further up: a repo's top-level Lanes rolling up into the repo's own summary.
 
 ## Roadmap is just the backlog
 
-A roadmap isn't a separate artifact to maintain by hand — it's the set of proposed (not-yet-opened) Lanes, ordered and viewed at whatever zoom level you're at. A package's roadmap is its own proposed Lanes; an org's roadmap is the rollup across its packages' proposed Lanes.
-
-## Ladders: deliberately left underspecified
-
-A Ladder is the zoom structure described above — commit, Lane, package, repo, each level a compressed roll-up of the one below, and every summary must be able to point back to the exact commits it summarizes (never lose recall for precision).
-
-What this document does **not** specify: the operations for moving between levels, generating a new level, or linking a summary back to its sources. Early drafts of this design tried to pre-assign verbs here (climb/descend/distill/chute, matching the fire-safety "chutes and ladders" wordplay), and that was the wrong move — it was nomenclature in search of commands, not commands derived from how Lanes actually get read and written once they exist. The right operations should come from real usage once Maintainers and Lanes are running, not be designed in the abstract. Revisit this section once there's a working Ladder to observe.
-
-## The pillars, as a vocabulary
-
-Coordination, auditability, searchability, and navigation aren't separate systems — they're four lenses for describing what a Lane and its Ladder already do:
-
-- **Coordination** — the ASK/ANSWER/HOLD/VETO surface, OCC merge, the open work queue, cascading obligations, negotiated generalization over fork-first.
-- **Auditability** — the `.zz/` append-only trail, git as the real source of record, two-speed review (deterministic checks before any model judgment).
-- **Searchability** — structural queries (D1) and semantic queries (Vectorize) against every Lane, including Lanes forked in from repos that aren't natively part of the system yet.
-- **Navigation** — the Ladder, and the dual agent/human interface onto it.
-
-Mechanics for each are documented inline above and in [docs/03-protocol.md](03-protocol.md); none of them needs its own subsystem.
+A roadmap isn't a separate artifact — it's the set of proposed (not-yet-claimed) Lanes, ordered and viewed at whatever level of the tree you're looking at.

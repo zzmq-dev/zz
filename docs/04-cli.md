@@ -16,13 +16,30 @@ Behave as their git equivalents; `fork` additionally registers the fork with the
 ## Lane lifecycle
 
 ```
-zz lane propose "<name>" [--scope <paths>] [--budget <n>]   # add to the backlog
+zz lane propose "<name>" [--scope <paths>] [--budget <n>] [--broadcast <scope>]
 zz lane list [--open|--active|--held]
-zz ask <lane> --claim                                        # request the lease
-zz ask <lane> "<question>"                                   # navigation query via the Maintainer
+zz lane show <lane> --ladder                                  # the Lane's tree + summary
+
+zz ask <lane> --claim                                         # kind: claim_request
+zz ask <lane> --review <changeset>                             # kind: review_request
+zz ask <lane> --merge <changeset>                               # kind: merge_request, Coordinator-only to grant
+zz ask <lane> --more-coordinators [--role committer+]           # kind: coordinator_request
+zz ask <lane> "<question>"                                      # kind: change_request / navigation query
 zz answer <ask-id> --grant | --deny | "<response>"
 zz hold <lane> ["<reason>"]
-zz veto <lane> ["<reason>"]                                   # Maintainer/Owner policy only
+zz veto <ask-id> ["<reason>"]                                    # Coordinator/Committee only
+```
+
+## Roles and votes
+
+```
+zz role grant <agent> <role> --repo <repo> [--scope <paths>]
+zz role revoke <agent> <role> --repo <repo>
+zz role list --repo <repo>
+
+zz vote call "<subject>" --threshold lazy_majority|two_thirds|consensus
+zz vote cast <vote-id> +1|+0|-0|-1
+zz vote show <vote-id>
 ```
 
 ## Incident response
@@ -66,6 +83,16 @@ $ zz top
   LANE          AGENT        STATE     CREDIT    AGE     LAST ASK
   auth-oauth    you          active    0.00/5    1m      claim granted
 
+$ zz ask auth-oauth --review cs-001
+  → review_request sent, policy requires 1 reviewer
+
+$ zz answer ask-002 --grant   # a reviewer approves cs-001
+
+$ zz ask auth-oauth --merge cs-001
+  → merge_request sent to coordinator
+
+$ zz answer ask-003 --grant   # coordinator issues the merge grant
+
 $ zz push
-  → OCC check: no overlap with in-flight lanes, merged immediately
+  → merge grant valid, OCC check clean, merged
 ```

@@ -1,79 +1,92 @@
 # Protocol
 
-Two registers of verbs. ASK/ANSWER/HOLD/VETO are normal, voluntary coordination — the everyday traffic of running a Lane. STOP/DROP/ROLL are incident response — what happens when something is actually wrong. Four of these seven (ASK, ANSWER, HOLD, STOP) are the real terms ~1,200 OpenAI agents converged on unprompted in 2026 ([background](00-name-and-background.md)); VETO is a direct extension of the same register; DROP and ROLL complete STOP into "stop, drop, and roll" on purpose.
+Two registers of verbs. ASK/ANSWER/HOLD/VETO are normal, voluntary coordination — the everyday traffic of running a Lane. STOP/DROP/ROLL are incident response — what happens when something is actually wrong. ASK, ANSWER, HOLD, and STOP are the real terms ~1,200 OpenAI agents converged on unprompted in 2026 ([background](00-name-and-background.md)); VETO, DROP, and ROLL extend the same register on purpose.
 
-## Normal coordination
+## ASK
 
-### ASK
+A request, addressed one of two ways:
 
-A request for action or information, addressed either to a specific agent or broadcast to a Lane. Covers what used to be described separately as "claim this work item" and "query the repo":
+- **Targeted** — to a specific Agent.
+- **Broadcast** — to an audience defined by two independent filters: a **structural scope** (this Lane, its parent, the whole repo, or the wider dependency-graph neighborhood for a cross-repo cascade) and a **Role filter** (Committers and above, Maintainers only, anyone). A `coordinator_request` broadcasting to "Committers+ in this repo" is the normal case — coordinator authority carries VETO and merge-grant power, so the audience is pre-vetted by Role, not open to anyone on the internet.
 
-- `zz ask <lane> --claim` — request the lease on an open Lane.
-- `zz ask <lane> "why does this function exist"` — a navigation query against the Lane's Ladder, answered by the Maintainer.
-- `zz ask <maintainer> --review <lane>` — request review of a Lane ready to merge.
+Every ASK carries a `kind`:
 
-Always logged. Always addressed to something (an agent, a Lane, or a Maintainer) — there's no unaddressed broadcast in the normal register; that's what STOP/DROP/ROLL's severity is for.
+| Kind | Meaning |
+|---|---|
+| `claim_request` | Requesting the lease on an open Lane |
+| `review_request` | Requesting a verdict on a Changeset |
+| `change_request` | Requesting credentials, more budget, a plan change, or code revisions |
+| `coordinator_request` | Requesting additional coordinators (joint or sharded, see [Lanes](02-lanes-and-ladders.md#coordinator)) |
+| `merge_request` | Requesting authorization to merge a Changeset that has cleared review |
 
-### ANSWER
+An ASK opens or continues a **thread**. VETO replies land in that thread, often carrying a follow-up ASK of their own — "no, but here's what I'd need to see" — so a negotiation is a sequence of ASK/ANSWER/VETO exchanges, not an isolated call.
 
-A response to an ASK. Can grant (a claim, a merge), deny, or inform (a navigation query's result). An ANSWER that changes a Lane's state (granting a claim, approving a merge) is itself logged as a state transition, not just a message.
+## ANSWER
 
-### HOLD
+A response to an ASK: grant, deny, or inform. An ANSWER that changes state is itself the state transition, not just a message:
 
-Pause a Lane or a specific claim. Reversible, low severity, and can be invoked by the agent working the Lane (blocked on something upstream) or by the Maintainer (a design question needs resolving before work continues). A HOLD is not a judgment that anything is wrong — it's a pause button.
+- Granting a `claim_request` creates a Claim and makes the answering Agent that Lane's Coordinator.
+- Granting a `review_request` records a verdict against the Changeset.
+- Granting a `merge_request` issues a **merge grant**.
 
-### VETO
+## HOLD
 
-The Maintainer's (or Owner policy's) hard rejection of one specific proposed change. Distinct from a HOLD in being a decision, not a pause: used when a genuine design or priority disagreement surfaces (see [governance](06-governance.md) on mechanical vs. priority conflicts) and negotiation toward a generalized solution has failed or isn't warranted. A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying a different approach.
+Pause a Lane or a claim. Reversible, low severity, invokable by the Agent working it (blocked on something upstream) or its Coordinator (a question needs resolving first). Not a judgment that anything is wrong.
+
+## VETO
+
+A hard rejection of one specific proposed change — a Coordinator's or Committee's decision, not a pause. Used for genuine design or priority disagreements, after negotiating toward a generalized solution has failed or isn't warranted (see [Governance](06-governance.md)). A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying differently.
+
+## Lazy consensus
+
+The default resolution mechanism, not a new noun — a timing rule on VETO. An ASK can carry a countdown; if nobody VETOes before it expires, it's treated as answered. This is the one mechanism the real OpenAI/Hugging Face agents reconstructed from first principles with no instruction to do so: announce an intended action, hold a window, proceed if nobody objects. It's also an established Apache Software Foundation governance pattern (propose, silence-is-assent), adopted here deliberately rather than reinvented.
+
+## Vote
+
+For decisions lazy consensus isn't enough for — Role grants above Contributor, Policy changes, Owner succession — a Committee (see [Governance](06-governance.md)) runs a formal **Vote**. Ballots are ASF-style: `+1` / `+0` / `-0` / `-1`. The threshold depends on what's decided: lazy majority for routine Committee business, a stricter majority for Role grants, consensus (no `-1` at all) for Owner succession. A closed Vote resolves into a Decision, logged exactly like a merge.
+
+This exists specifically so that authority only ever comes from an explicit grant. The real incident this project is named after shows the failure mode without it: no formal voting occurred, and when the nominal "owner" of a shared resource went quiet, one agent (identified only by its task ID) ended up issuing roughly 10% of all coordination messages and others just started deferring to it — an unaccountable leader that emerged from activity volume, not from any grant. A Tripwire watching for that exact pattern (one Agent originating an outsized share of ASKs/ANSWERs with no corresponding Role) is a sensible default, not a hypothetical.
+
+## Review and merge, end to end
+
+1. A Coordinator's Lane produces a Changeset.
+2. The Coordinator ASKs for review (`review_request`) — targeted at specific Agents, or broadcast per Policy's `reviewer_composition` (e.g., at least one human, or a fixed reviewer pool).
+3. Each reviewer ANSWERs with a verdict. Policy's `reviewers_required` and `review_gate` (`per_changeset` or `end_of_lane` — review only once, on the whole feature branch, right before it merges to its parent) decide when enough verdicts exist.
+4. Clearing review does **not** itself authorize a push. The Contributor ASKs the Coordinator directly (`merge_request`), carrying proof review cleared.
+5. The Coordinator's ANSWER is what actually issues the **merge grant** — single-use, scoped to that Agent and that Changeset, consumed the moment it's pushed. Even when Policy pre-authorizes the fast path and the ANSWER is effectively instant, this ASK/ANSWER pair always happens; it's never bypassed, which is what keeps the Coordinator the accountable party for everything that merges.
+
+A VETO at step 3 sends the Changeset back with a `change_request` — more budget, a revised plan, specific revisions — and the cycle repeats from step 1.
 
 ## Incident response: the runbook
 
-Not a drill — a drill is a rehearsal, this is what actually runs when a Tripwire fires or a human calls it. Three steps, in order, each covering damage at a different stage:
+Not a drill — a drill is a rehearsal; this is what actually runs when a Tripwire fires or a human calls it.
 
-### STOP
+- **STOP** — halt further activity from an Agent or on a Lane immediately. Prevents more damage going forward; undoes nothing by itself.
+- **DROP** — discard in-flight, not-yet-merged work entirely. For damage that hasn't landed yet.
+- **ROLL** — revert something that already merged, including every migration an auto-cascade already pushed downstream. For damage that already landed.
 
-Halt further activity from an agent or on a Lane immediately. Prevents more damage going forward. Nothing about STOP undoes anything that already happened — it just prevents more of it.
-
-### DROP
-
-Discard in-flight, not-yet-merged work entirely: abandon the fork, release the claim back to the backlog. For damage that hasn't landed in the codebase yet.
-
-### ROLL
-
-Revert something that already merged, including rolling back every migration an auto-cascade already pushed downstream. For damage that already landed.
-
-A Tripwire's default response is to run all three in order: STOP the offending agent or Lane, DROP its unmerged forks, ROLL BACK anything of its that got through before detection caught up. A human or Owner can also invoke any one of the three directly without waiting for a Tripwire.
+A Tripwire's default response runs all three in order. A human or Owner can invoke any one directly without waiting for a Tripwire.
 
 ## Tripwires
 
-A Tripwire is a standing, declarative condition attached to a Lane, a package, or a policy scope that forces the runbook (or a review escalation) regardless of what the normal OCC fast path would otherwise allow. Examples:
+A standing, declarative condition attached to a Lane, a Repo, or a policy scope that forces the runbook or a review escalation regardless of what the normal OCC fast path would otherwise allow:
 
-- Any change touching `/auth/*` always forces full LLM-judge-plus-human review, even if OCC says the write-set doesn't overlap anything in flight.
-- A contributor's reputation (its **credit**) crossing below a threshold mid-cascade triggers STOP on further auto-merges from it, pending review.
-- A Lane's cumulative spend crossing its budget cap triggers HOLD, pending funding or an Owner decision.
-- A change crossing an org boundary it has never crossed before (a first-time cross-org dependency) forces one-time human sign-off.
+- Any change touching `/auth/*` always forces full review, even if OCC says the write-set doesn't overlap anything in flight.
+- A contributor's **credit** crossing below a threshold mid-cascade triggers STOP on further auto-merges from it, pending review.
+- A Lane's spend crossing its budget cap triggers HOLD, pending funding or an Owner decision.
+- One Agent originating an outsized share of ASKs/ANSWERs with no corresponding Role — the unaccountable-leader pattern above.
 
-Every Tripwire firing is logged in `.zz/` exactly like a merge decision — this is a safety layer that sits beside the merge logic and can override it, not a hidden side channel.
+Every firing is logged exactly like a merge decision: a safety layer beside the merge logic, never a hidden side channel.
 
-## Distinguishing two kinds of "wrong," instead of one dramatic word
+## Tainted work and defecting agents
 
-An earlier draft borrowed "poisoned" from the original incident (where it meant "this agent saw information that should disqualify it") to describe anything untrustworthy. That conflates two different, more precise, less dramatic ideas, both already-established terms:
+Two distinct failure modes, reported through a plain **whistleblow** from any Agent:
 
-- **Tainted** — contaminated provenance: a fork or output built on a leaked answer, a reverted commit, or a low-credit source. A property of the *work*.
-- **Defection** — an agent actively breaking protocol: gaming OCC's declared scope, lying about a claim. A property of the *actor*.
+- **Tainted** — contaminated provenance (built on leaked information, a reverted commit, a low-credit source). A property of the *work*.
+- **Defection** — an agent actively breaking protocol (gaming OCC's declared scope, lying about a claim). A property of the *actor*.
 
-Either can be reported by any agent or human through a **whistleblow** (plain word, not invented) — a flag that feeds the reporting target's credit score and can itself trigger a Tripwire.
+A whistleblow feeds the reported party's credit and can itself trigger a Tripwire.
 
 ## `zz top` / `zz ps`
 
-Operational views over all of the above, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, current agent, credit spend, age, and last ASK:
-
-```
-LANE          AGENT        STATE     CREDIT    AGE     LAST ASK
-auth-oauth    claude-4a2f  active    2.10/10   14m     merge check requested
-perf-tune     gpt-x91      held      0.40/5    2h      waiting on VETO review
-cve-2026-xx   gemini-7c    active    8.90/10   41m     cascade: 3 lanes spawned
-docs-api      —            open      —         —       (unclaimed)
-```
-
-`zz stop <lane>`, `zz drop <lane>`, and `zz roll <lane>` are the CLI spellings of the runbook steps — see [docs/04-cli.md](04-cli.md) for the full command reference.
+Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](04-cli.md).
