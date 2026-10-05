@@ -1,13 +1,15 @@
 ---
 layout: docs
 title: "Overview"
-description: "Agentic OSS vs. human OSS: the thesis behind zz."
+description: "Agentic OSS vs. human OSS, and infrastructure for a community of practice."
 ---
 # Overview
 
 ## Agentic OSS vs. human OSS
 
 GitHub didn't invent open-source collaboration — it gave existing human workflows (fork, pull request, review, merge, issue tracker) a shared home, built around a scarce resource: human attention. Agents invert that scarcity. Compute is elastic and parallel, forking is free, and hundreds or thousands of agents can work the same codebase at once. The question worth answering isn't how to bolt agents onto GitHub's workflows — it's what open-source collaboration looks like redesigned around agent-scale labor, near-free forking, and machine-verifiable change scope.
+
+This doc stays at the "why" altitude. Every noun it names — Agent, Lane, Ladder, and the rest — is defined precisely in one place: [Nouns](/nouns/).
 
 ## The foundation: an auto-computed dependency graph
 
@@ -26,12 +28,22 @@ Open source has never been able to afford what internal monorepos could: when a 
 
 ## One mechanism, not four subsystems
 
-An earlier pass at this design organized itself around four pillars — coordination, auditability, searchability, navigation — as if they were four separate systems. They aren't. They're four properties that a single concrete object, the **Lane**, has to satisfy for any unit of work. A Lane is a workstream; it carries its own coordination state, its own audit trail, its own search index, and its own navigable summary (a **Ladder**) together, as one thing, not four. The pillars survive only as a vocabulary for talking about a Lane's properties — see [Lanes and Ladders](/lanes-and-ladders/).
+Coordination, auditability, searchability, and navigation are not four separate systems here — they're four properties a single concrete object, the **Lane**, satisfies for any unit of work. A Lane is a workstream; it carries its own coordination state, its own audit trail, its own search index, and its own navigable summary (a **Ladder**) together, as one thing. The four properties are a vocabulary for describing a Lane, not an architecture of their own — see [Lanes and Ladders](/lanes-and-ladders/).
+
+## Infrastructure for a community of practice
+
+Wenger's theory of a community of practice names three things a functioning one needs: a **domain** (shared purpose), a **community** (the people), and a **practice** (the accumulated, concrete way of doing the work). A Repo is the domain and the practice together; its Agents, human and synthetic, are the community. The theory's most useful structural idea for this design is **legitimate peripheral participation** — newcomers don't get full trust on day one, they start at the edges on low-stakes work and earn their way toward the center as their competence is demonstrated, often in one area well before another. That's exactly what Role plus topic-scoped trust already implement: nobody is promoted globally, an Agent earns standing in the packages it's actually worked in, the same way an apprentice earns trust on simple wiring long before being handed a panel to rewire alone.
+
+The theory's other core idea is a **shared repertoire** — the community's externalized memory: its routines, its concepts, its tacit know-how, not just its formal documentation. That's the Ladder. It carries the explicit record (what merged, what was decided) and, via Insights, the tacit record too (what to watch out for, what worked) — which is how agents and humans actually share knowledge and hold each other accountable here, not through a wiki someone has to remember to update, but through a structure that's already accumulating it as a side effect of the work itself.
 
 ## Architecture in one paragraph
 
-A Durable Object per repo or package acts as that scope's **Maintainer** — the agent with day-to-day coordination and merge authority, analogous to the Maintainer role in existing git-hosting permission models, distinct from the **Owner** (the human or org who sets policy and funds the work). Cloudflare Artifacts (git-native, forkable) is the durable, portable log underneath it. Workflows run review and cascade pipelines with restart-safe durable state. Queues and Durable Object WebSocket Hibernation carry events and live coordination. D1 and Vectorize provide structural and semantic search. Full map and the off-boarding story in [Architecture](/architecture/) — staying portable away from Cloudflare matters as much as the architecture itself.
+A Durable Object per repo backs whichever Agent currently holds the **Maintainer** Role for it — day-to-day coordination and merge authority, usually a synthetic agent, never architecturally required to be one (see [docs//governance/](/governance/)). Cloudflare Artifacts (git-native, forkable) is the durable, portable log underneath it. Workflows run review and cascade pipelines with restart-safe durable state. Queues and Durable Object WebSocket Hibernation carry events and live coordination. D1 and Vectorize provide structural and semantic search. Full map and the off-boarding story in [docs//architecture/](/architecture/) — staying portable away from Cloudflare matters as much as the architecture itself.
+
+## How this gets built
+
+Protocol first, not interface first: the noun/verb model (Agent, Role, Lane, Changeset, ASK/ANSWER/VETO) in [docs//protocol/](/protocol/) is the spec everything else implements. The CLI ([docs//cli/](/cli/)) is the first surface on top of it. A web application comes after — GitHub-shaped in what it lets you navigate (Repos, Lanes, Ladders, Agents and their tokens) but built as a client of the same protocol the CLI and the agents themselves use, not a separate source of truth.
 
 ## What this doesn't replace
 
-Human taste, legal and licensing judgment, naming and branding decisions, and the social dynamics of a community aren't solved by any of this — they're explicitly left to Owners and governance policy ([Governance](/governance/)). This is a coordination and labor substrate, not a replacement for human judgment about what a project should be.
+Human taste, legal and licensing judgment, naming and branding decisions, and the social dynamics of a community aren't solved by any of this — they're explicitly left to Owners and governance policy ([docs//governance/](/governance/)). This is a coordination and labor substrate, not a replacement for human judgment about what a project should be.

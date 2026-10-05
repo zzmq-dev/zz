@@ -20,10 +20,14 @@ nav:
       url: /name-and-background/
     - title: "Overview"
       url: /overview/
+    - title: "Nouns"
+      url: /nouns/
     - title: "Lanes & Ladders"
       url: /lanes-and-ladders/
     - title: "Protocol"
       url: /protocol/
+    - title: "Prior art"
+      url: /prior-art/
     - title: "CLI"
       url: /cli/
     - title: "Data format"

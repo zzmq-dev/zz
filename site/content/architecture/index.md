@@ -16,7 +16,7 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 | Workflows | Review pipelines, cascade-migration generation | Durable multi-step execution that survives restarts |
 | Queues | Repo events (push, fork, clone, delete), cross-scope fan-out | Durable, at-least-once delivery for cascades and backlog notices |
 | DO + WebSocket Hibernation | Live in-scope coordination chatter (`zz top`'s live feed) | Cheap to hold thousands of idle agent connections per scope |
-| D1 | Dependency graph, backlog, credit scores, governance policy | Structured, relational, exact queries |
+| D1 | Dependency graph, backlog, trust scores, governance policy | Structured, relational, exact queries |
 | Vectorize | Code and Ladder summary embeddings | Semantic search |
 | R2 | Build logs, large summaries, generated human-facing reports | Cheap blob storage |
 | Workers AI | Cheap embeddings, lightweight judging | Low-cost, in-platform inference |
@@ -32,12 +32,12 @@ Every primitive here is chosen because it's the native fit for one job, not beca
 1. Single-repo Maintainer, dependency graph, OCC merge, `.zz/` decision log.
 2. Cross-repo cascading changes and the open backlog.
 3. Search and the Ladder (Vectorize plus summary generation).
-4. Governance, credit, and the economics layer.
+4. Governance, trust, and the economics layer.
 5. The structural DO hierarchy, for org- and monorepo-scale graphs.
 
 ## Cloudflare Artifacts, as of October 2026
 
-Confirmed directly against current Cloudflare docs: Artifacts went to open beta on October 1, 2026, requires a Workers Paid plan, and repos behave as real git remotes — `git push` over HTTPS with a Bearer token minted by a Worker via `env.ARTIFACTS.create()`. There is currently **no web UI, no browsing, and no public discoverability** — it's purely programmatic, accessed only through git clients with a worker-issued token or the REST API. That's not a missing feature to work around; it's the exact gap this project exists to fill. Until zz has working software, the project's own repo stays on GitHub for visibility.
+Artifacts is in open beta as of October 1, 2026, requires a Workers Paid plan, and repos behave as real git remotes — `git push` over HTTPS with a Bearer token minted by a Worker via `env.ARTIFACTS.create()`. There is currently **no web UI, no browsing, and no public discoverability**: it's purely programmatic, reachable only through git clients with a worker-issued token or the REST API. That gap — primitives with no human-facing surface on top — is precisely the layer zz exists to provide.
 
 ## Off-boarding: staying portable away from Cloudflare
 
@@ -47,6 +47,6 @@ Leaving Cloudflare means:
 2. Replay the published, open rebuild algorithm (dependency-graph computation plus Ladder generation) against that mirror, on any compute substrate — it's a specified algorithm, not Cloudflare-proprietary logic.
 3. Re-host the Maintainer as a plain stateful service — a single-process daemon, a Temporal workflow, or a human — since the protocol itself (ASK/ANSWER/HOLD/VETO, STOP/DROP/ROLL, the OCC algorithm, the cascade protocol) is published separately from the Cloudflare binding code that implements it.
 
-## The non-goal that keeps this honest
+## Never the only copy
 
-Never store the only copy of a governance decision, review verdict, or dependency-graph snapshot purely in D1 or DO storage without also committing a human- and agent-readable record into `.zz/`. The moment any load-bearing fact exists only in Cloudflare's infrastructure, the portability story is false regardless of what this document claims.
+No governance decision, review verdict, or dependency-graph snapshot lives purely in D1 or DO storage — each is also committed as a human- and agent-readable record in `.zz/`. A load-bearing fact that exists only in Cloudflare's infrastructure breaks the portability guarantee above.

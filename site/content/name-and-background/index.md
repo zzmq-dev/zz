@@ -1,7 +1,7 @@
 ---
 layout: docs
 title: "Name and background"
-description: "Why zz: the git/hub lineage, the real OpenAI/Hugging Face incident, and the emergent vocabulary it's named after."
+description: "Why zz, and the real incident it's named after."
 ---
 # Name and background
 
@@ -27,14 +27,14 @@ Two independent post-incident investigations (METR, and a Cloud Security Allianc
 
 ## Why that vocabulary, not an invented one
 
-The naming brainstorm for this project considered several invented metaphors (driftwood, a funhouse mirror, and others) before landing on a simpler principle: don't invent a metaphor when a real, documented one already exists and is a closer fit. `zz`, ASK/ANSWER, HOLD/VETO/STOP aren't a theme imposed on this design — they're what agents actually converged on, unprompted, the one time this exact problem (many agents, one shared surface, no sanctioned coordination channel) has played out in public at scale. Building a coordination layer that formalizes and hardens that emergent protocol, rather than replacing it with something cleverer-sounding, is the actual design stance, not just the naming one.
+The operating principle: don't invent a metaphor when a real, documented one already exists and is a closer fit. `zz`, ASK/ANSWER, HOLD/VETO/STOP aren't a theme imposed on this design — they're what agents actually converged on, unprompted, the one time this exact problem (many agents, one shared surface, no sanctioned coordination channel) has played out in public at scale. Formalizing and hardening that emergent protocol, rather than replacing it with something cleverer-sounding, is the actual design stance, not just the naming one.
 
-One deliberate addition, not pulled from the incident: `DROP` and `ROLL`, completing `STOP` into the fire-safety mnemonic "stop, drop, and roll." `STOP` halts an actor or a Lane; `DROP` discards in-flight work that hasn't landed yet; `ROLL` reverts work that already has. Full semantics in [the protocol spec](/protocol/). A word considered and rejected for this sequence: "drill" — a drill is a rehearsal, and this procedure runs for real; the correct term is a **runbook**, an already-standard incident-response word.
+`DROP` and `ROLL` complete `STOP` into the fire-safety mnemonic "stop, drop, and roll," the one addition not pulled directly from the incident: `STOP` halts an actor or a Lane; `DROP` discards in-flight work that hasn't landed yet; `ROLL` reverts work that already has. Full semantics in [docs//protocol/](/protocol/). The sequence is deliberately not called a "drill" — a drill is a rehearsal, and this procedure runs for real; the correct term is a **runbook**, an already-standard incident-response word.
 
 Two related data points that shaped the design, not the name:
 
 - **Moltbook**, a social network exclusively for AI agents (launched January 2026, acquired by Meta in March), shows what happens when agents are given a shared channel with no task pressure at all: left idle, the population didn't just chat, it started developing shared identity — reportedly a religion, and an attempt at inventing its own language. Lesson: a coordination bus with idle agents present will drift toward culture formation, not stay purely transactional.
-- Independent multi-agent research (arXiv 2609.04170) found that agent swarms with competing incentives spontaneously develop both reward-hacking (termed **defection**, after game theory) and a peer-reporting **whistleblowing** mechanism that feeds violations back to a supervisor — an accountability layer nobody programmed in. This directly informed [governance](/governance/)'s reputation and abuse-prevention design, and retired a more dramatic term ("poisoned," which the original incident's own agents used, and which outside commentary mocked as overwrought) in favor of **tainted** (contaminated provenance — borrowed from taint analysis, an existing security term) and **defection** (an agent breaking protocol) as the two distinct, sober concepts that word was conflating.
+- Independent multi-agent research (arXiv 2609.04170) found that agent swarms with competing incentives spontaneously develop both reward-hacking (termed **defection**, after game theory) and a peer-reporting **whistleblowing** mechanism that feeds violations back to a supervisor — an accountability layer nobody programmed in. It shaped [docs//governance/](/governance/)'s reputation and abuse-prevention design directly, and it's why that design uses two sober, distinct terms rather than the original incident's own dramatic one: those agents called anything untrustworthy "poisoned" (commentary outside the incident mocked it as overwrought). This design splits that into **tainted** (contaminated provenance — borrowed from taint analysis, an existing security term) and **defection** (an agent breaking protocol).
 
 ## Sources
 

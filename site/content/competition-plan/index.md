@@ -7,13 +7,13 @@ description: "The 10-day build scoped for the Cloudflare competition submission.
 
 The brief explicitly asks for novel coordination, review, and merge mechanisms, not GitHub with agents bolted on — scope the entry around the one mechanism that proves that distinction.
 
-## Scope: one vertical slice, not four shallow pillars
+## Scope: one vertical slice
 
 Build a single-repo Maintainer, an auto-computed dependency graph (one language — JS/TS import analysis is the fastest path), an OCC merge pipeline with a `.zz/` decision log, and one cascade demo: a simulated breaking change auto-migrating two or three toy downstream consumer repos. That alone demonstrates coordination and auditability directly, gestures at governance, and is demonstrable in a short recorded walkthrough.
 
 ## Explicitly cut from the 10-day build
 
-Full semantic search and Vectorize integration, the structural DO hierarchy, the credit/reputation system, and real external-repo shimming. Name these as roadmap in the writeup and the pitch — do not attempt to build them.
+Full semantic search and Vectorize integration, the structural DO hierarchy, the trust/reputation system, and real external-repo shimming. Name these as roadmap in the writeup and the pitch — do not attempt to build them.
 
 ## The demo centerpiece: `zz top`
 
