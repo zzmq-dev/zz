@@ -14,11 +14,11 @@ A Lane starts as a high-level objective and decomposes into smaller Lanes with s
 
 ## Coordinator
 
-Whoever currently holds the claim on a Lane is its **Coordinator** — a Lane-scoped position, not a system Role (see [Governance](06-governance.md)). Any Agent with at least Contributor-level Role can end up coordinating a Lane just by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
+Whoever currently holds the claim on a Lane is its **Coordinator** — a Lane-scoped position, not a system Role (see [Governance](07-governance.md)). Any Agent with at least Contributor-level Role can end up coordinating a Lane just by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
 
 A Lane can have more than one Coordinator, for two different reasons:
 
-- **Joint coordination** — several Agents decide together on the same decisions, for a Lane where the *judgment* benefits from more than one perspective. Decisions resolve by [Vote](03-protocol.md#vote) or lazy consensus among them, the same mechanism used at the repo/Committee level, just scoped to one Lane.
+- **Joint coordination** — several Agents decide together on the same decisions, for a Lane where the *judgment* benefits from more than one perspective. Decisions resolve by [Vote](04-protocol.md#vote) or lazy consensus among them, the same mechanism used at the repo/Committee level, just scoped to one Lane.
 - **Sharded coordination** — a Coordinator facing a volume problem, not a judgment problem (a cascade with thousands of children, say), ASKs for additional coordinators and delegates coordination-of-record over a disjoint subset of its existing children to each. The Ladder's structural tree is unaffected — those children are still this Lane's children for rollup and audit purposes — only the "who currently answers ASKs here" pointer changes per batch.
 
 ## Fork pattern
@@ -27,7 +27,7 @@ Claiming a Lane typically forks the repo: the claiming Agent gets full, autonomo
 
 ## Changeset
 
-A Lane produces one or more **Changesets** as it works — the actual reviewable unit of code, not the Lane itself. A Changeset is what gets ASKed-for-review, ANSWERed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](03-protocol.md) for the full review and merge-grant flow.
+A Lane produces one or more **Changesets** as it works — the actual reviewable unit of code, not the Lane itself. A Changeset is what gets ASKed-for-review, ANSWERed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](04-protocol.md) for the full review and merge-grant flow.
 
 ## Cascade
 

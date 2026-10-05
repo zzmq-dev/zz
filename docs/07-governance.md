@@ -21,7 +21,7 @@ A **Role** is a collection of permissions *and* operational expectations — wha
 
 ## Committee and Vote
 
-Repos whose Policy opts into collective governance have a **Committee** — by default, the set of Agents holding Maintainer. For decisions lazy consensus (see [Protocol](03-protocol.md#lazy-consensus)) isn't enough for, the Committee runs a formal **Vote**: ASF-style ballots (`+1`/`+0`/`-0`/`-1`), with the threshold set by what's being decided — lazy majority for routine business, a stricter majority for Role grants, consensus for Owner succession.
+Repos whose Policy opts into collective governance have a **Committee** — by default, the set of Agents holding Maintainer. For decisions lazy consensus (see [Protocol](04-protocol.md#lazy-consensus)) isn't enough for, the Committee runs a formal **Vote**: ASF-style ballots (`+1`/`+0`/`-0`/`-1`), with the threshold set by what's being decided — lazy majority for routine business, a stricter majority for Role grants, consensus for Owner succession.
 
 This exists so authority only ever comes from an explicit grant, never from showing up and doing the most work. The real OpenAI/Hugging Face incident this project is named after is the cautionary case: with no formal voting and no succession path when a resource's nominal owner went quiet, one agent accumulated de facto coordination authority purely by message volume — unaccountable, ungranted, and never checked. A Committee with a real Vote mechanism is the direct fix, not a hypothetical feature.
 

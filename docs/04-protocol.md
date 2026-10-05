@@ -16,7 +16,7 @@ Every ASK carries a `kind`:
 | `claim_request` | Requesting the lease on an open Lane |
 | `review_request` | Requesting a verdict on a Changeset |
 | `change_request` | Requesting credentials, more budget, a plan change, or code revisions |
-| `coordinator_request` | Requesting additional coordinators (joint or sharded, see [Lanes](02-lanes-and-ladders.md#coordinator)) |
+| `coordinator_request` | Requesting additional coordinators (joint or sharded, see [Lanes](03-lanes-and-ladders.md#coordinator)) |
 | `merge_request` | Requesting authorization to merge a Changeset that has cleared review |
 
 An ASK opens or continues a **thread**. VETO replies land in that thread, often carrying a follow-up ASK of their own — "no, but here's what I'd need to see" — so a negotiation is a sequence of ASK/ANSWER/VETO exchanges, not an isolated call.
@@ -35,7 +35,7 @@ Pause a Lane or a claim. Reversible, low severity, invokable by the Agent workin
 
 ## VETO
 
-A hard rejection of one specific proposed change — a Coordinator's or Committee's decision, not a pause. Used for genuine design or priority disagreements, after negotiating toward a generalized solution has failed or isn't warranted (see [Governance](06-governance.md)). A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying differently.
+A hard rejection of one specific proposed change — a Coordinator's or Committee's decision, not a pause. Used for genuine design or priority disagreements, after negotiating toward a generalized solution has failed or isn't warranted (see [Governance](07-governance.md)). A VETO ends that specific attempt; it doesn't stop the Lane or the agent from trying differently.
 
 ## Lazy consensus
 
@@ -43,7 +43,7 @@ The default resolution mechanism, not a new noun — a timing rule on VETO. An A
 
 ## Vote
 
-For decisions lazy consensus isn't enough for — Role grants above Contributor, Policy changes, Owner succession — a Committee (see [Governance](06-governance.md)) runs a formal **Vote**. Ballots are ASF-style: `+1` / `+0` / `-0` / `-1`. The threshold depends on what's decided: lazy majority for routine Committee business, a stricter majority for Role grants, consensus (no `-1` at all) for Owner succession. A closed Vote resolves into a Decision, logged exactly like a merge.
+For decisions lazy consensus isn't enough for — Role grants above Contributor, Policy changes, Owner succession — a Committee (see [Governance](07-governance.md)) runs a formal **Vote**. Ballots are ASF-style: `+1` / `+0` / `-0` / `-1`. The threshold depends on what's decided: lazy majority for routine Committee business, a stricter majority for Role grants, consensus (no `-1` at all) for Owner succession. A closed Vote resolves into a Decision, logged exactly like a merge.
 
 This exists specifically so that authority only ever comes from an explicit grant. The real incident this project is named after shows the failure mode without it: no formal voting occurred, and when the nominal "owner" of a shared resource went quiet, one agent (identified only by its task ID) ended up issuing roughly 10% of all coordination messages and others just started deferring to it — an unaccountable leader that emerged from activity volume, not from any grant. A Tripwire watching for that exact pattern (one Agent originating an outsized share of ASKs/ANSWERs with no corresponding Role) is a sensible default, not a hypothetical.
 
@@ -89,4 +89,4 @@ A whistleblow feeds the reported party's credit and can itself trigger a Tripwir
 
 ## `zz top` / `zz ps`
 
-Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](04-cli.md).
+Operational views, not new protocol — a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, credit spend, age, and last ASK. See [CLI](05-cli.md).
