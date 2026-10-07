@@ -5,11 +5,11 @@ description: "What Maintainer agents store, and the .zz/ directory."
 ---
 # Data format
 
-Two layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), and a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`). Nothing in the DO layer should be the only copy of anything that matters — see [Architecture](/architecture/) on portability.
+Two layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), and a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`). Nothing in the DO layer should be the only copy of anything that matters. See [Architecture](/architecture/) on portability.
 
 ## Why `.zz/` and not git notes
 
-Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files — visible on any host, diffable like anything else.
+Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files, visible on any host and diffable like anything else.
 
 ## `.zz/` directory layout
 
@@ -31,7 +31,7 @@ Git notes (`refs/notes/*`) require a separate command to even see, and most git 
     <agent-id>.json           # this repo's local view of an agent's trust, per topic
 ```
 
-Cascades have no file of their own — a cascade is a Lane whose `trigger.kind` is `dependency_cascade`; it lives in `lanes/` like any other.
+Cascades have no file of their own. A cascade is a Lane whose `trigger.kind` is `dependency_cascade`, and it lives in `lanes/` like any other.
 
 ## `policy.yaml`
 
@@ -77,7 +77,7 @@ escalation:
 }
 ```
 
-Scored per topic, not globally — an Agent earns trust in the areas it's actually worked, the way a Contributor earns it in one area long before being trusted in another. `min_trust_for_fast_path` in `policy.yaml` is checked against the topic a Changeset's scope falls under, not a single number for the whole repo.
+Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked, the way a Contributor earns it in one area long before being trusted in another. `min_trust_for_fast_path` in `policy.yaml` is checked against the topic a Changeset's scope falls under.
 
 ## `lanes/<lane-id>.json`
 
@@ -102,7 +102,7 @@ Scored per topic, not globally — an Agent earns trust in the areas it's actual
 }
 ```
 
-An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition — just a captured observation, tagged `good` or `bad`, attributed to whoever noticed it. It's what the Ladder draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#ladder).
+An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `good` or `bad` and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
 A cascade's top-level Lane differs only in `trigger` and in having `children` that reference a different `repo` than its own:
 
@@ -156,7 +156,7 @@ A cascade's top-level Lane differs only in `trigger` and in having `children` th
 }
 ```
 
-`llm_judge` is populated only when the fast path didn't apply — null is itself part of the audit story: it shows a merge was fully mechanical.
+`llm_judge` is populated only when the fast path didn't apply. Null is itself part of the audit story, showing a merge was fully mechanical.
 
 ## `votes/<vote-id>.json`
 
@@ -175,4 +175,4 @@ A cascade's top-level Lane differs only in `trigger` and in having `children` th
 
 ## Durable Object state (not committed, rebuildable)
 
-The Maintainer DO holds the live, authoritative version of everything above, plus what doesn't need to be portable: active WebSocket connections for the coordination bus, the current claim/lease table with TTLs, and the cached dependency graph. All of it is a materialized view computable by replaying `.zz/` and the git log — never the only copy. Trust aggregated across repos lives in D1 at the org/workspace level; each repo's `.zz/trust/` is a local snapshot, not the source of truth for an agent's global standing.
+The Maintainer DO holds the live, authoritative version of everything above, plus what doesn't need to be portable: active WebSocket connections for the coordination bus, the current claim/lease table with TTLs, and the cached dependency graph. All of it is a materialized view, a copy always reconstructable by replaying `.zz/` and the git log. Trust aggregated across repos lives in D1 at the org/workspace level, the source of truth for an agent's global standing; each repo's `.zz/trust/` is a local snapshot of it.
