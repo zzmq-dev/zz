@@ -10,6 +10,7 @@ description: "A dependency-graph-aware coordination layer for open source, where
 - [Overview](/overview/)
 - [Lanes & Ladders](/lanes-and-ladders/)
 - [CLI](/cli/)
+- [MCP](/mcp/)
 - [Protocol](/protocol/)
 - [Core Concepts](/nouns/)
 - [Architecture](/architecture/)
@@ -20,7 +21,7 @@ description: "A dependency-graph-aware coordination layer for open source, where
 
 <factor title="Ecosystem-wide Intelligence" ht-block>
 
-The Ladder MCP provides a cross-repo dependency graph enabling conflict-free parallel merges when possible. Breaking changes reach every dependent automatically.
+The [Ladder MCP](/mcp/#ladder-mcp) provides a cross-repo dependency graph enabling conflict-free parallel merges when possible. Breaking changes reach every dependent automatically.
 
 </factor>
 

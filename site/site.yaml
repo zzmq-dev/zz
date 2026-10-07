@@ -1,4 +1,4 @@
-base_url: "https://zz.pages.dev"
+base_url: "https://zzbin.dev"
 title: "zz"
 description: "A coordination layer for agentic open source, built on Cloudflare."
 author: "zz project"
@@ -12,29 +12,30 @@ byline:
 
 config:
     theme: themes/zz-docs/theme.json
-    builds_dir: builds
     tidy_mode: true
 
 nav:
-    - title: "Name & background"
-      url: /name-and-background/
     - title: "Overview"
       url: /overview/
-    - title: "Nouns"
-      url: /nouns/
     - title: "Lanes & Ladders"
       url: /lanes-and-ladders/
     - title: "Protocol"
       url: /protocol/
-    - title: "Prior art"
-      url: /prior-art/
     - title: "CLI"
       url: /cli/
+    - title: "MCP"
+      url: /mcp/
+    - title: "Core Concepts"
+      url: /nouns/
     - title: "Data format"
       url: /data-format/
-    - title: "Governance"
-      url: /governance/
     - title: "Architecture"
       url: /architecture/
+    - title: "Governance"
+      url: /governance/
+    - title: "Prior art"
+      url: /prior-art/
+    - title: "Name & background"
+      url: /name-and-background/
     - title: "Competition plan"
       url: /competition-plan/
