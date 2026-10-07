@@ -87,6 +87,32 @@ th { background: var(--code-bg); }
 .prose h1 { font-size: 1.8rem; margin-top: 0; }
 .prose h2 { font-size: 1.3rem; margin-top: 2.2rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
 .prose h3 { font-size: 1.05rem; }
+
+.heading-anchor {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.5em;
+  color: var(--muted);
+  opacity: 0;
+  vertical-align: middle;
+  transition: opacity 0.1s ease;
+}
+.prose h2:hover .heading-anchor,
+.prose h3:hover .heading-anchor,
+.prose h4:hover .heading-anchor,
+.prose h5:hover .heading-anchor,
+.prose h6:hover .heading-anchor,
+.heading-anchor:focus {
+  opacity: 1;
+}
+.heading-anchor:hover { color: var(--accent); }
+.heading-anchor svg { display: block; }
+.heading-anchor.copied::after {
+  content: "Copied!";
+  margin-left: 0.4em;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
 .prose ul, .prose ol { padding-left: 1.3rem; }
 
 .hero {
@@ -96,15 +122,33 @@ th { background: var(--code-bg); }
   text-align: left;
 }
 .hero h1 { font-size: 2.6rem; margin-bottom: 0.5rem; letter-spacing: -0.02em; }
-.tagline { color: var(--muted); font-size: 1.1rem; max-width: 560px; }
 
-.card-grid {
+/* page-body is the home page's whole markdown body (tagline, nav-links,
+   factor blocks, closing line) rendered as one flow. It's a real CSS grid
+   so the factor elements (no wrapper div around them) land two-per-row by
+   plain grid auto-placement; every other child spans both columns so it
+   reads as full-width prose instead of getting caught in the grid. */
+.page-body {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  column-gap: 1.75rem;
+}
+.page-body > p,
+.page-body > nav-links {
+  grid-column: 1 / -1;
+}
+.page-body > p:first-child { color: var(--muted); font-size: 1.1rem; max-width: 560px; }
+.page-body > p:last-child { margin-top: 1rem; font-size: 0.85rem; color: var(--muted); }
+
+nav-links ul {
+  list-style: none;
+  margin: 2.5rem 0;
+  padding: 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.75rem;
-  margin-top: 2.5rem;
 }
-.card {
+nav-links li a {
   display: block;
   padding: 0.9rem 1.1rem;
   border: 1px solid var(--line);
@@ -112,7 +156,16 @@ th { background: var(--code-bg); }
   color: var(--fg);
   font-size: 0.95rem;
 }
-.card:hover { border-color: var(--accent); text-decoration: none; }
+nav-links li a:hover { border-color: var(--accent); text-decoration: none; }
+
+factor {
+  margin-top: 1.75rem;
+}
+factor h3 { font-size: 0.95rem; margin: 0 0 0.4rem; color: var(--fg); }
+factor p { font-size: 0.88rem; color: var(--muted); margin: 0; line-height: 1.5; }
+@media (max-width: 520px) {
+  .page-body { grid-template-columns: 1fr; }
+}
 
 @media (max-width: 720px) {
   .layout { flex-direction: column; }
