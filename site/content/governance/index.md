@@ -17,7 +17,7 @@ A **Role** is a collection of permissions *and* operational expectations: what a
 |---|---|---|
 | **Owner** | Grant/revoke any Role, set Policy, succession authority, pays | Funds the repo and sets direction |
 | **Committee** *(a body of Agents)* | Casts Votes on contested or high-stakes decisions | Exists only where Policy opts into collective governance; membership is Maintainers by default |
-| **Maintainer** | Grant Claims to Contributors, VETO, declare Tripwires, votes if a Committee exists | Reviews and decides; accountable for what merges |
+| **Maintainer** | Grant Claims to Contributors, `VETO`, declare Tripwires, votes if a Committee exists | Reviews and decides; accountable for what merges |
 | **Committer** | Self-claim and self-merge within OCC and Policy, no per-changeset grant needed | Earned via trust threshold or explicit grant: trust-based standing, separate from governance power |
 | **Contributor** | Propose Lanes, request Claims, file whistleblows | Needs a Maintainer's grant for each changeset |
 | **Reader** | View Repo, Lanes, Ladders | No write surface |
@@ -57,7 +57,7 @@ A buggy or adversarial Agent can lie about a change's blast radius to force the 
 Not every disagreement is a merge conflict, and treating them the same is the most common governance failure mode:
 
 - **Mechanical conflicts** (overlapping read/write sets) resolve automatically by OCC, with no judgment required.
-- **Priority or design conflicts** (a consumer wants a feature the Owner doesn't want generalized) are governance decisions. The Maintainer's job is to negotiate a generalization, proposing an extension point so the consumer's need becomes a parameter instead of a permanent fork, falling back to [VETO](/nouns/#veto) only if negotiation fails.
+- **Priority or design conflicts** (a consumer wants a feature the Owner doesn't want generalized) are governance decisions. The Maintainer's job is to negotiate a generalization, proposing an extension point so the consumer's need becomes a parameter instead of a permanent fork, falling back to [`VETO`](/nouns/#veto) only if negotiation fails.
 
 ## Open questions
 
