@@ -5,16 +5,16 @@ description: "The build scoped for the Cloudflare competition submission, and th
 ---
 # Competition plan
 
-The brief explicitly asks for novel coordination, review, and merge mechanisms. Scope the entry around the one mechanism that makes that case clearest, across every surface a real user or agent touches it from.
+The brief explicitly asks for novel coordination, review, and merge mechanisms. Scope the entry around the one mechanism that makes that case clearest, across every surface a user or agent touches it from.
 
 ## What we're building
 
-1. **Core engine**: a minimal Lanes and Ladders implementation, enough for multiple actors to collaborate on a real change. Maintainer and Lane Durable Objects, `.zz/` decision log, OCC merge.
+1. **Core engine**: a minimal Lanes and Ladders implementation, enough for multiple actors to collaborate on a change. Maintainer and Lane Durable Objects, `.zz/` decision log, OCC merge.
 2. **Roles**: Maintainer, Contributor, and a public-consumer Reader, enforced as static grants on every action the engine exposes.
 3. **TUI**: a terminal app for humans, `zz top`/`zz ps` plus the Lane lifecycle commands already sketched in [CLI](/cli/).
 4. **MCP server**: the same actions, exposed as tools for agents, per [MCP](/mcp/).
 5. **Web app**: a minimal browser surface over the same engine.
-6. **Cross-repo demo**: a breaking change in one toy repo cascading into related Lanes in two or three toy downstream repos.
+6. **Cross-repo demo**: a breaking change in a real, existing repo (superagent) cascading into a related Lane in a real downstream consumer (supertest), onboarded from GitHub rather than built as a toy example.
 
 One engine, three interfaces, one demo that exercises all of it at once.
 
@@ -24,7 +24,7 @@ Role enforcement and the Trust/reputation system are different things, and only 
 
 ## Explicitly cut from this build
 
-Full semantic search and Vectorize integration, the structural DO hierarchy, the Trust/reputation scoring system, and real external-repo shimming. The cross-repo demo uses toy repos we control, not arbitrary existing GitHub repos. Name all of this as roadmap in the writeup and the pitch. Do not attempt to build it.
+Full semantic search and Vectorize integration, the structural DO hierarchy, and the Trust/reputation scoring system. Name all of this as roadmap in the writeup and the pitch. Do not attempt to build it.
 
 ## Tech stack
 
@@ -43,8 +43,8 @@ Lead with the cascading-obligation mechanism: open source has never been able to
 - Dependency-graph computation accuracy for the demo language, under a short timeline.
 - Durable Object and Workflow integration maturity for patterns this specific: an OCC claim ledger, cascade orchestration.
 - MCP server maturity on Workers specifically; fall back to a local stdio MCP server proxying the same API if the hosted path stalls.
-- Three client surfaces is real scope for the time available. If the week runs tight, the web app is the one to cut down first, to a read-only viewer with no write actions, before cutting anything from the engine, TUI, or MCP server.
-- Making the mechanism legible in a short video: keep the toy example small and visual, three or four tiny repos, so the mechanism is obvious on screen.
+- Three client surfaces is a lot to cover in the time available. If the week runs tight, the web app is the one to cut down first, to a read-only viewer with no write actions, before cutting anything from the engine, TUI, or MCP server.
+- Making the mechanism legible in a short video: superagent and supertest are both small, well-known enough that a judge can follow what's happening on screen without a code tour.
 
 ## Schedule
 
@@ -57,7 +57,7 @@ Today is 2026-10-07; submission is due 2026-10-14. That's 7 days, not the 10 an 
 | 3 | TUI: `zz top`/`zz ps` plus claim/`ASK`/`ANSWER` commands, as a thin client over the API. |
 | 4 | MCP server: Lane MCP and Ladder MCP tools over the same engine. |
 | 5 | Web app: minimal live dashboard, view plus claim/`ASK`/`ANSWER`. |
-| 6 | Cross-repo cascade demo across toy repos; record the demo video. |
+| 6 | Cross-repo cascade demo across superagent/supertest; record the demo video. |
 | 7 | Polish, writeup, submission. |
 
 This is tight for five deliverables in seven days. The two corners to cut first if a day slips: the web app loses its write actions and becomes view-only, and the MCP server wraps the TUI's existing command handlers directly rather than getting its own tool design pass.
