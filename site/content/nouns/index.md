@@ -51,11 +51,11 @@ An Agent's lease on a Lane, or on a reviewer slot on a Changeset, the fine-grain
 
 ### Changeset
 
-The reviewable unit of code a Lane produces, ASKed-for-review and ANSWERed on its own. [Lanes and Ladders](/lanes-and-ladders/#changeset).
+The reviewable unit of code a Lane produces, `ASK`ed-for-review and `ANSWER`ed on its own. [Lanes and Ladders](/lanes-and-ladders/#changeset).
 
 ### Merge grant
 
-A single-use, scoped authorization issued by a Lane's Coordinator in answer to a `merge_request` ASK, consumed the moment a Changeset is pushed. Always issued explicitly, even on the OCC fast path. [Protocol](/protocol/#review-and-merge-end-to-end).
+A single-use, scoped authorization issued by a Lane's Coordinator in answer to a `merge_request` `ASK`, consumed the moment a Changeset is pushed. Always issued explicitly, even on the OCC fast path. [Protocol](/protocol/#review-and-merge-end-to-end).
 
 ### Cascade
 
@@ -83,7 +83,7 @@ A request, targeted at one Agent or broadcast to an audience (a structural scope
 
 ### ANSWER
 
-A response to an ASK: grant, deny, or inform. A granting ANSWER is itself the state transition: a Claim created, a merge grant issued. [Protocol](/protocol/#answer).
+A response to an `ASK`: grant, deny, or inform. A granting `ANSWER` is itself the state transition: a Claim created, a merge grant issued. [Protocol](/protocol/#answer).
 
 ### HOLD
 
@@ -91,7 +91,7 @@ A reversible pause on a Lane or Claim, with no judgment implied. [Protocol](/pro
 
 ### VETO
 
-A hard rejection of one specific proposed change, from a Coordinator or Committee. Often carries a follow-up ASK. [Protocol](/protocol/#veto).
+A hard rejection of one specific proposed change, from a Coordinator or Committee. Often carries a follow-up `ASK`. [Protocol](/protocol/#veto).
 
 ### Vote
 
@@ -99,7 +99,7 @@ A formal ASF-style ballot (`+1`/`+0`/`-0`/`-1`) a Committee runs for decisions l
 
 ### Lazy consensus
 
-A timing rule on VETO, with no data of its own. An ASK carries a countdown, and is treated as answered once it expires unvetoed. [Protocol](/protocol/#lazy-consensus).
+A timing rule on `VETO`, with no data of its own. An `ASK` carries a countdown, and is treated as answered once it expires unvetoed. [Protocol](/protocol/#lazy-consensus).
 
 ## Rules and safety
 
