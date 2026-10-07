@@ -106,11 +106,11 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
 }
 ```
 
-`origin` is the Lane that created this one, the one it rolls up into when it completes. `related_lanes` isn't just this Lane's own decomposition: it's every Lane descended from it at any depth, each entry carrying that Lane's own `origin` too, so the full structure is reconstructable from any single Lane's record without walking the tree. A Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how a top-level Lane (one with no `origin` of its own) ends up tracking every Lane descended from it, no matter how deep. See [Lanes and Ladders](/lanes-and-ladders/#origin-and-related-lanes) for the worked example.
+`origin` is the Lane that created this one, the one it rolls up into when it completes. `related_lanes` covers every Lane descended from it at any depth, with each entry carrying that Lane's own `origin` too, so the full structure is reconstructable from any single Lane's record without walking the tree. A Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how a top-level Lane (one with no `origin` of its own) ends up tracking every Lane descended from it, no matter how deep. See [Lanes and Ladders](/lanes-and-ladders/#origin-and-related-lanes) for the worked example.
 
 An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
-A Lane fanning out across many dependents at once (a [cascade](/lanes-and-ladders/#cascades), at scale) isn't a different shape, just a `related_lanes` list with more entries, most referencing a different `repo` than its own. `trigger.kind` stays `manual`; there's no separate cascade trigger, just a `reason` explaining why:
+A Lane fanning out across many dependents at once (a [cascade](/lanes-and-ladders/#cascades), at scale) is just a `related_lanes` list with more entries, most referencing a different `repo` than its own. `trigger.kind` stays `manual`, with a `reason` explaining why:
 
 ```json
 {

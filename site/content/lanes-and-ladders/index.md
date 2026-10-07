@@ -19,11 +19,11 @@ A Lane is identified by the tuple `{repo, lane_id}`. Most Lanes operate within t
 
 ### Origin and related lanes
 
-Lanes aren't a strict parent/child tree. They're peer workstreams, tasks rather than sub-tasks, so the relationship between them is tracked through two fields instead of a hierarchy.
+Lanes are peer workstreams, tracked through two fields.
 
 A Lane's `origin` is whichever Lane created it, the one it rolls up into when it completes, either by a literal git merge back into the origin's branch, or, when there's no direct merge path (a cross-repo cascade, say), by rolling its finished rung up into the origin's Ladder. A Lane with no `origin` is a top-level Lane.
 
-A Lane's `related_lanes` isn't just what it directly spawned. It's every Lane descended from it, at any depth. Say Lane 1 decomposes into Lanes 2, 3, and 4; Lane 2 decomposes into 5, 6, and 7; Lane 3 decomposes into 8; and Lane 7 decomposes into 9 and 10. Lane 1's related lanes are all nine of the others, not just 2, 3, and 4, and Lane 2's related lanes include 9 and 10 even though Lane 2 never directly spawned them. Each Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how that aggregation happens without anyone walking the tree.
+A Lane's `related_lanes` covers every Lane descended from it, at any depth. Say Lane 1 decomposes into Lanes 2, 3, and 4; Lane 2 decomposes into 5, 6, and 7; Lane 3 decomposes into 8; and Lane 7 decomposes into 9 and 10. Lane 1's related lanes are all nine of the others: 2 through 10. Lane 2's related lanes include 9 and 10 too, picked up from Lane 7's own decomposition. Each Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how that aggregation happens without anyone walking the tree.
 
 ### Fields
 
@@ -68,19 +68,19 @@ A Lane produces one or more **Changesets** as it works, the reviewable units of 
 
 ### Cascades
 
-Work decomposition can run at any scale, and a cascade is just the name for when it runs at a very large one: a single change whose impact fans out to hundreds or thousands of dependents at once instead of a handful. A vulnerability patched in a widely-used SSL library is the clearest case: every downstream consumer needs the fix, the fix is usually mechanical, and the urgency is real rather than routine backlog priority.
+Work decomposition can run at any scale, and a cascade is the name for when it runs at a very large one: a single change whose impact fans out to hundreds or thousands of dependents at once. A vulnerability patched in a widely-used SSL library is the clearest case: every downstream consumer needs the fix, the fix is usually mechanical, and it needs to happen immediately, ahead of routine backlog work.
 
-The mechanism is unchanged from any other cross-repo decomposition (above): the Maintainer of the changed repo checks its dependency graph, and for each dependent that needs updating, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. What changes at this scale isn't the mechanism, it's what the mechanism has to cope with:
+The mechanism stays the same as any other cross-repo decomposition (above): the Maintainer of the changed repo checks its dependency graph, and for each dependent that needs updating, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. What scale changes is what that mechanism has to cope with:
 
-- **Coordination load**: a Maintainer `ASK`ing thousands of other Maintainers one at a time doesn't scale on its own. This is exactly the problem sharded coordination (above) exists for.
-- **Patch generation**: a mechanical migration (a renamed method, a bumped version pin) can often be generated once and attached to every `ASK`, rather than leaving each dependent's Maintainer to write it themselves.
+- **Coordination load**: a Maintainer `ASK`ing thousands of other Maintainers one at a time needs the sharded coordination (above) that volume problem exists for.
+- **Patch generation**: a mechanical migration (a renamed method, a bumped version pin) can often be generated once and attached to every `ASK`, saving each dependent's Maintainer from writing it themselves.
 - **Urgency and budget**: a security fix needs to jump ahead of routine backlog work, which Policy's ordinary budget and scheduling defaults don't account for.
 
-None of this needs a special Lane type. It's the same `ASK`-driven mechanism as any other related Lane, just run at a scale where the normal defaults (one Maintainer, one budget, no prioritization) stop being enough on their own.
+It's still the same `ASK`-driven mechanism as any other related Lane, run at a scale where the normal defaults (one Maintainer, one budget, no prioritization) need more support.
 
 ### Cascade policy
 
-What a Maintainer needs to control at that scale isn't fully worked out yet, but likely includes: how many `ASK`s go out concurrently, whether a fix can jump ahead of routine backlog work when it's security-critical, and whether a cascade draws from its own budget line rather than the Maintainer's ordinary one, so one urgent fan-out doesn't starve everything else in flight. This probably belongs in `policy.yaml` as its own section once it's designed; see [Data format](/data-format/).
+What a Maintainer needs to control at that scale is still being worked out, but likely includes: how many `ASK`s go out concurrently, letting a security-critical fix jump ahead of routine backlog work, and giving a cascade its own budget line, so one urgent fan-out doesn't starve everything else in flight. This probably belongs in `policy.yaml` as its own section once it's designed; see [Data format](/data-format/).
 
 ## How a Ladder works
 
