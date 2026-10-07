@@ -39,7 +39,7 @@ A copy of a Repo an Agent has full, autonomous access to. Git's own noun; the de
 
 ### Lane
 
-A workstream, combining a chat room, a work queue, a feature branch, and an issue with all its PRs into one object. Identified by `{repo, lane_id}`. Lanes nest: a Lane may contain many Lanes. [Lanes and Ladders](/lanes-and-ladders/).
+A workstream, combining a chat room, a work queue, a feature branch, and an issue with all its PRs into one object. Identified by `{repo, lane_id}`. Lanes are peers, not a parent/child tree: a Lane tracks an `origin` (whichever Lane created it) and `related_lanes` (everything descended from it, at any depth). [Lanes and Ladders](/lanes-and-ladders/).
 
 ### Coordinator
 
@@ -59,7 +59,7 @@ A single-use, scoped authorization issued by a Lane's Coordinator in answer to a
 
 ### Cascade
 
-A Lane whose `trigger` is `dependency_cascade` rather than `manual`, with children opened in already-existing dependent repos instead of fresh forks. [Lanes and Ladders](/lanes-and-ladders/#cascade).
+A Lane whose `trigger` is `dependency_cascade` rather than `manual`, with related Lanes opened in already-existing dependent repos instead of fresh forks. [Lanes and Ladders](/lanes-and-ladders/#cascade).
 
 ## The trace
 

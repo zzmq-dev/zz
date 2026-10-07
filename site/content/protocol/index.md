@@ -12,7 +12,7 @@ Two registers of verbs. `ASK`/`ANSWER`/`HOLD`/`VETO` are normal, voluntary coord
 A request, addressed one of two ways:
 
 - **Targeted**: to a specific [Agent](/nouns/#agent).
-- **Broadcast**: to an audience defined by two independent filters, a **structural scope** (this Lane, its parent, the whole repo, or another repo entirely, whether reached by a dependency-graph cascade or a [Coordinator](/nouns/#coordinator) manually decomposing one objective across repos) and a **Role filter** (Committers and above, Maintainers only, anyone). A `coordinator_request` broadcasting to "Committers+ in this repo" is the normal case, since coordinator authority carries `VETO` and merge-grant power, so the audience is pre-vetted by Role.
+- **Broadcast**: to an audience defined by two independent filters, a **structural scope** (this Lane, its origin, the whole repo, or another repo entirely, whether reached by a dependency-graph cascade or a [Coordinator](/nouns/#coordinator) manually decomposing one objective across repos) and a **Role filter** (Committers and above, Maintainers only, anyone). A `coordinator_request` broadcasting to "Committers+ in this repo" is the normal case, since coordinator authority carries `VETO` and merge-grant power, so the audience is pre-vetted by Role.
 
 Every `ASK` carries a `kind`:
 
@@ -60,7 +60,7 @@ This exists specifically so that authority only ever comes from an explicit gran
 
 1. A Coordinator's Lane produces a Changeset.
 2. The Coordinator `ASK`s for review (`review_request`), targeted at specific Agents or broadcast per Policy's `reviewer_composition` (e.g., at least one human, or a fixed reviewer pool).
-3. Each reviewer `ANSWER`s with a verdict. Policy's `reviewers_required` and `review_gate` (`per_changeset`, or `end_of_lane` for review only once, on the whole feature branch, right before it merges to its parent) decide when enough verdicts exist.
+3. Each reviewer `ANSWER`s with a verdict. Policy's `reviewers_required` and `review_gate` (`per_changeset`, or `end_of_lane` for review only once, on the whole feature branch, right before it merges to its origin) decide when enough verdicts exist.
 4. Clearing review only makes the Contributor eligible to request a merge. It `ASK`s the Coordinator directly (`merge_request`), carrying proof review cleared.
 5. The Coordinator's `ANSWER` is what issues the **merge grant**: single-use, scoped to that Agent and that Changeset, consumed the moment it's pushed. Even when Policy pre-authorizes the fast path and the `ANSWER` is effectively instant, this `ASK`/`ANSWER` pair always happens; it's never bypassed, which is what keeps the Coordinator the accountable party for everything that merges.
 

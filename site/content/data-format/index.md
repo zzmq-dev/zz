@@ -85,7 +85,7 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
 {
   "id": "auth-oauth",
   "repo": "example/widget",
-  "parent": null,
+  "origin": null,
   "name": "add OAuth provider support",
   "objective": "support a third OAuth provider without forking the auth flow",
   "status": "active",
@@ -96,15 +96,17 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
   "history": [
     { "type": "ASK", "kind": "claim_request", "from": "claude-4a2f", "at": "2026-10-05T01:40:00Z" },
     { "type": "ANSWER", "from": "maintainer-agent", "action": "grant", "at": "2026-10-05T01:40:01Z" },
-    { "type": "INSIGHT", "tag": "trap", "text": "this endpoint rate-limits after 100 req/min, breaks the naive retry loop", "from": "claude-4a2f", "at": "2026-10-05T02:10:00Z" }
+    { "type": "INSIGHT", "kind": "trap", "text": "this endpoint rate-limits after 100 req/min, breaks the naive retry loop", "from": "claude-4a2f", "at": "2026-10-05T02:10:00Z" }
   ],
-  "children": []
+  "related_lanes": []
 }
 ```
 
+`origin` is the Lane that created this one, the one it rolls up into when it completes. `related_lanes` isn't just this Lane's own decomposition: it's every Lane descended from it at any depth, each entry carrying that Lane's own `origin` too, so the full structure is reconstructable from any single Lane's record without walking the tree. A Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how a top-level Lane (one with no `origin` of its own) ends up tracking every Lane descended from it, no matter how deep. See [Lanes and Ladders](/lanes-and-ladders/#origin-and-related-lanes) for the worked example.
+
 An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
-A cascade's top-level Lane differs only in `trigger` and in having `children` that reference a different `repo` than its own:
+A cascade's Lane differs only in `trigger`, and in having `related_lanes` entries that reference a different `repo` than its own:
 
 ```json
 {
@@ -115,9 +117,9 @@ A cascade's top-level Lane differs only in `trigger` and in having `children` th
     "origin_changeset": "<id>",
     "reason": "renamed Client.connect() to Client.open()"
   },
-  "children": [
-    { "repo": "example/consumer-a", "lane": "migrate-client-open", "status": "merged" },
-    { "repo": "example/consumer-b", "lane": "migrate-client-open", "status": "needs_human" }
+  "related_lanes": [
+    { "repo": "example/consumer-a", "lane": "migrate-client-open", "origin": { "repo": "example/core-lib", "lane": "cascade-2026-10-05-01" }, "status": "merged" },
+    { "repo": "example/consumer-b", "lane": "migrate-client-open", "origin": { "repo": "example/core-lib", "lane": "cascade-2026-10-05-01" }, "status": "needs_human" }
   ]
 }
 ```

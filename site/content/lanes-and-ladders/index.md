@@ -15,7 +15,15 @@ Lanes represent a unit of work, a specific task or objective, and at the git lev
 
 ### Identity
 
-A Lane is identified by the tuple `{repo, lane_id}`. Most Lanes operate within their own repo, but a Lane may expand to contain a Lane that lives in a different repo. Each repo owns its own Lanes, but they may be composed across repos.
+A Lane is identified by the tuple `{repo, lane_id}`. Most Lanes operate within their own repo, but a Lane may be related to a Lane that lives in a different repo entirely.
+
+### Origin and related lanes
+
+Lanes aren't a strict parent/child tree. They're peer workstreams, tasks rather than sub-tasks, so the relationship between them is tracked through two fields instead of a hierarchy.
+
+A Lane's `origin` is whichever Lane created it, the one it rolls up into when it completes, either by a literal git merge back into the origin's branch, or, when there's no direct merge path (a cross-repo cascade, say), by rolling its finished rung up into the origin's Ladder. A Lane with no `origin` is a top-level Lane.
+
+A Lane's `related_lanes` isn't just what it directly spawned. It's every Lane descended from it, at any depth. Say Lane 1 decomposes into Lanes 2, 3, and 4; Lane 2 decomposes into 5, 6, and 7; Lane 3 decomposes into 8; and Lane 7 decomposes into 9 and 10. Lane 1's related lanes are all nine of the others, not just 2, 3, and 4, and Lane 2's related lanes include 9 and 10 even though Lane 2 never directly spawned them. Each Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how that aggregation happens without anyone walking the tree.
 
 ### Fields
 
@@ -30,29 +38,29 @@ A Lane is identified by the tuple `{repo, lane_id}`. Most Lanes operate within t
 
 ### Work decomposition
 
-A Lane starts as a high-level objective and decomposes into smaller Lanes with smaller objectives, so a Lane can contain many Lanes, and those lanes may exist across multiple repos.
+A Lane starts as a high-level objective and decomposes into smaller Lanes with smaller objectives, so a Lane can have many related Lanes, and those lanes may exist across multiple repos.
 
 For example, a coding objective like a full-stack feature change may span repos with no direct dependency relationship to each other, e.g. a web app, its backend data layer, and a devops repo's proxy config. These changes need to happen in coordination but may not have direct code-level dependencies that can be statically analysed. However, a repo's Maintainer knows about these connections and can inform a Coordinator of the work to do.
 
-The Coordinator proposes child Lanes via a broadcast [`ASK`](/nouns/#ask), a "work offer," and any eligible [Agent](/nouns/#agent) can [`ANSWER`](/nouns/#answer) to claim one. An open, broadcast-solicited Lane *is* a work offer, so there's no separate noun for it. Claiming it makes the claiming Agent that child Lane's Coordinator.
+The Coordinator proposes related Lanes via a broadcast [`ASK`](/nouns/#ask), a "work offer," and any eligible [Agent](/nouns/#agent) can [`ANSWER`](/nouns/#answer) to claim one. An open, broadcast-solicited Lane *is* a work offer, so there's no separate noun for it. Claiming it makes the claiming Agent that Lane's Coordinator, with this Lane as its origin.
 
 
 ### Coordinator
 
-Whoever currently holds the claim on a Lane is its **Coordinator**, a Lane-scoped position distinct from the system [Role](/nouns/#role). Any Agent with at least Contributor-level Role can end up coordinating a Lane by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into child Lanes when useful, and is the accountable party for everything that merges under it.
+Whoever currently holds the claim on a Lane is its **Coordinator**, a Lane-scoped position distinct from the system [Role](/nouns/#role). Any Agent with at least Contributor-level Role can end up coordinating a Lane by successfully claiming it. A Lane's Coordinator decides what work needs to happen to meet its objective, decomposes it into related Lanes when useful, and is the accountable party for everything that merges under it.
 
 A Lane can have more than one Coordinator, for two different reasons:
 
 - **Joint coordination**: several Agents decide together, for a Lane where the judgment benefits from more than one perspective. Decisions resolve by [Vote](/nouns/#vote) or lazy consensus among them, the mechanism used at the repo/[Committee](/nouns/#committee) level, scoped down to one Lane.
-- **Sharded coordination**: a Coordinator facing a volume problem (a cascade with thousands of children, say) `ASK`s for additional coordinators and delegates coordination-of-record over a disjoint subset of its existing children to each. The Ladder's structural tree doesn't change; those children remain this Lane's children for rollup and audit purposes, and only the "who currently answers `ASK`s here" pointer changes per batch.
+- **Sharded coordination**: a Coordinator facing a volume problem (a cascade with thousands of work tasks, say) `ASK`s for additional coordinators and delegates coordination-of-record over a disjoint subset of its related Lanes to each.
 
 These are governed by the policy of the repo, which is owned and enforced by the Maintainer.
 
 ### Fork pattern
 
-Claiming a Lane typically forks the repo, giving the claiming Agent full, autonomous access to work at its own pace. The only required coordination point back to the parent is asking to merge. This is the ordinary fork/PR pattern, formalized as the default way any Contributor gets a Lane to work in.
+Claiming a Lane typically forks the repo, giving the claiming Agent full, autonomous access to work at its own pace. The only required coordination point back to the origin is asking to merge. This is the ordinary fork/PR pattern, formalized as the default way any Contributor gets a Lane to work in.
 
-On git, a Lane is a branch, living in the origin repo or a fork depending on write access. A convention like `<agent>/<slug>-<root-lane-short-id>` keeps the branch name legible per repo, and because every descendant of one objective carries that root ID, a plain `git branch -a` or cross-repo code search finds every sibling Lane with no **zz** tooling involved. The authoritative chain still lives in the Lane's own `parent` reference below, not in the branch name.
+On git, a Lane is a branch, living in the origin repo or a fork depending on write access. A convention like `<agent>/<slug>-<root-lane-short-id>` keeps the branch name legible per repo, and because every descendant of one objective carries that root ID, a plain `git branch -a` or cross-repo code search finds every sibling Lane with no **zz** tooling involved. The authoritative chain still lives in the Lane's own `origin` reference above, not in the branch name.
 
 ### Changeset
 
@@ -60,11 +68,11 @@ A Lane produces one or more **Changesets** as it works, the reviewable units of 
 
 ### Cascade
 
-A cascade isn't a special mechanism. It's one of the integration tasks a Maintainer handles while merging a change: using the [Ladder MCP](/mcp/#ladder-mcp)'s dependency graph, it checks whether any dependents need to update to keep working, and for each one that does, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. The resulting Lane is opened in that already-existing, independent repo like any other; only its `trigger.kind` (`dependency_cascade` instead of `manual`) and `trigger.origin_changeset` record where the need came from.
+A cascade is one of the integration tasks a Maintainer handles while merging a change. Using the [Ladder MCP](/mcp/#ladder-mcp)'s dependency graph, it checks whether any dependents need to update to keep working, and for each one that does, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. The resulting Lane is opened in that already-existing, independent repo like any other; only its `trigger.kind` (`dependency_cascade` instead of `manual`) and `trigger.origin_lane` record where the need came from.
 
 ## How a Ladder works
 
-A **rung** is one node of a Ladder's standing summary, covering a single Lane. It regenerates when there is a state transition in that Lane's log, something like a Changeset merging, a child Lane completing, an `ANSWER` changing the plan, or a [Tripwire](/nouns/#tripwire) firing. Each regeneration bubbles up, so a higher-level Lane's rung always stays current with its related Lanes. Navigating a Ladder is referred to as "climbing". Climbing up the Ladder moves toward the Lane's summary; descending moves toward a specific related Lane, or unit of work in a lane, down to the exact commits a summary was built from. Every rung points back to the sources it summarizes, so nothing gets lost.
+A **rung** is one node of a Ladder's standing summary, covering a single Lane. It regenerates when there is a state transition in that Lane's log, something like a Changeset merging, a related Lane completing, an `ANSWER` changing the plan, or a [Tripwire](/nouns/#tripwire) firing. Each regeneration bubbles up, so a higher-level Lane's rung always stays current with its related Lanes. Navigating a Ladder is referred to as "climbing". Climbing up the Ladder moves toward the Lane's summary; descending moves toward a specific related Lane, or unit of work in a lane, down to the exact commits a summary was built from. Every rung points back to the sources it summarizes, so nothing gets lost.
 
 A Lane's Ladder is its own rung plus all its related Lanes' rungs, rolled up recursively, and those rungs represent the work decomposition tree. When a Lane merges into another Lane, that `merged` status change triggers the Ladder's roll up, as well as firing off other integration work tasks.
 

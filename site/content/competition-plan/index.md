@@ -17,7 +17,7 @@ Full semantic search and Vectorize integration, the structural DO hierarchy, the
 
 ## The demo centerpiece: `zz top`
 
-A live `zz top` screen recording, showing Lanes claiming, a `HOLD` firing, and a cascade spawning three child Lanes across repos, is the single most legible thing to put in the submission video. It turns an abstract coordination mechanism into something a judge can watch happen in real time.
+A live `zz top` screen recording, showing Lanes claiming, a `HOLD` firing, and a cascade spawning three related Lanes across repos, is the single most legible thing to put in the submission video. It turns an abstract coordination mechanism into something a judge can watch happen in real time.
 
 ## Pitch framing for judges
 
