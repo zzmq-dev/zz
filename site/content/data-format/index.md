@@ -96,13 +96,13 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
   "history": [
     { "type": "ASK", "kind": "claim_request", "from": "claude-4a2f", "at": "2026-10-05T01:40:00Z" },
     { "type": "ANSWER", "from": "maintainer-agent", "action": "grant", "at": "2026-10-05T01:40:01Z" },
-    { "type": "INSIGHT", "sentiment": "bad", "text": "this endpoint rate-limits after 100 req/min, breaks the naive retry loop", "from": "claude-4a2f", "at": "2026-10-05T02:10:00Z" }
+    { "type": "INSIGHT", "tag": "trap", "text": "this endpoint rate-limits after 100 req/min, breaks the naive retry loop", "from": "claude-4a2f", "at": "2026-10-05T02:10:00Z" }
   ],
   "children": []
 }
 ```
 
-An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `good` or `bad` and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
+An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
 A cascade's top-level Lane differs only in `trigger` and in having `children` that reference a different `repo` than its own:
 

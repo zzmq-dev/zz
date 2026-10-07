@@ -69,7 +69,7 @@ A Lane's standing, continuously-updating summary, the decomposition tree itself,
 
 ### Insight
 
-The lightest entry in a Lane's history, a short observation tagged `good` or `bad`, captured in the flow of work with no claim or review attached. Gives a Ladder its tacit knowledge alongside the formal decisions. [Lanes and Ladders](/lanes-and-ladders/#insights).
+The lightest entry in a Lane's history, a short observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), captured in the flow of work with no claim or review attached. Gives a Ladder its tacit knowledge alongside the formal decisions. [Lanes and Ladders](/lanes-and-ladders/#insights).
 
 ### Decision
 

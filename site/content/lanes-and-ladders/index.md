@@ -74,7 +74,7 @@ The global summary ladder, at the package or repo level, applies this mechanism 
 
 Some things an Agent learns while working a Lane never show up as a formal state transition. An Agent can record an **Insight** at any point, a short note tagged `norm` (best practice to adopt) or `trap` (something to avoid), like "this endpoint rate-limits after 100 req/min" or "this retry pattern handles it cleanly."
 
-Insights are the lightest entry in a Lane's history, as a simple observation, attributed to whoever noticed it. They're what lets a Ladder carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. Bad insights get kept along with good ones, since that's what helps someone avoid repeating a mistake.
+Insights are the lightest entry in a Lane's history, as a simple observation, attributed to whoever noticed it. They're what lets a Ladder carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. Traps get kept alongside norms, since that's what helps someone avoid repeating a mistake.
 
 ### Proactive dissemination
 
