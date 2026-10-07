@@ -43,6 +43,21 @@ export async function resolveRootTreeSha(repoDir: string): Promise<string> {
   return treeOid;
 }
 
+/**
+ * The repo's first commit (no parents) -- a fixed point that never changes
+ * for the life of the repo, unlike HEAD. The anchor for repo-wide things
+ * that don't correspond to any one file or any one commit, like most
+ * issues: plenty are never closed by a specific fix, so there's nothing
+ * else stable to attach them to. One full history walk; cache the result
+ * rather than calling this per issue.
+ */
+export async function resolveRootCommit(repoDir: string): Promise<string> {
+  const commits = await git.log({ fs, dir: repoDir, ref: "HEAD" });
+  const root = commits[commits.length - 1];
+  if (!root) throw new Error("repo has no commits");
+  return root.oid;
+}
+
 /** Expands a short (abbreviated) SHA to the full 40-character one. Git notes key by full SHA internally, so a note written under a short SHA is invisible to the real `git notes` CLI even though isomorphic-git itself round-trips it. */
 export async function expandOid(repoDir: string, shortOid: string): Promise<string> {
   return git.expandOid({ fs, dir: repoDir, oid: shortOid });
