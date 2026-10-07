@@ -52,6 +52,7 @@ This project started as a design sketch for Cloudflare's ["next git platform"](h
 - [Prior art](/prior-art/)
 - [Name & background](/name-and-background/)
 - [Competition plan](/competition-plan/)
+- [Ladder design](/ladder-design/)
 
 </nav-links>
 
