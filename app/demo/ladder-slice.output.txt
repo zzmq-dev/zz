@@ -1,0 +1,15 @@
+[file] index.js
+  The package's entry point. Wraps an app (a request handler function, or an already-listening Server) in an http(s) server and returns a chainable object with one method per HTTP verb; the actual request/response assertion logic lives in lib/test.js. Also re-exports Test, .agent(), and cookie assertions.
+  sources: b1abb67 (2012-06-26), fbf3b1d (2012-06-26), da69243 (2013-03-14), 0956c37 (2013-03-20), 8741283 (2014-03-24), #477 (2018-05-14), 64c8e79 (2019-10-02), 9ee6a1b (2020-04-20), 19dcd1e (2022-01-04), da57804 (2022-10-04), 4f89680 (2025-08-25), 71dc5fb (2026-09-22)
+  [function] index.js#module.exports
+    Takes an app and returns an object with one method per HTTP verb. If given a function, starts a real server for it, http2 if options.http2 is set and supported, otherwise plain http. If given a Server, uses it directly. Each verb method constructs a new Test bound to that server.
+    sources: 9ee6a1b (2020-04-20), da57804 (2022-10-04)
+    [lines] index.js:30-41
+      Picks the transport for the implicit server. http2 support was added 2022-10-04 and throws explicitly if options.http2 is requested on a Node build without http2, rather than failing silently later.
+      sources: da57804 (2022-10-04)
+    [lines] index.js:43-51
+      Builds one chainable method per HTTP verb (from the methods npm package), each constructing a new Test for that verb/url pair.
+      sources: b1abb67 (2012-06-26)
+    [lines] index.js:54
+      obj.del = obj.delete — a backward-compatible alias kept since 2014, from before 'delete' was legal as a method name on every supported engine.
+      sources: 8741283 (2014-03-24), a6d8f28 (2014-04-14)
