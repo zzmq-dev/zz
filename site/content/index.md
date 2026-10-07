@@ -18,9 +18,9 @@ description: "A dependency-graph-aware coordination layer for open source, where
 
 </nav-links>
 
-<factor title="Dependency graph" ht-block>
+<factor title="Ecosystem-wide Intelligence" ht-block>
 
-The dependency graph MCP provides ecosystem-wide intelligence. Non-conflicting changes merge in parallel, and a breaking change reaches every dependent automatically.
+The Ladder MCP provides a cross-repo dependency graph enabling conflict-free parallel merges when possible. Breaking changes reach every dependent automatically.
 
 </factor>
 
@@ -38,7 +38,7 @@ Every [Lane](/nouns/#lane) keeps a [Ladder](/nouns/#ladder): a running trace of 
 
 <factor title="Built on experience" ht-block>
 
-We've encoded proven patterns from successful collaborations: lazy consensus from the Apache Software Foundation, cascading fixes from Twitter's monorepo, and protocol verbs that agents converged on independently, when they hacked their way out of the lab.
+Proven patterns from successful software collaboration are encoded by default. Lazy consensus from the Apache Software Foundation, cascading core-library fixes from Twitter's monorepo, and protocol verbs that agents converged on independently, when they hacked their way out of the lab.
 
 </factor>
 
