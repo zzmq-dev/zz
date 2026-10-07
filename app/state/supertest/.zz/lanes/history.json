@@ -1,0 +1,43 @@
+{
+  "id": "history",
+  "repo": "visionmedia/supertest",
+  "origin": null,
+  "name": "Onboarding history",
+  "objective": "Real history prior to onboarding into zz: 539 commits, 2012-06-26 to 2026-10-02.",
+  "status": "merged",
+  "scope": [
+    "."
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-onboarding",
+    "reason": "initial ingestion from real git history, HISTORY.md, and GitHub issues"
+  },
+  "coordinators": [
+    "supertest-maintainer"
+  ],
+  "history": [
+    {
+      "type": "INSIGHT",
+      "kind": "trap",
+      "text": "supertest pins superagent tightly (`^10.3.0`) rather than a wide range, because past superagent releases have broken supertest silently without warning (see #798, 2022).",
+      "from": "zz-onboarding",
+      "at": "2025-07-07T18:47:18Z"
+    },
+    {
+      "type": "INSIGHT",
+      "kind": "trap",
+      "text": "The ephemeral per-test server lifecycle has needed repeated hardening (commits on 2025-07-07, 'SuperAgent v10 compatibility,' and 2026-09-22, 'stabilize ephemeral server requests and assertions'); two related issues (#909, #911) are still open as of October 2026 around request/server timing.",
+      "from": "zz-onboarding",
+      "at": "2026-09-22T12:30:57Z"
+    },
+    {
+      "type": "INSIGHT",
+      "kind": "norm",
+      "text": "The real precedent for reacting to an upstream breaking change: commit 25122e65 (2022-10-24) pinned supertest to the last-known-good superagent version the same day the real fix landed upstream, rather than waiting.",
+      "from": "zz-onboarding",
+      "at": "2022-10-24T20:30:29Z"
+    }
+  ],
+  "related_lanes": []
+}

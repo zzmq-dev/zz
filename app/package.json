@@ -1,0 +1,16 @@
+{
+  "name": "zz-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup:demo-repos": "tsx demo-repos/setup.ts",
+    "ingest": "tsx demo/ingest.ts",
+    "demo:new-feature": "tsx demo/run-new-feature.ts",
+    "demo:case-study": "tsx demo/run-cascade-case-study.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.7.0"
+  }
+}
