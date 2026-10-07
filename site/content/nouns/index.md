@@ -57,9 +57,9 @@ The reviewable unit of code a Lane produces, `ASK`ed-for-review and `ANSWER`ed o
 
 A single-use, scoped authorization issued by a Lane's Coordinator in answer to a `merge_request` `ASK`, consumed the moment a Changeset is pushed. Always issued explicitly, even on the OCC fast path. [Protocol](/protocol/#review-and-merge-end-to-end).
 
-### Cascade
+### Cascades
 
-A Lane whose `trigger` is `dependency_cascade` rather than `manual`, with related Lanes opened in already-existing dependent repos instead of fresh forks. [Lanes and Ladders](/lanes-and-ladders/#cascade).
+The name for work decomposition at a large scale: a single change whose impact fans out to many dependents at once, each getting its own related Lane in its own existing repo. Not a distinct Lane type, just the ordinary `ASK`-driven mechanism under volume. [Lanes and Ladders](/lanes-and-ladders/#cascades).
 
 ## The trace
 

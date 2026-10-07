@@ -66,9 +66,21 @@ On git, a Lane is a branch, living in the origin repo or a fork depending on wri
 
 A Lane produces one or more **Changesets** as it works, the reviewable units of code that come out of it. A Changeset is what gets `ASK`ed-for-review, `ANSWER`ed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](/protocol/#review-and-merge-end-to-end) for the full review and [merge grant](/nouns/#merge-grant) flow.
 
-### Cascade
+### Cascades
 
-A cascade is one of the integration tasks a Maintainer handles while merging a change. Using the [Ladder MCP](/mcp/#ladder-mcp)'s dependency graph, it checks whether any dependents need to update to keep working, and for each one that does, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. The resulting Lane is opened in that already-existing, independent repo like any other; only its `trigger.kind` (`dependency_cascade` instead of `manual`) and `trigger.origin_lane` record where the need came from.
+Work decomposition can run at any scale, and a cascade is just the name for when it runs at a very large one: a single change whose impact fans out to hundreds or thousands of dependents at once instead of a handful. A vulnerability patched in a widely-used SSL library is the clearest case: every downstream consumer needs the fix, the fix is usually mechanical, and the urgency is real rather than routine backlog priority.
+
+The mechanism is unchanged from any other cross-repo decomposition (above): the Maintainer of the changed repo checks its dependency graph, and for each dependent that needs updating, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. What changes at this scale isn't the mechanism, it's what the mechanism has to cope with:
+
+- **Coordination load**: a Maintainer `ASK`ing thousands of other Maintainers one at a time doesn't scale on its own. This is exactly the problem sharded coordination (above) exists for.
+- **Patch generation**: a mechanical migration (a renamed method, a bumped version pin) can often be generated once and attached to every `ASK`, rather than leaving each dependent's Maintainer to write it themselves.
+- **Urgency and budget**: a security fix needs to jump ahead of routine backlog work, which Policy's ordinary budget and scheduling defaults don't account for.
+
+None of this needs a special Lane type. It's the same `ASK`-driven mechanism as any other related Lane, just run at a scale where the normal defaults (one Maintainer, one budget, no prioritization) stop being enough on their own.
+
+### Cascade policy
+
+What a Maintainer needs to control at that scale isn't fully worked out yet, but likely includes: how many `ASK`s go out concurrently, whether a fix can jump ahead of routine backlog work when it's security-critical, and whether a cascade draws from its own budget line rather than the Maintainer's ordinary one, so one urgent fan-out doesn't starve everything else in flight. This probably belongs in `policy.yaml` as its own section once it's designed; see [Data format](/data-format/).
 
 ## How a Ladder works
 

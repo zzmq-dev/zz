@@ -46,7 +46,7 @@ Leaving Cloudflare means:
 
 1. `git clone --mirror` every repo. Artifacts speaks real git, so this is a complete, lossless export of content, history, and `.zz/` (it's just tracked files, so it comes along for free).
 2. Replay the published, open rebuild algorithm (dependency-graph computation plus Ladder generation) against that mirror, on any compute substrate, since it's a specified, published algorithm anyone can re-implement.
-3. Re-host the Maintainer as a plain stateful service: a single-process daemon, a Temporal workflow, or a human. The protocol itself (`ASK`/`ANSWER`/`HOLD`/`VETO`, `STOP`/`DROP`/`ROLL`, the OCC algorithm, the cascade protocol) is published separately from the Cloudflare binding code that implements it.
+3. Re-host the Maintainer as a plain stateful service: a single-process daemon, a Temporal workflow, or a human. The protocol itself (`ASK`/`ANSWER`/`HOLD`/`VETO`, `STOP`/`DROP`/`ROLL`, the OCC algorithm) is published separately from the Cloudflare binding code that implements it, cascades included: they run the same protocol, just at volume.
 
 ## Never the only copy
 

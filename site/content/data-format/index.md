@@ -31,7 +31,7 @@ Git notes (`refs/notes/*`) require a separate command to even see, and most git 
     <agent-id>.json           # this repo's local view of an agent's trust, per topic
 ```
 
-Cascades have no file of their own. A cascade is a Lane whose `trigger.kind` is `dependency_cascade`, and it lives in `lanes/` like any other.
+Cascades have no file of their own. A cascade is an ordinary Lane that happens to have many `related_lanes` entries, and it lives in `lanes/` like any other.
 
 ## `policy.yaml`
 
@@ -51,6 +51,10 @@ review:
 escalation:
   - scope: "packages/auth/**"
     require: human_review
+cascade:                          # not yet designed, see Lanes and Ladders
+  max_concurrent_asks: 50
+  priority_override: security_critical   # lets a fix jump ahead of routine backlog
+  budget_cap_usd: 2000            # separate from budget.monthly_cap_usd
 ```
 
 ## `roles/<agent-id>.json`
@@ -106,20 +110,16 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
 
 An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
-A cascade's Lane differs only in `trigger`, and in having `related_lanes` entries that reference a different `repo` than its own:
+A Lane fanning out across many dependents at once (a [cascade](/lanes-and-ladders/#cascades), at scale) isn't a different shape, just a `related_lanes` list with more entries, most referencing a different `repo` than its own. `trigger.kind` stays `manual`; there's no separate cascade trigger, just a `reason` explaining why:
 
 ```json
 {
-  "id": "cascade-2026-10-05-01",
-  "repo": "example/core-lib",
-  "trigger": {
-    "kind": "dependency_cascade",
-    "origin_changeset": "<id>",
-    "reason": "renamed Client.connect() to Client.open()"
-  },
+  "id": "ssl-cve-2026-1234-fix",
+  "repo": "example/core-ssl-lib",
+  "trigger": { "kind": "manual", "proposed_by": "maintainer-agent", "reason": "CVE-2026-1234: patch before public disclosure" },
   "related_lanes": [
-    { "repo": "example/consumer-a", "lane": "migrate-client-open", "origin": { "repo": "example/core-lib", "lane": "cascade-2026-10-05-01" }, "status": "merged" },
-    { "repo": "example/consumer-b", "lane": "migrate-client-open", "origin": { "repo": "example/core-lib", "lane": "cascade-2026-10-05-01" }, "status": "needs_human" }
+    { "repo": "example/consumer-a", "lane": "migrate-cve-2026-1234", "origin": { "repo": "example/core-ssl-lib", "lane": "ssl-cve-2026-1234-fix" }, "status": "merged" },
+    { "repo": "example/consumer-b", "lane": "migrate-cve-2026-1234", "origin": { "repo": "example/core-ssl-lib", "lane": "ssl-cve-2026-1234-fix" }, "status": "needs_human" }
   ]
 }
 ```
