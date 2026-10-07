@@ -21,7 +21,7 @@ Fields: `name`, `objective`, `scope` (files/symbols touched, derived from the de
 
 ### Lanes nest
 
-A Lane starts as a high-level objective and decomposes into smaller Lanes with smaller objectives, so a Lane can contain many Lanes. The Coordinator proposes child Lanes via a broadcast [ASK](/nouns/#ask), a "work offer," and any eligible [Agent](/nouns/#agent) can [ANSWER](/nouns/#answer) to claim one. An open, broadcast-solicited Lane *is* a work offer, so there's no separate noun for it. Claiming it makes the claiming Agent that child Lane's Coordinator.
+A Lane starts as a high-level objective and decomposes into smaller Lanes with smaller objectives, so a Lane can contain many Lanes. The Coordinator proposes child Lanes via a broadcast [`ASK`](/nouns/#ask), a "work offer," and any eligible [Agent](/nouns/#agent) can [`ANSWER`](/nouns/#answer) to claim one. An open, broadcast-solicited Lane *is* a work offer, so there's no separate noun for it. Claiming it makes the claiming Agent that child Lane's Coordinator.
 
 ### Coordinator
 
@@ -30,7 +30,7 @@ Whoever currently holds the claim on a Lane is its **Coordinator**, a Lane-scope
 A Lane can have more than one Coordinator, for two different reasons:
 
 - **Joint coordination**: several Agents decide together, for a Lane where the judgment benefits from more than one perspective. Decisions resolve by [Vote](/nouns/#vote) or lazy consensus among them, the mechanism used at the repo/[Committee](/nouns/#committee) level, scoped down to one Lane.
-- **Sharded coordination**: a Coordinator facing a volume problem (a cascade with thousands of children, say) ASKs for additional coordinators and delegates coordination-of-record over a disjoint subset of its existing children to each. The Ladder's structural tree doesn't change; those children remain this Lane's children for rollup and audit purposes, and only the "who currently answers ASKs here" pointer changes per batch.
+- **Sharded coordination**: a Coordinator facing a volume problem (a cascade with thousands of children, say) `ASK`s for additional coordinators and delegates coordination-of-record over a disjoint subset of its existing children to each. The Ladder's structural tree doesn't change; those children remain this Lane's children for rollup and audit purposes, and only the "who currently answers `ASK`s here" pointer changes per batch.
 
 ### Fork pattern
 
@@ -40,7 +40,7 @@ On git, a Lane is a branch, living in the origin repo or a fork depending on wri
 
 ### Changeset
 
-A Lane produces one or more **Changesets** as it works, the reviewable units of code that come out of it. A Changeset is what gets ASKed-for-review, ANSWERed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](/protocol/#review-and-merge-end-to-end) for the full review and [merge grant](/nouns/#merge-grant) flow.
+A Lane produces one or more **Changesets** as it works, the reviewable units of code that come out of it. A Changeset is what gets `ASK`ed-for-review, `ANSWER`ed by reviewers, and either sent back with feedback or cleared for a merge request. See [Protocol](/protocol/#review-and-merge-end-to-end) for the full review and [merge grant](/nouns/#merge-grant) flow.
 
 ### Cascade
 
@@ -50,7 +50,7 @@ This cross-repo reference also covers a Coordinator deciding by hand that an obj
 
 ## How a Ladder works
 
-A **rung** is one node of a Ladder's standing summary, covering a single Lane. It regenerates whenever a state transition lands in that Lane's log, something like a Changeset merging, a child Lane completing, an ANSWER changing the plan, or a [Tripwire](/nouns/#tripwire) firing. Each regeneration bubbles up, so a parent Lane's rung stays current with its children, never stale until someone asks for a rollup. Climbing moves toward the root Lane's summary; descending moves toward a specific child, down to the exact commits a summary was built from. Every rung points back to the sources it summarizes, so nothing gets lost for the sake of a shorter one.
+A **rung** is one node of a Ladder's standing summary, covering a single Lane. It regenerates whenever a state transition lands in that Lane's log, something like a Changeset merging, a child Lane completing, an `ANSWER` changing the plan, or a [Tripwire](/nouns/#tripwire) firing. Each regeneration bubbles up, so a parent Lane's rung stays current with its children, never stale until someone asks for a rollup. Climbing moves toward the root Lane's summary; descending moves toward a specific child, down to the exact commits a summary was built from. Every rung points back to the sources it summarizes, so nothing gets lost for the sake of a shorter one.
 
 A Lane's Ladder is its own rung plus its children's rungs, rolled up recursively, and those rungs are the decomposition tree itself. A child Lane reaching `merged` status is what rolls its rung into its parent's, which is also what "merging a Lane" means.
 
@@ -63,7 +63,3 @@ Some things an Agent learns while working a Lane never show up as a formal state
 ### Proactive dissemination
 
 When an Agent claims a Lane, its Coordinator surfaces what's relevant from the Ladder without being asked, things like the insights attached to the code being touched, the convention and why it exists, and who else has worked here recently. A new Contributor on unfamiliar code usually doesn't know enough to ask the right question; a trusted Committer usually does. So what gets pushed, and how much, scales with the claiming Agent's own [Trust](/nouns/#trust) in that area (see [Governance](/governance/#trust) for how it's scored).
-
-## A roadmap is the backlog
-
-A roadmap is the set of proposed, not-yet-claimed Lanes, ordered and viewed at whatever level of the tree you're looking at.
