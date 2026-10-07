@@ -8,9 +8,10 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPO_RUNG_PATH, type Rung } from "../engine/ladder.js";
-import { readRung, readRungChildren, writeLadder } from "../engine/store.js";
+import { findEmbedded, isRef, readAnchor, writeLadder } from "../engine/ladderNotes.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const repoDir = join(here, "..", "demo-repos", "supertest");
 const stateDir = join(here, "..", "state", "supertest");
 
 const indexJs: Rung = {
@@ -310,7 +311,10 @@ const issue_798: Rung = {
   kind: "issue",
   summary:
     "Filed 2022-10-23 by a user with no visibility into the already-three-weeks-old superagent#1743, hitting the same symptom from the supertest side. Closed the next day via release v6.3.1.",
-  sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-23" }],
+  sources: [
+    { kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-23" },
+    { kind: "commit", ref: "25122e6", title: "fix: bump superagent (closes #798)", author: "titanism", at: "2022-10-24" },
+  ],
   touches: ["package.json"],
   children: [
     {
@@ -406,33 +410,45 @@ const repo: Rung = {
   children: [indexJs, libDir, packageJson, release_v6_3_1, issue_798, issue_651],
 };
 
-// Write every rung as its own file under state/supertest/.zz/ladder/.
-writeLadder(stateDir, repo);
+// Write one git note per anchor (file/directory/repo/issue/release) into
+// the real clone's own notes ref; function/line/comment rungs ride along
+// embedded in their nearest anchor's note.
+await writeLadder(repoDir, stateDir, repo);
 
-// Render by reading back from disk, following children by path, one rung
-// at a time -- proving the lazy-load model actually works, not just that
-// writeLadder produced files.
-function renderFromDisk(rungPath: string, depth = 0): { text: string; count: number } {
-  const rung = readRung(stateDir, rungPath);
-  if (!rung) return { text: `${"  ".repeat(depth)}[missing] ${rungPath}`, count: 0 };
+// Render by reading back from git notes: one note read per anchor, zero
+// extra reads for anything embedded in it.
+let notesRead = 0;
+let rungsRendered = 0;
 
-  const indent = "  ".repeat(depth);
-  const lines = [`${indent}[${rung.kind}] ${rung.path}`, `${indent}  ${rung.summary}`];
-  if (rung.sources.length) {
-    lines.push(`${indent}  sources: ${rung.sources.map((s) => `${s.ref} (${s.at})`).join(", ")}`);
-  }
-  if (rung.touches?.length) {
-    lines.push(`${indent}  touches: ${rung.touches.join(", ")}`);
-  }
-  let count = 1;
-  for (const child of readRungChildren(stateDir, rung)) {
-    const sub = renderFromDisk(child.path, depth + 1);
-    lines.push(sub.text);
-    count += sub.count;
-  }
-  return { text: lines.join("\n"), count };
+function renderEmbedded(rung: import("../engine/ladderNotes.js").EmbeddedRung, depth = 0): Promise<string> {
+  return (async () => {
+    rungsRendered += 1;
+    const indent = "  ".repeat(depth);
+    const lines = [`${indent}[${rung.kind}] ${rung.path}`, `${indent}  ${rung.summary}`];
+    if (rung.sources.length) {
+      lines.push(`${indent}  sources: ${rung.sources.map((s) => `${s.ref} (${s.at})`).join(", ")}`);
+    }
+    if (rung.touches?.length) {
+      lines.push(`${indent}  touches: ${rung.touches.join(", ")}`);
+    }
+    for (const child of rung.children) {
+      if (isRef(child)) {
+        lines.push(await renderAnchor(child.ref, depth + 1));
+      } else {
+        lines.push(await renderEmbedded(child, depth + 1));
+      }
+    }
+    return lines.join("\n");
+  })();
 }
 
-const { text, count } = renderFromDisk(REPO_RUNG_PATH);
+async function renderAnchor(path: string, depth = 0): Promise<string> {
+  const anchor = await readAnchor(repoDir, stateDir, path);
+  notesRead += 1;
+  if (!anchor) return `${"  ".repeat(depth)}[missing] ${path}`;
+  return renderEmbedded(anchor, depth);
+}
+
+const text = await renderAnchor(REPO_RUNG_PATH);
 console.log(text);
-console.log(`\n${count} total rungs, read from ${count} individual files under state/supertest/.zz/ladder/.`);
+console.log(`\n${rungsRendered} total rungs, from ${notesRead} git notes (refs/notes/zz/ladder/{code,issue,release}) in the real supertest clone.`);

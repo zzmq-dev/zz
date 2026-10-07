@@ -3,10 +3,8 @@
 // until this slice is proven and gets deployed. Swapping the backing store
 // later shouldn't require changing anything above this module's interface.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { AgentRoles, Lane } from "./types.js";
-import type { Rung, StoredRung } from "./ladder.js";
-import { flatten } from "./ladder.js";
 
 function ensureDir(path: string) {
   mkdirSync(path, { recursive: true });
@@ -54,32 +52,6 @@ export function writeDecision(repoStateDir: string, commitSha: string, decision:
   writeFileSync(join(dir, `${commitSha}.json`), JSON.stringify(decision, null, 2) + "\n");
 }
 
-// One file per rung under .zz/ladder/, at a path mirroring the rung's own
-// `path` (the code path it describes). Never load the whole Ladder at once.
-function ladderFile(repoStateDir: string, rungPath: string): string {
-  return join(zzRoot(repoStateDir), "ladder", `${rungPath}.json`);
-}
-
-export function readRung(repoStateDir: string, rungPath: string): StoredRung | null {
-  const path = ladderFile(repoStateDir, rungPath);
-  if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf8")) as StoredRung;
-}
-
-export function writeRung(repoStateDir: string, rung: StoredRung): void {
-  const path = ladderFile(repoStateDir, rung.path);
-  ensureDir(dirname(path));
-  writeFileSync(path, JSON.stringify(rung, null, 2) + "\n");
-}
-
-/** Writes an entire authored Rung tree as individual per-rung files. */
-export function writeLadder(repoStateDir: string, root: Rung): void {
-  for (const stored of flatten(root)) writeRung(repoStateDir, stored);
-}
-
-/** Reads one rung's own direct children (one disk read per child, not the whole tree). */
-export function readRungChildren(repoStateDir: string, rung: StoredRung): StoredRung[] {
-  return rung.children
-    .map((childPath) => readRung(repoStateDir, childPath))
-    .filter((r): r is StoredRung => r !== null);
-}
+// Ladder storage lives in git notes (see engine/ladderNotes.ts), not here:
+// a rung is an annotation on a git object, not a standalone coordination
+// record the way a Lane or Role grant is.

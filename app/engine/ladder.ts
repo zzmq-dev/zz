@@ -12,14 +12,13 @@
 //     `source` on those files' own rungs, and separately has its own full
 //     rung (with its comment thread) living at the repo level.
 //
-// Storage: one file per rung, not one blob for the whole tree. A Ladder for
-// a real repo is thousands of rungs; a single JSON file would mean every
-// read and every write touches the entire thing. Instead each rung is
-// addressed by its own path (mirroring the code path it describes,
-// "lib/test.js/end/lines-199-267" for a line range inside a function inside
-// a file) and `children` on disk is a list of those paths, not embedded
-// objects, so reading one rung never requires loading its siblings, let
-// alone the whole repo.
+// Storage: git notes, one per rung anchored to a real git object (a file's
+// blob, a directory's tree, the repo's root tree, or the commit an
+// issue/release is tied to), not one blob for the whole tree or one file
+// per rung on disk. See engine/ladderNotes.ts and engine/gitNotes.ts.
+// This file only defines the authoring shape: build a Rung tree with
+// children nested inline, and ladderNotes.ts figures out what gets its own
+// note versus what's embedded in its nearest anchor ancestor.
 export type RungKind =
   | "repo"
   | "directory"
@@ -40,44 +39,15 @@ export interface RungSource {
   at: string;
 }
 
-/** The on-disk shape: one of these per file under .zz/ladder/. */
-export interface StoredRung {
+export interface Rung {
   path: string;
   kind: RungKind;
   summary: string;
   sources: RungSource[];
   /** Paths of other rungs this one relates to without containing them, e.g. an issue/PR's changed files. */
   touches?: string[];
-  /** Child rung paths, in order. Dir -> file -> function -> lines, or issue/PR -> comments. */
-  children: string[];
-}
-
-/** The convenient in-memory shape for authoring: children nested inline instead of by reference. */
-export interface Rung {
-  path: string;
-  kind: RungKind;
-  summary: string;
-  sources: RungSource[];
-  touches?: string[];
   children: Rung[];
 }
 
+/** The repo root rung's path. Not "." since paths double as git note lookup keys and filenames elsewhere. */
 export const REPO_RUNG_PATH = "_repo";
-
-/** Flattens a nested Rung tree into the StoredRung[] that actually gets written, one per rung. */
-export function flatten(rung: Rung): StoredRung[] {
-  const out: StoredRung[] = [];
-  const visit = (r: Rung) => {
-    out.push({
-      path: r.path,
-      kind: r.kind,
-      summary: r.summary,
-      sources: r.sources,
-      touches: r.touches,
-      children: r.children.map((c) => c.path),
-    });
-    for (const child of r.children) visit(child);
-  };
-  visit(rung);
-  return out;
-}
