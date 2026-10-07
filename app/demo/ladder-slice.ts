@@ -60,7 +60,7 @@ const indexJs: Rung = {
           path: "index.js:54",
           kind: "lines",
           summary:
-            "obj.del = obj.delete — a backward-compatible alias kept since 2014, from before 'delete' was legal as a method name on every supported engine.",
+            "obj.del = obj.delete, a backward-compatible alias kept since 2014, from before 'delete' was legal as a method name on every supported engine.",
           sources: [
             { kind: "commit", ref: "8741283", title: "Moved usage of 'del' to support the proper http verb 'delete'", author: "TJ Holowaychuk", at: "2014-03-24" },
             { kind: "commit", ref: "a6d8f28", title: "Access delete with brackets", author: "TJ Holowaychuk", at: "2014-04-14" },
@@ -72,16 +72,78 @@ const indexJs: Rung = {
   ],
 };
 
+// Kept brief; not the focus of this slice, just an anchor for the release
+// and issue rungs below, which touch it without containing it.
+const packageJson: Rung = {
+  path: "package.json",
+  kind: "file",
+  summary: "Package manifest. Pins its superagent dependency tightly rather than a wide range (see the #798 issue rung).",
+  sources: [{ kind: "commit", ref: "25122e6", title: "fix: bump superagent (closes #798)", author: "titanism", at: "2022-10-24" }],
+  children: [],
+};
+
+// A repo-level artifact, not file-shaped, so it hangs off the repo rung
+// directly instead of nesting in the directory tree.
+const release_v6_3_1: Rung = {
+  path: "releases/v6.3.1",
+  kind: "release",
+  summary: "Bumped the pinned superagent version to close #798, the same day the real upstream bug (superagent#1743) was finally fixed.",
+  sources: [
+    { kind: "commit", ref: "25122e6", title: "fix: bump superagent (closes #798)", author: "titanism", at: "2022-10-24" },
+    { kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-23" },
+  ],
+  touches: ["package.json"],
+  children: [],
+};
+
+// Thread-shaped, not containment-shaped: each comment is a child rung, in
+// order. Real comments, pulled via `gh api .../issues/798/comments`.
+const issue_798: Rung = {
+  path: "issues/798",
+  kind: "issue",
+  summary:
+    "Filed 2022-10-23 by a user with no visibility into the already-three-weeks-old superagent#1743, hitting the same symptom from the supertest side. Closed the next day via release v6.3.1.",
+  sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-23" }],
+  touches: ["package.json"],
+  children: [
+    {
+      path: "issues/798/comments/1",
+      kind: "comment",
+      summary: "titanism: \"v6.3.1 released which bumps to superagent v8.0.3 which was released a bit ago today\" (links the release).",
+      sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "titanism", at: "2022-10-24T20:31:15Z" }],
+      children: [],
+    },
+    {
+      path: "issues/798/comments/2",
+      kind: "comment",
+      summary: "smolinari: \"Thanks!\"",
+      sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-25T03:30:12Z" }],
+      children: [],
+    },
+  ],
+};
+
+const repo: Rung = {
+  path: ".",
+  kind: "repo",
+  summary: "visionmedia/supertest: a fluent assertion library for testing Node.js HTTP servers, built on superagent. 539 commits, 2012-06-26 to 2026-10-02.",
+  sources: [],
+  children: [indexJs, packageJson, release_v6_3_1, issue_798],
+};
+
 function render(rung: Rung, depth = 0): string {
   const indent = "  ".repeat(depth);
   const lines = [`${indent}[${rung.kind}] ${rung.path}`, `${indent}  ${rung.summary}`];
   if (rung.sources.length) {
     lines.push(`${indent}  sources: ${rung.sources.map((s) => `${s.ref} (${s.at})`).join(", ")}`);
   }
+  if (rung.touches?.length) {
+    lines.push(`${indent}  touches: ${rung.touches.join(", ")}`);
+  }
   for (const child of rung.children) lines.push(render(child, depth + 1));
   return lines.join("\n");
 }
 
-const output = render(indexJs);
+const output = render(repo);
 console.log(output);
 writeFileSync(join(here, "ladder-slice.output.txt"), output + "\n");
