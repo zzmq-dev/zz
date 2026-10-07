@@ -241,7 +241,7 @@ const testJs: Rung = {
           at: "2026-09-22",
         },
       ],
-      touches: ["issues/651"],
+      touches: ["asks/651"],
       children: [],
     },
     {
@@ -306,11 +306,16 @@ const release_v6_3_1: Rung = {
   children: [],
 };
 
-const issue_798: Rung = {
-  path: "issues/798",
-  kind: "issue",
+// No "issue" concept: a GitHub issue being filed is someone ASKing the
+// Maintainer about something, and a reply is either an ANSWER or another
+// ASK in the same thread, exactly the vocabulary native zz activity uses.
+// smolinari's purely social "Thanks!" isn't dropped for space; it's dropped
+// because it isn't answering anything, so it isn't protocol content.
+const ask_798: Rung = {
+  path: "asks/798",
+  kind: "ask",
   summary:
-    "Filed 2022-10-23 by a user with no visibility into the already-three-weeks-old superagent#1743, hitting the same symptom from the supertest side. Closed the next day via release v6.3.1.",
+    "smolinari ASKs about a bug: filed 2022-10-23 with no visibility into the already-three-weeks-old superagent#1743, hitting the same symptom from the supertest side.",
   sources: [
     { kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-23" },
     { kind: "commit", ref: "25122e6", title: "fix: bump superagent (closes #798)", author: "titanism", at: "2022-10-24" },
@@ -318,29 +323,23 @@ const issue_798: Rung = {
   touches: ["package.json"],
   children: [
     {
-      path: "issues/798/comments/1",
-      kind: "comment",
-      summary: "titanism: \"v6.3.1 released which bumps to superagent v8.0.3 which was released a bit ago today\" (links the release).",
+      path: "asks/798/1",
+      kind: "answer",
+      summary: "titanism ANSWERs (grant): \"v6.3.1 released which bumps to superagent v8.0.3 which was released a bit ago today\" (links the release).",
       sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "titanism", at: "2022-10-24T20:31:15Z" }],
-      children: [],
-    },
-    {
-      path: "issues/798/comments/2",
-      kind: "comment",
-      summary: "smolinari: \"Thanks!\"",
-      sources: [{ kind: "issue", ref: "#798", title: "pin superagent to 8.0.0", author: "smolinari", at: "2022-10-25T03:30:12Z" }],
       children: [],
     },
   ],
 };
 
-// Real 5-year-old issue: filed 2020, fixed-then-reverted in between, finally
-// closed 2025, with a real follow-up regression caught in its own comments.
-const issue_651: Rung = {
-  path: "issues/651",
-  kind: "issue",
+// Real 5-year-old thread: filed 2020, fixed-then-reverted in between,
+// finally closed 2025, with a real follow-up regression surfacing as a new
+// ASK in the same thread rather than just another reply.
+const ask_651: Rung = {
+  path: "asks/651",
+  kind: "ask",
   summary:
-    "\"Fix end() not called when app is started manually,\" filed 2020-05-15. Open for over 5 years: a 2025 fix attempt broke manually-started-server usage and was reverted (b6fd281), before the real underlying lifecycle work (end()'s pending-request tracking) finally closed it in 2025-07-07.",
+    "An ASK about a bug: \"end() not called when app is started manually,\" filed 2020-05-15. Open for over 5 years: a 2025 fix attempt broke manually-started-server usage and was reverted (b6fd281), before the real underlying lifecycle work (end()'s pending-request tracking) finally closed it in 2025-07-07.",
   sources: [
     { kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "(reporter)", at: "2020-05-15" },
     { kind: "commit", ref: "b6fd281", title: "fix: revert automatic server closing (per #651)", author: "titanism", at: "2025-07-07" },
@@ -348,30 +347,30 @@ const issue_651: Rung = {
   touches: ["lib/test.js/end"],
   children: [
     {
-      path: "issues/651/comments/1",
-      kind: "comment",
-      summary: "titanism: announces the fix, pointing at supertest v7.1.2 and the matching superagent release.",
+      path: "asks/651/1",
+      kind: "answer",
+      summary: "titanism ANSWERs (grant): announces the fix, pointing at supertest v7.1.2 and the matching superagent release.",
       sources: [{ kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "titanism", at: "2025-07-07T18:54:30Z" }],
       children: [],
     },
     {
-      path: "issues/651/comments/2",
-      kind: "comment",
-      summary: "jonathansamines: reports the v7.1.2 release itself introduced a real backward-incompatible regression, caught within hours.",
+      path: "asks/651/2",
+      kind: "ask",
+      summary: "jonathansamines ASKs again, a new problem in the same thread: the v7.1.2 release itself introduced a real backward-incompatible regression, caught within hours.",
       sources: [{ kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "jonathansamines", at: "2025-07-07T22:57:31Z" }],
       children: [],
     },
     {
-      path: "issues/651/comments/3",
-      kind: "comment",
-      summary: "titanism: \"You are correct, let me fix.\"",
+      path: "asks/651/3",
+      kind: "answer",
+      summary: "titanism ANSWERs (inform, not yet resolved): \"You are correct, let me fix.\"",
       sources: [{ kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "titanism", at: "2025-07-07T23:23:56Z" }],
       children: [],
     },
     {
-      path: "issues/651/comments/4",
-      kind: "comment",
-      summary: "titanism: ships v7.1.3 the same evening and deprecates v7.1.2 on npm for the regression.",
+      path: "asks/651/4",
+      kind: "answer",
+      summary: "titanism ANSWERs (grant): ships v7.1.3 the same evening and deprecates v7.1.2 on npm for the regression.",
       sources: [{ kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "titanism", at: "2025-07-07T23:29:04Z" }],
       children: [],
     },
@@ -381,7 +380,7 @@ const issue_651: Rung = {
 const packageJson: Rung = {
   path: "package.json",
   kind: "file",
-  summary: "Package manifest. Pins its superagent dependency tightly rather than a wide range (see the #798 issue rung).",
+  summary: "Package manifest. Pins its superagent dependency tightly rather than a wide range (see the #798 ask rung).",
   sources: [{ kind: "commit", ref: "25122e6", title: "fix: bump superagent (closes #798)", author: "titanism", at: "2022-10-24" }],
   children: [],
 };
@@ -407,10 +406,10 @@ const repo: Rung = {
   kind: "repo",
   summary: "visionmedia/supertest: a fluent assertion library for testing Node.js HTTP servers, built on superagent. 539 commits, 2012-06-26 to 2026-10-02, 1202 lines of real source across 5 files.",
   sources: [],
-  children: [indexJs, libDir, packageJson, release_v6_3_1, issue_798, issue_651],
+  children: [indexJs, libDir, packageJson, release_v6_3_1, ask_798, ask_651],
 };
 
-// Write one git note per anchor (file/directory/repo/issue/release) into
+// Write one git note per anchor (file/directory/repo/ask/release) into
 // the real clone's own notes ref; function/line/comment rungs ride along
 // embedded in their nearest anchor's note.
 await writeLadder(repoDir, stateDir, repo);
@@ -451,4 +450,4 @@ async function renderAnchor(path: string, depth = 0): Promise<string> {
 
 const text = await renderAnchor(REPO_RUNG_PATH);
 console.log(text);
-console.log(`\n${rungsRendered} total rungs, from ${notesRead} git notes (refs/notes/zz/ladder/{code,issue,release}) in the real supertest clone.`);
+console.log(`\n${rungsRendered} total rungs, from ${notesRead} git notes (refs/notes/zz/ladder/{code,asks/*,release}) in the real supertest clone.`);
