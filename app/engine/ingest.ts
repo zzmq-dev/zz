@@ -1,31 +1,20 @@
-// The real ingest/analysis workflow, as actual functions, not ad-hoc shell
-// exploration. Everything that previously happened as one-off `git log`/
-// `git blame`/`gh api` calls run by hand while researching a rung's real
-// content now has a named function here, callable the same way for any
-// repo, not just the one it was first written against.
-//
-// Two tiers, both honest about which they are:
-//   - Mechanical (this file): real data, lightly transformed, no narrative
-//     research. Runs unattended for any repo. This is what a `zz ladder
-//     build` actually automates today.
-//   - Deep research (not here): reading a file and genuinely understanding
-//     what a function does, or reading a real comment thread and judging
-//     which replies are asks versus answers, the way asks/798 and asks/651
-//     got built. That's not mechanical, and nothing in this file claims to
-//     automate it; it stays a by-hand pass until there's a real
-//     summarization model wired in (see ladder-design.md's open questions).
+// The ingest/analysis workflow, as named functions, not ad-hoc shell
+// exploration run by hand during a conversation. Every rung this builds
+// -- files, asks, contributors, dependencies -- gets its content read and
+// summarized by engine/summarize.ts, not left as a metadata-only stub.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as git from "isomorphic-git";
 import fs from "node:fs";
 import type { Rung } from "./ladder.js";
+import { createLimiter, summarizeFile } from "./summarize.js";
 
-// --- cloning: a real local `git clone`, not isomorphic-git -----------
+// --- cloning: a plain `git clone`, not isomorphic-git -----------------
 // This step runs on whoever's machine is doing the onboarding (a CLI user,
 // or eventually a Worker fetching from GitHub some other way), not inside
 // the Ladder engine itself, so there's no Workers-compatibility reason to
-// avoid the real git binary here the way engine/gitNotes.ts does.
+// avoid the git binary here the way engine/gitNotes.ts does.
 
 export function cloneIfMissing(slug: string, repoDir: string): void {
   if (existsSync(repoDir)) return;
@@ -34,9 +23,9 @@ export function cloneIfMissing(slug: string, repoDir: string): void {
 
 // --- GitHub API access, via the gh CLI --------------------------------
 // A CLI-local convenience (shells out, needs `gh` installed and
-// authenticated). The real target engine would call the GitHub REST API
-// with fetch() and a token instead, which works the same in a Worker; this
-// is the one tier of this file that's deliberately not Workers-portable,
+// authenticated). The target engine would call the GitHub REST API with
+// fetch() and a token instead, which works the same in a Worker; this is
+// the one tier of this file that's deliberately not Workers-portable,
 // and is called out as such rather than left implicit.
 
 function gh(args: string[]): string {
@@ -60,12 +49,13 @@ export interface IssueRow {
   created_at: string;
   closed_at: string | null;
   comments: number;
+  body: string | null;
 }
 
 export function fetchIssues(slug: string): IssueRow[] {
   return ghJsonLines<IssueRow>(
     `repos/${slug}/issues?state=all&per_page=100`,
-    ".[] | select(.pull_request == null) | {number, title, state, user: .user.login, created_at, closed_at, comments}",
+    ".[] | select(.pull_request == null) | {number, title, state, user: .user.login, created_at, closed_at, comments, body}",
   );
 }
 
@@ -77,10 +67,30 @@ export interface PrRow {
   user: string;
   created_at: string;
   closed_at: string | null;
+  body: string | null;
 }
 
 export function fetchPullRequests(slug: string): PrRow[] {
-  return ghJsonLines<PrRow>(`repos/${slug}/pulls?state=all&per_page=100`, ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at}");
+  return ghJsonLines<PrRow>(`repos/${slug}/pulls?state=all&per_page=100`, ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at, body}");
+}
+
+export interface CommentRow {
+  author: string;
+  body: string;
+}
+
+/** The comment thread for an issue or PR (GitHub serves both through the same issues/comments endpoint). */
+export function fetchThreadComments(slug: string, number: number): CommentRow[] {
+  return ghJsonLines<CommentRow>(`repos/${slug}/issues/${number}/comments?per_page=100`, ".[] | {author: .user.login, body}");
+}
+
+/** A contributor's own commit messages, used to describe what they worked on. */
+export function fetchContributorCommitMessages(slug: string, login: string): string[] {
+  // jq extracts just the first line of each message itself (raw-output,
+  // so gh prints it unquoted): a multi-line commit message's embedded
+  // newlines would otherwise corrupt the one-line-per-commit split below.
+  const raw = gh(["api", `repos/${slug}/commits?author=${encodeURIComponent(login)}&per_page=100`, "--paginate", "--jq", '.[].commit.message | split("\\n")[0]']);
+  return raw.trim().split("\n").filter(Boolean);
 }
 
 export interface ReleaseRow {
@@ -106,23 +116,22 @@ export function fetchContributors(slug: string): ContributorRow[] {
 /**
  * Not implemented: GitHub's dependents graph (network/dependents) has no
  * stable REST/GraphQL endpoint, only the interactive web page. The one
- * real count this project has (supertest: ~1.74M dependent repos) was
- * pulled by hand via a one-off page fetch, not this function, and isn't
- * something a plain script can reproduce unattended. Returns null rather
- * than fabricating a number for a repo this hasn't actually been checked
- * against.
+ * count this project has (supertest: ~1.74M dependent repos) was pulled by
+ * hand via a one-off page fetch, not this function, and isn't something a
+ * plain script can reproduce unattended. Returns null rather than
+ * fabricating a number for a repo this hasn't been checked against.
  */
 export function fetchDependentsSummary(_slug: string): string | null {
   return null;
 }
 
-// --- real commit SHA for a release tag --------------------------------
+// --- commit SHA for a release tag --------------------------------------
 
 export function resolveTagCommit(repoDir: string, tag: string): string {
   return execFileSync("git", ["-C", repoDir, "rev-parse", `${tag}^{commit}`], { encoding: "utf8" }).trim();
 }
 
-// --- dependencies, from package.json -----------------------------------
+// --- dependencies, from package.json, plus their actual usage sites ----
 
 export interface DependencyRow {
   name: string;
@@ -137,14 +146,41 @@ export function parseDependencies(repoDir: string): DependencyRow[] {
   return Object.entries(deps).map(([name, versionRange]) => ({ name, versionRange }));
 }
 
-// --- mechanical file tree: real git log per file, no narrative ---------
-// This is the part that didn't exist as code at all before this file --
-// every file-level rung before this was hand-written after reading the
-// source and its `git log`/`git blame` output directly in conversation,
-// not generated by anything re-runnable.
+export interface UsageSite {
+  file: string;
+  line: string;
+}
+
+/** Where a dependency is actually imported/required in the tracked source, for summarizeDependencyUsage to read. */
+export function findDependencyUsage(repoDir: string, name: string): UsageSite[] {
+  let raw: string;
+  try {
+    raw = execFileSync(
+      "grep",
+      ["-rn", "-F", "--include=*.js", "--include=*.ts", "--include=*.mjs", "--include=*.cjs", "--exclude-dir=node_modules", "--exclude-dir=.git", name, repoDir],
+      { encoding: "utf8" },
+    );
+  } catch {
+    return []; // grep exits 1 when there are no matches
+  }
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((entry) => {
+      const [file, , ...rest] = entry.split(":");
+      return { file: file.replace(`${repoDir}/`, ""), line: rest.join(":") };
+    })
+    .filter((site) => /require\(|from\s+['"]/.test(site.line));
+}
+
+// --- file tree: commit history plus an actual per-file summary ---------
+// Every file-level rung is backed by its own commit history AND a summary
+// of its content (engine/summarize.ts reads the file and describes it),
+// not a stand-in that says the content wasn't read.
 
 const SKIP_DIR_PARTS = new Set(["node_modules", ".git", "test", "tests", "ci", ".github"]);
-const SKIP_EXTENSIONS = new Set([".lock", ".map", ".png", ".jpg", ".svg", ".ico"]);
+const SKIP_EXTENSIONS = new Set([".lock", ".map", ".png", ".jpg", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".eot", ".gif", ".webp", ".pdf", ".zip"]);
 
 function shouldSkip(path: string): boolean {
   const parts = path.split("/");
@@ -175,13 +211,12 @@ async function fileCommitSummary(repoDir: string, filepath: string): Promise<Fil
 }
 
 /**
- * Walks the real tracked file tree at HEAD and builds one lightweight
- * file/directory Rung per real path, each sourced from that file's real
- * commit history (count, date range, most recent real commit). No
- * function- or line-level rungs: that split requires actually reading and
- * understanding the code, which stays a by-hand pass (see the file header).
+ * Walks the tracked file tree at HEAD and builds one file/directory Rung
+ * per path: commit history from git, plus a content summary from
+ * engine/summarize.ts. No function- or line-level rungs yet -- that split
+ * is a finer-grained pass on top of this, not implemented here.
  */
-export async function walkFileTree(repoDir: string): Promise<Rung[]> {
+export async function walkFileTree(repoDir: string, onProgress?: (done: number, total: number) => void): Promise<Rung[]> {
   const allPaths = await git.listFiles({ fs, dir: repoDir });
   const paths = allPaths.filter((p) => !shouldSkip(p));
 
@@ -191,21 +226,35 @@ export async function walkFileTree(repoDir: string): Promise<Rung[]> {
     for (let i = 1; i < parts.length; i += 1) dirPaths.add(parts.slice(0, i).join("/"));
   }
 
+  const limit = createLimiter(5);
+  let done = 0;
   const fileRungs = new Map<string, Rung>();
-  for (const p of paths) {
-    const summary = await fileCommitSummary(repoDir, p);
-    fileRungs.set(p, {
-      path: p,
-      kind: "file",
-      summary: `${summary.count} real commits, ${summary.first} to ${summary.last}. Last: "${summary.lastMessage}" (${summary.lastAuthor}). Not read in depth; no function- or line-level rungs yet.`,
-      sources: summary.count ? [{ kind: "commit", ref: "HEAD", title: summary.lastMessage, author: summary.lastAuthor, at: summary.last }] : [],
-      children: [],
-    });
-  }
+  await Promise.all(
+    paths.map((p) =>
+      limit(async () => {
+        const [commitSummary, content] = await Promise.all([
+          fileCommitSummary(repoDir, p),
+          readFileSafe(join(repoDir, p)),
+        ]);
+        const contentSummary = content === null ? "Binary or unreadable as text; not summarized." : await summarizeFile(p, content);
+        fileRungs.set(p, {
+          path: p,
+          kind: "file",
+          summary: contentSummary,
+          sources: commitSummary.count
+            ? [{ kind: "commit", ref: "HEAD", title: commitSummary.lastMessage, author: commitSummary.lastAuthor, at: commitSummary.last }]
+            : [],
+          children: [],
+        });
+        done += 1;
+        onProgress?.(done, paths.length);
+      }),
+    ),
+  );
 
   const dirRungs = new Map<string, Rung>();
   for (const d of dirPaths) {
-    dirRungs.set(d, { path: d, kind: "directory", summary: `Directory. Not individually described.`, sources: [], children: [] });
+    dirRungs.set(d, { path: d, kind: "directory", summary: "", sources: [], children: [] });
   }
 
   // Attach each file/dir to its immediate parent directory's children.
@@ -223,5 +272,25 @@ export async function walkFileTree(repoDir: string): Promise<Rung[]> {
   for (const [p, r] of fileRungs) attach(p, r);
   for (const [p, r] of dirRungs) attach(p, r);
 
+  // Directory summaries are a plain listing of what's actually in them --
+  // the children are already each individually summarized, so this just
+  // names them rather than running a second LLM pass per directory.
+  for (const rung of dirRungs.values()) {
+    const names = rung.children.map((c) => c.path.split("/").pop()).join(", ");
+    rung.summary = `Directory containing ${rung.children.length} entries: ${names}.`;
+  }
+
   return roots;
+}
+
+async function readFileSafe(absPath: string): Promise<string | null> {
+  try {
+    const content = readFileSync(absPath, "utf8");
+    // A decoded buffer containing the replacement character or NUL bytes
+    // is almost always binary content, not real UTF-8 text.
+    if (content.includes("�") || content.includes("\u0000")) return null;
+    return content;
+  } catch {
+    return null;
+  }
 }
