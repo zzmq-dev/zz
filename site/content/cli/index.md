@@ -7,6 +7,19 @@ description: "The zz command-line reference, early sketch."
 
 This is a starting point. Commands and flags here will change once there's a real Maintainer to drive them against. `zz` wraps git/Artifacts for content operations and adds the coordination protocol on top; it does not reimplement git.
 
+## Ladder (implemented)
+
+The one part of this page with working code behind it today. Builds and reads a repo's Ladder, stored in git notes.
+
+```
+zz ladder build <owner/repo> [--force]
+zz ladder dump <owner/repo> [--format text|json|html] [--out <path>]
+```
+
+`build` walks the repo's real file tree and fetches its issues, PRs, releases, and contributors, writing one rung per item. It skips any rung that already has a note, so running it again — or against a repo that already has hand-researched content layered on top — never overwrites what's there; `--force` rebuilds anyway.
+
+`dump` materializes the resulting tree for reading, without touching the notes: plain text, JSON, or a self-contained HTML page. Written to stdout by default, or to a file with `--out`.
+
 ## Content operations (thin wrappers over Artifacts/git)
 
 ```
@@ -66,7 +79,7 @@ zz top                 # live view of all Lanes
 zz ps                  # point-in-time snapshot, scriptable
 zz log <lane>           # the Lane's full ASK/ANSWER/HOLD/VETO/merge history
 zz show <lane> --ladder # the Lane's current summary, with links down to source commits
-zz insight <lane> --good|--bad "<note>"   # capture an in-the-flow insight
+zz insight <lane> --norm|--trap "<note>"   # capture an in-the-flow insight
 ```
 
 ## Governance and policy
