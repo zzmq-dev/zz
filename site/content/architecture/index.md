@@ -34,6 +34,7 @@ Every primitive here is chosen for being the native fit for its one job.
 3. Search and the Ladder (Vectorize plus summary generation).
 4. Governance, trust, and the economics layer.
 5. The structural DO hierarchy, for org- and monorepo-scale graphs.
+6. A web app for dashboards, reports, and control surfaces, once the CLI and MCP surfaces are stable enough to build a UI against.
 
 ## Cloudflare Artifacts, as of October 2026
 
