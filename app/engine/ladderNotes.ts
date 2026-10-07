@@ -13,14 +13,27 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 // repo/directory/file/release are anchors wherever they appear in the tree.
-// "ask" is different: only a *top-level* ask (a new thread) is an anchor.
-// Once you're inside a thread, nothing nested in it gets its own note, even
-// an "ask"-kind reply that raises something new in that same thread --
-// it's still part of that one conversation, not a fresh top-level item.
+// ask/contributor/dependencies are repo-wide: no tree path, so they anchor
+// to the repo's root commit with their own identity folded into the note
+// ref instead. "ask" is further special: only a *top-level* ask (a new
+// thread) is an anchor. Once you're inside a thread, nothing nested in it
+// gets its own note, even an "ask"-kind reply that raises something new in
+// that same thread -- it's still part of that one conversation, not a
+// fresh top-level item. contributor/dependencies never thread, so they're
+// always anchors wherever they appear.
 const STRUCTURAL_ANCHOR_KINDS = new Set<RungKind>(["repo", "directory", "file", "release"]);
+const REPO_WIDE_ROOT_KINDS = new Set<RungKind>(["ask", "contributor", "dependencies"]);
+
+// Git ref names forbid several characters a real-world path segment can
+// easily contain (a bot login like "dependabot[bot]" has brackets). Applied
+// consistently on both write and read (both go through this function with
+// the same input path), so the mapping stays stable even though it's lossy.
+function sanitizeRefSegment(segment: string): string {
+  return segment.replace(/[^A-Za-z0-9._/-]/g, "-");
+}
 
 function notesRef(kind: RungKind, path: string): string {
-  if (kind === "ask") return `refs/notes/zz/ladder/${path}`;
+  if (REPO_WIDE_ROOT_KINDS.has(kind)) return `refs/notes/zz/ladder/${sanitizeRefSegment(path)}`;
   if (kind === "release") return "refs/notes/zz/ladder/release";
   return "refs/notes/zz/ladder/code";
 }
@@ -52,9 +65,9 @@ function embed(rung: Rung, insideThread: boolean): EmbeddedRung {
     sources: rung.sources,
     touches: rung.touches,
     children: rung.children.map((c) => {
-      const isTopLevelAsk = !childrenInsideThread && c.kind === "ask";
+      const isTopLevelRepoWide = !childrenInsideThread && REPO_WIDE_ROOT_KINDS.has(c.kind);
       const isAnchorChild = !childrenInsideThread && STRUCTURAL_ANCHOR_KINDS.has(c.kind);
-      if (isTopLevelAsk || isAnchorChild) return { ref: c.path };
+      if (isTopLevelRepoWide || isAnchorChild) return { ref: c.path };
       return embed(c, childrenInsideThread);
     }),
   };
@@ -109,7 +122,7 @@ async function anchorSha(repoDir: string, stateDir: string, rung: Rung): Promise
     if (!sha) throw new Error(`${rung.path}: not found in the repo at HEAD`);
     return sha;
   }
-  if (rung.kind === "ask") return cachedRootCommit(repoDir);
+  if (REPO_WIDE_ROOT_KINDS.has(rung.kind)) return cachedRootCommit(repoDir);
   // release: anchor to its own real commit, already in its sources. Our
   // sources store short SHAs for readability; notes need the full one.
   const sha = await expandOid(repoDir, firstCommitRef(rung));
@@ -120,7 +133,7 @@ async function anchorSha(repoDir: string, stateDir: string, rung: Rung): Promise
 /** Writes one note per top-level anchor in the tree, recursively. Everything inside a thread, or nested under a file, is embedded, not written separately. */
 export async function writeLadder(repoDir: string, stateDir: string, root: Rung): Promise<void> {
   const visit = async (rung: Rung, insideThread: boolean): Promise<void> => {
-    const isAnchor = !insideThread && (rung.kind === "ask" || STRUCTURAL_ANCHOR_KINDS.has(rung.kind));
+    const isAnchor = !insideThread && (REPO_WIDE_ROOT_KINDS.has(rung.kind) || STRUCTURAL_ANCHOR_KINDS.has(rung.kind));
     if (!isAnchor) return; // shouldn't be called on a non-anchor, but guard anyway
     const sha = await anchorSha(repoDir, stateDir, rung);
     await writeNote(repoDir, notesRef(rung.kind, rung.path), sha, embed(rung, false));
@@ -132,6 +145,24 @@ export async function writeLadder(repoDir: string, stateDir: string, root: Rung)
   await visit(root, false);
 }
 
+/**
+ * Adds references to the repo root's own note without touching any
+ * existing child, written or not. writeLadder always recurses into every
+ * anchor child it's given, which is right when building a tree from
+ * scratch but would re-derive and overwrite already-correct content for
+ * anything passed in as a bare stub just to get it into the children
+ * list. This only ever rewrites the repo root's one note.
+ */
+export async function appendRepoChildren(repoDir: string, stateDir: string, newChildren: { path: string; kind: RungKind }[]): Promise<void> {
+  const current = await readAnchor(repoDir, stateDir, "_repo");
+  if (!current) throw new Error("repo root has no note yet; run the main build first");
+  const existingRefs = new Set(current.children.filter(isRef).map((c) => c.ref));
+  const toAdd = newChildren.filter((c) => !existingRefs.has(c.path));
+  current.children.push(...toAdd.map((c) => ({ ref: c.path })));
+  const sha = await resolveRootTreeSha(repoDir);
+  await writeNote(repoDir, notesRef("repo", "_repo"), sha, current);
+}
+
 /** Reads one anchor's note (its own fields plus everything embedded under it, inline). */
 export async function readAnchor(repoDir: string, stateDir: string, path: string): Promise<EmbeddedRung | null> {
   if (path === "_repo") {
@@ -141,6 +172,14 @@ export async function readAnchor(repoDir: string, stateDir: string, path: string
   if (path.startsWith("asks/")) {
     const sha = await cachedRootCommit(repoDir);
     return readNote<EmbeddedRung>(repoDir, notesRef("ask", path), sha);
+  }
+  if (path.startsWith("contributors/")) {
+    const sha = await cachedRootCommit(repoDir);
+    return readNote<EmbeddedRung>(repoDir, notesRef("contributor", path), sha);
+  }
+  if (path === "dependencies" || path.startsWith("dependencies/") || path === "dependents") {
+    const sha = await cachedRootCommit(repoDir);
+    return readNote<EmbeddedRung>(repoDir, notesRef("dependencies", path), sha);
   }
   const fileSha = await resolvePathSha(repoDir, path);
   if (fileSha) return readNote<EmbeddedRung>(repoDir, notesRef("file", path), fileSha);

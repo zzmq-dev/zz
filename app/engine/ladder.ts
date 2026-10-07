@@ -35,7 +35,9 @@ export type RungKind =
   | "release"
   | "package"
   | "ask"
-  | "answer";
+  | "answer"
+  | "contributor"
+  | "dependencies";
 
 export interface RungSource {
   kind: "commit" | "pr" | "issue";

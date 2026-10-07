@@ -405,7 +405,7 @@ const libDir: Rung = {
 const repo: Rung = {
   path: REPO_RUNG_PATH,
   kind: "repo",
-  summary: "visionmedia/supertest: a fluent assertion library for testing Node.js HTTP servers, built on superagent. 539 commits, 2012-06-26 to 2026-10-02, 1202 lines of real source across 5 files.",
+  summary: "forwardemail/supertest (formerly visionmedia/supertest): a fluent assertion library for testing Node.js HTTP servers, built on superagent. 539 commits, 2012-06-26 to 2026-10-02, 1202 lines of real source across 5 files.",
   sources: [],
   children: [indexJs, libDir, packageJson, release_v6_3_1, ask_798, ask_651],
 };
