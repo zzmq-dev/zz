@@ -5,79 +5,27 @@
 // asks/798 and asks/651 got. Run ladder-full-supertest.ts first; this
 // extends what it wrote rather than replacing it, and skips the two
 // issues and the one release already covered there in depth.
-import { execFileSync } from "node:child_process";
+//
+// All the actual fetching (gh api calls, tag->commit resolution) lives in
+// engine/ingest.ts as real, reusable functions now, not inlined here;
+// this file is just the supertest-specific knowledge on top of it (which
+// two items to skip, what we already know about five specific
+// contributors, the three real dependencies and the one real aggregate
+// dependents count already verified for this repo). `zz ladder build`
+// calls the same engine/ingest.ts functions generically for any repo.
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Rung, RungKind } from "../engine/ladder.js";
 import { appendRepoChildren, writeLadder } from "../engine/ladderNotes.js";
+import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, resolveTagCommit, type ContributorRow, type IssueRow, type PrRow, type ReleaseRow } from "../engine/ingest.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoDir = join(here, "..", "demo-repos", "supertest");
 const stateDir = join(here, "..", "state", "supertest");
 const REPO = "forwardemail/supertest";
 
-function gh(args: string[]): string {
-  return execFileSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-}
-
-function ghJsonLines<T>(apiPath: string, jq: string): T[] {
-  const raw = gh(["api", apiPath, "--paginate", "--jq", jq]);
-  return raw
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as T);
-}
-
-// --- fetch real data -------------------------------------------------
-
-interface IssueRow {
-  number: number;
-  title: string;
-  state: string;
-  user: string;
-  created_at: string;
-  closed_at: string | null;
-  comments: number;
-}
 const SKIP_ISSUES = new Set([651, 798]); // already covered in depth
-const issues = ghJsonLines<IssueRow>(
-  `repos/${REPO}/issues?state=all&per_page=100`,
-  ".[] | select(.pull_request == null) | {number, title, state, user: .user.login, created_at, closed_at, comments}",
-).filter((i) => !SKIP_ISSUES.has(i.number));
-
-interface PrRow {
-  number: number;
-  title: string;
-  state: string;
-  merged_at: string | null;
-  user: string;
-  created_at: string;
-  closed_at: string | null;
-}
-const prs = ghJsonLines<PrRow>(
-  `repos/${REPO}/pulls?state=all&per_page=100`,
-  ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at}",
-);
-
-interface ReleaseRow {
-  tag_name: string;
-  published_at: string;
-  author: string;
-  body: string | null;
-}
 const SKIP_RELEASES = new Set(["v6.3.1"]); // already covered in depth
-const releases = ghJsonLines<ReleaseRow>(`repos/${REPO}/releases?per_page=100`, ".[] | {tag_name, published_at, author: .author.login, body}").filter(
-  (r) => !SKIP_RELEASES.has(r.tag_name),
-);
-
-interface ContributorRow {
-  login: string;
-  contributions: number;
-}
-const contributors = ghJsonLines<ContributorRow>(`repos/${REPO}/contributors?per_page=100`, ".[] | {login, contributions}");
-
-// --- build rungs -------------------------------------------------------
 
 function askFromIssue(i: IssueRow): Rung {
   const outcome = i.state === "closed" ? "closed" : "open";
@@ -103,7 +51,7 @@ function askFromPr(p: PrRow): Rung {
 
 function releaseRung(r: ReleaseRow): Rung {
   const firstLine = (r.body ?? "").split("\n").find((l) => l.trim().length > 0) ?? "(no release notes)";
-  const sha = execFileSync("git", ["-C", repoDir, "rev-parse", `${r.tag_name}^{commit}`], { encoding: "utf8" }).trim();
+  const sha = resolveTagCommit(repoDir, r.tag_name);
   return {
     path: `releases/${r.tag_name}`,
     kind: "release",
@@ -129,15 +77,14 @@ function contributorRung(c: ContributorRow): Rung {
   const summary = known
     ? `${c.login}: ${c.contributions} real commits. Specifically: ${known}`
     : `${c.login}: ${c.contributions} real commits. Not individually researched beyond the real contribution count.`;
-  return {
-    path: `contributors/${c.login}`,
-    kind: "contributor",
-    summary,
-    sources: [],
-    children: [],
-  };
+  return { path: `contributors/${c.login}`, kind: "contributor", summary, sources: [], children: [] };
 }
 
+// Dependency descriptions here are hand-written because they cite the
+// specific real call sites (index.js, lib/agent.js, the .contain()
+// assertion) the file-level rungs already established; engine/ingest.ts's
+// parseDependencies() gives the real name/version pairs generically, this
+// just adds the specific knowledge on top for this one repo.
 const dependencyRungs: Rung[] = [
   {
     path: "dependencies/superagent",
@@ -161,6 +108,11 @@ const dependencyRungs: Rung[] = [
     children: [],
   },
   {
+    // engine/ingest.ts's fetchDependentsSummary() returns null for every
+    // repo: GitHub's dependents graph has no API, only a web page. This
+    // specific number was pulled by hand via a one-off page fetch and is
+    // recorded here as this repo's known value, not generated by anything
+    // re-runnable.
     path: "dependents",
     kind: "dependencies",
     summary:
@@ -170,9 +122,12 @@ const dependencyRungs: Rung[] = [
   },
 ];
 
-// --- write ---------------------------------------------------------------
-
 async function main() {
+  const issues = fetchIssues(REPO).filter((i) => !SKIP_ISSUES.has(i.number));
+  const prs = fetchPullRequests(REPO);
+  const releases = fetchReleases(REPO).filter((r) => !SKIP_RELEASES.has(r.tag_name));
+  const contributors = fetchContributors(REPO);
+
   const askRungs = [...issues.map(askFromIssue), ...prs.map(askFromPr)];
   const releaseRungs = releases.map(releaseRung);
   const contributorRungs = contributors.map(contributorRung);
@@ -193,7 +148,7 @@ async function main() {
     all.map((r) => ({ path: r.path, kind: r.kind as RungKind })),
   );
 
-  console.log(`done: ${all.length} new top-level rungs added to the repo root.`);
+  console.log(`done: ${all.length} top-level rungs present under the repo root.`);
 }
 
 await main();

@@ -2,10 +2,14 @@
   "name": "zz-app",
   "private": true,
   "type": "module",
+  "bin": {
+    "zz": "./bin/zz.js"
+  },
   "scripts": {
     "setup:demo-repos": "tsx demo-repos/setup.ts",
     "build-ladder": "tsx demo/ladder-full-supertest.ts",
     "dump-ladder": "tsx demo/dump-ladder.ts",
+    "zz": "tsx cli/zz.ts",
     "demo:new-feature": "tsx demo/run-new-feature.ts",
     "demo:case-study": "tsx demo/run-cascade-case-study.ts"
   },
@@ -15,6 +19,7 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
+    "commander": "^15.0.0",
     "isomorphic-git": "^1.43.1"
   }
 }
