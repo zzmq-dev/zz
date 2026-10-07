@@ -5,6 +5,7 @@
   "scripts": {
     "setup:demo-repos": "tsx demo-repos/setup.ts",
     "ingest": "tsx demo/ingest.ts",
+    "dump-ladder": "tsx demo/dump-ladder.ts",
     "demo:new-feature": "tsx demo/run-new-feature.ts",
     "demo:case-study": "tsx demo/run-cascade-case-study.ts"
   },

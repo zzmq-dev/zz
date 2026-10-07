@@ -8,7 +8,8 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPO_RUNG_PATH, type Rung } from "../engine/ladder.js";
-import { findEmbedded, isRef, readAnchor, writeLadder } from "../engine/ladderNotes.js";
+import { writeLadder } from "../engine/ladderNotes.js";
+import { renderLadder } from "../engine/ladderRender.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoDir = join(here, "..", "demo-repos", "supertest");
@@ -416,38 +417,6 @@ await writeLadder(repoDir, stateDir, repo);
 
 // Render by reading back from git notes: one note read per anchor, zero
 // extra reads for anything embedded in it.
-let notesRead = 0;
-let rungsRendered = 0;
-
-function renderEmbedded(rung: import("../engine/ladderNotes.js").EmbeddedRung, depth = 0): Promise<string> {
-  return (async () => {
-    rungsRendered += 1;
-    const indent = "  ".repeat(depth);
-    const lines = [`${indent}[${rung.kind}] ${rung.path}`, `${indent}  ${rung.summary}`];
-    if (rung.sources.length) {
-      lines.push(`${indent}  sources: ${rung.sources.map((s) => `${s.ref} (${s.at})`).join(", ")}`);
-    }
-    if (rung.touches?.length) {
-      lines.push(`${indent}  touches: ${rung.touches.join(", ")}`);
-    }
-    for (const child of rung.children) {
-      if (isRef(child)) {
-        lines.push(await renderAnchor(child.ref, depth + 1));
-      } else {
-        lines.push(await renderEmbedded(child, depth + 1));
-      }
-    }
-    return lines.join("\n");
-  })();
-}
-
-async function renderAnchor(path: string, depth = 0): Promise<string> {
-  const anchor = await readAnchor(repoDir, stateDir, path);
-  notesRead += 1;
-  if (!anchor) return `${"  ".repeat(depth)}[missing] ${path}`;
-  return renderEmbedded(anchor, depth);
-}
-
-const text = await renderAnchor(REPO_RUNG_PATH);
+const { text, stats } = await renderLadder(repoDir, stateDir);
 console.log(text);
-console.log(`\n${rungsRendered} total rungs, from ${notesRead} git notes (refs/notes/zz/ladder/{code,asks/*,release}) in the real supertest clone.`);
+console.log(`\n${stats.rungs} total rungs, from ${stats.notes} git notes (refs/notes/zz/ladder/{code,asks/*,release}) in the real supertest clone.`);
