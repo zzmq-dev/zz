@@ -97,7 +97,3 @@ Two distinct failure modes, reported through a plain **whistleblow** from any Ag
 - **Defection**: an agent actively breaking protocol (gaming OCC's declared scope, lying about a claim). A property of the *actor*.
 
 A whistleblow feeds the reported party's trust and can itself trigger a Tripwire.
-
-## `zz top` / `zz ps`
-
-Operational views over the protocol above: a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, the Coordinator's trust in that area, age, and last `ASK`. See [CLI](/cli/).

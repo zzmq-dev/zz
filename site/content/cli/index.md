@@ -5,7 +5,7 @@ description: "The zz command-line reference, early sketch."
 ---
 # CLI (early sketch)
 
-This is a starting point, not a finished spec — commands and flags here will change once there's a real Maintainer to drive them against. `zz` wraps git/Artifacts for content operations and adds the coordination protocol on top; it does not reimplement git.
+This is a starting point. Commands and flags here will change once there's a real Maintainer to drive them against. `zz` wraps git/Artifacts for content operations and adds the coordination protocol on top; it does not reimplement git.
 
 ## Content operations (thin wrappers over Artifacts/git)
 
@@ -58,6 +58,8 @@ zz roll <lane|commit>
 Each logs a runbook entry to `.zz/` regardless of whether it was invoked manually or by a Tripwire.
 
 ## Observability
+
+`zz top` and `zz ps` are operational views over the protocol: a live (`top`) or point-in-time (`ps`) table of every Lane's state, Coordinator, the Coordinator's trust in that area, age, and last `ASK`.
 
 ```
 zz top                 # live view of all Lanes
