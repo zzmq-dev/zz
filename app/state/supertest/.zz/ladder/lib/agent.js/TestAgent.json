@@ -1,0 +1,15 @@
+{
+  "path": "lib/agent.js/TestAgent",
+  "kind": "function",
+  "summary": "Constructor. Builds on a real superagent Agent (for its cookie jar and defaults), starts an implicit server the same way index.js does if given a function, and stores it as this.app.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "da57804",
+      "title": "feat: supports http2",
+      "author": "Lam Wei Li",
+      "at": "2022-10-04"
+    }
+  ],
+  "children": []
+}

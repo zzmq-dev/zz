@@ -1,0 +1,15 @@
+{
+  "path": "index.js/lines-54",
+  "kind": "lines",
+  "summary": "obj.del = obj.delete, a backward-compatible alias kept since 2014.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "8741283",
+      "title": "Moved usage of 'del' to support the proper http verb 'delete'",
+      "author": "TJ Holowaychuk",
+      "at": "2014-03-24"
+    }
+  ],
+  "children": []
+}

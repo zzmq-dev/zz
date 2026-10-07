@@ -1,0 +1,15 @@
+{
+  "path": "lib/cookies/index.js/ExpectCookies",
+  "kind": "function",
+  "summary": "Thin wrapper: ExpectCookies(secret, asserts) just calls Assertion(secret, asserts); the real work is proxying Assertion's static methods onto it below.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "4f89680",
+      "title": "feat(cookies): add cookie assertions",
+      "author": "Dolan Murvihill",
+      "at": "2025-08-25"
+    }
+  ],
+  "children": []
+}

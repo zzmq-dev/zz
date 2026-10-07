@@ -1,0 +1,35 @@
+{
+  "path": "lib/cookies/assertion.js",
+  "kind": "file",
+  "summary": "The real cookie-assertion engine ported from expect-cookies (Gregory Langlais, MIT, npm 'expect-cookies'). Parses Set-Cookie/Cookie headers and builds a chainable set of assertion verbs (.set, .reset, .new, .renew, .contain, .not) that check a response's cookies against expectations, including signed-cookie verification via cookie-signature.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "4f89680",
+      "title": "feat(cookies): add cookie assertions",
+      "author": "Dolan Murvihill",
+      "at": "2025-08-25"
+    },
+    {
+      "kind": "commit",
+      "ref": "1954bcf",
+      "title": "fix: replace 'should' dependency with native assertions in cookies module",
+      "author": "titanism",
+      "at": "2026-01-06"
+    },
+    {
+      "kind": "commit",
+      "ref": "71dc5fb",
+      "title": "fix: stabilize ephemeral server requests and assertions",
+      "author": "titanism",
+      "at": "2026-09-22"
+    }
+  ],
+  "children": [
+    "lib/cookies/assertion.js/assert-helpers",
+    "lib/cookies/assertion.js/module.exports",
+    "lib/cookies/assertion.js/Assertion.parse",
+    "lib/cookies/assertion.js/assertion-verbs",
+    "lib/cookies/assertion.js/Assertion.not"
+  ]
+}

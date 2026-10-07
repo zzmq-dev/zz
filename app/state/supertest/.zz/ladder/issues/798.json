@@ -1,0 +1,21 @@
+{
+  "path": "issues/798",
+  "kind": "issue",
+  "summary": "Filed 2022-10-23 by a user with no visibility into the already-three-weeks-old superagent#1743, hitting the same symptom from the supertest side. Closed the next day via release v6.3.1.",
+  "sources": [
+    {
+      "kind": "issue",
+      "ref": "#798",
+      "title": "pin superagent to 8.0.0",
+      "author": "smolinari",
+      "at": "2022-10-23"
+    }
+  ],
+  "touches": [
+    "package.json"
+  ],
+  "children": [
+    "issues/798/comments/1",
+    "issues/798/comments/2"
+  ]
+}

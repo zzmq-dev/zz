@@ -1,0 +1,15 @@
+{
+  "path": "lib/cookies/assertion.js/Assertion.not",
+  "kind": "function",
+  "summary": "Negation modifier: re-invokes the named verb with assert=false, so .not('set', ...) asserts a cookie is absent instead of present.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "4f89680",
+      "title": "feat(cookies): add cookie assertions",
+      "author": "Dolan Murvihill",
+      "at": "2025-08-25"
+    }
+  ],
+  "children": []
+}

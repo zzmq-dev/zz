@@ -1,0 +1,47 @@
+{
+  "path": "lib/agent.js",
+  "kind": "file",
+  "summary": "TestAgent: a persistent agent (cookie jar, TLS options) across multiple requests, inheriting from superagent's own Agent and overriding every HTTP verb to return a Test bound to this agent's server, cookie jar, and host header.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "da69243",
+      "title": "Added request.agent(app) support",
+      "author": "Steffen Müller",
+      "at": "2013-03-14"
+    },
+    {
+      "kind": "commit",
+      "ref": "5e23869",
+      "title": "feat(TestAgent): decoupled TestAgent and superagent's Agent to support more than ca, key, cert",
+      "author": "Lam Wei Li",
+      "at": "2022-09-18"
+    },
+    {
+      "kind": "commit",
+      "ref": "6d9b9cb",
+      "title": "fix(TestAgent): attach cookies to agent after plugin is used",
+      "author": "Lam Wei Li",
+      "at": "2022-09-18"
+    },
+    {
+      "kind": "commit",
+      "ref": "f290431",
+      "title": "Fix TestAgent not inheriting Agent properties",
+      "author": "Bruce Berrios",
+      "at": "2024-04-23"
+    },
+    {
+      "kind": "commit",
+      "ref": "6d060e3",
+      "title": "feat: fix server lifecycle, callback handling, and SuperAgent v10 compatibility",
+      "author": "titanism",
+      "at": "2025-07-07"
+    }
+  ],
+  "children": [
+    "lib/agent.js/TestAgent",
+    "lib/agent.js/lines-64-89",
+    "lib/agent.js/lines-94"
+  ]
+}

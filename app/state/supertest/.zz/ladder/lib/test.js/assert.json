@@ -1,0 +1,15 @@
+{
+  "path": "lib/test.js/assert",
+  "kind": "function",
+  "summary": "Runs every registered assertion against the response and calls the callback with the first failure (or null). Specifically distinguishes real connection-level system errors (ECONNREFUSED, ECONNRESET, EPIPE, ETIMEDOUT) from assertion failures, citing Node's own error documentation in a code comment.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "d94ffbc",
+      "title": "refactor: Convert test to a class",
+      "author": "Jimmy Wärting",
+      "at": "2022-01-04"
+    }
+  ],
+  "children": []
+}

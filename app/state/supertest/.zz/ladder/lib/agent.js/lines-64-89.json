@@ -1,0 +1,22 @@
+{
+  "path": "lib/agent.js/lines-64-89",
+  "kind": "function",
+  "summary": "Overrides every HTTP verb (except query, explicitly preserved) to return a Test that shares this agent's server, host header, and cookie jar, resaving cookies on every response and redirect so the agent behaves like a real browser session across requests.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "5e23869",
+      "title": "feat(TestAgent): decoupled TestAgent and superagent's Agent to support more than ca, key, cert",
+      "author": "Lam Wei Li",
+      "at": "2022-09-18"
+    },
+    {
+      "kind": "commit",
+      "ref": "6d9b9cb",
+      "title": "fix(TestAgent): attach cookies to agent after plugin is used",
+      "author": "Lam Wei Li",
+      "at": "2022-09-18"
+    }
+  ],
+  "children": []
+}

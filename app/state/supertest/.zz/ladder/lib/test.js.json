@@ -1,0 +1,61 @@
+{
+  "path": "lib/test.js",
+  "kind": "file",
+  "summary": "The heart of the library. Test extends superagent's Request, deferring dispatch until an implicit server is actually listening, then running a chain of status/header/body assertions and handing (err, res) to a callback. 86 real commits, the most actively maintained file in the repo; several of its functions have their own multi-year fix history below.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "d94ffbc",
+      "title": "refactor: Convert test to a class",
+      "author": "Jimmy Wärting",
+      "at": "2022-01-04"
+    },
+    {
+      "kind": "commit",
+      "ref": "6d060e3",
+      "title": "feat: fix server lifecycle, callback handling, and SuperAgent v10 compatibility",
+      "author": "titanism",
+      "at": "2025-07-07"
+    },
+    {
+      "kind": "commit",
+      "ref": "96c06e3",
+      "title": "fix: avoid server re-use race conditions",
+      "author": "alxndrsn",
+      "at": "2025-03-19"
+    },
+    {
+      "kind": "commit",
+      "ref": "71dc5fb",
+      "title": "fix: stabilize ephemeral server requests and assertions",
+      "author": "titanism",
+      "at": "2026-09-22"
+    },
+    {
+      "kind": "commit",
+      "ref": "b6f5995",
+      "title": "fix: match ephemeral server address family",
+      "author": "pnookala-godaddy",
+      "at": "2026-08-15"
+    },
+    {
+      "kind": "commit",
+      "ref": "e74a1e0",
+      "title": "fix: bind ephemeral server to the loopback address it connects to",
+      "author": "jh8459",
+      "at": "2026-09-29"
+    }
+  ],
+  "children": [
+    "lib/test.js/constructor",
+    "lib/test.js/serverAddress",
+    "lib/test.js/formatServerUrl",
+    "lib/test.js/expect",
+    "lib/test.js/end",
+    "lib/test.js/assert",
+    "lib/test.js/bearer",
+    "lib/test.js/assert-helpers",
+    "lib/test.js/wrapAssertFn",
+    "lib/test.js/error"
+  ]
+}

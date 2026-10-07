@@ -1,0 +1,7 @@
+{
+  "path": "lib/test.js/error",
+  "kind": "function",
+  "summary": "Builds an Error carrying .expected/.actual/.showDiff, so a test runner can render a diff instead of just a message.",
+  "sources": [],
+  "children": []
+}

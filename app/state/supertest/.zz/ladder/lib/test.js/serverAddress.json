@@ -1,0 +1,29 @@
+{
+  "path": "lib/test.js/serverAddress",
+  "kind": "function",
+  "summary": "Starts the implicit server at most once per app (tracked in a WeakMap so user-owned servers are never touched), binding explicitly to 127.0.0.1 rather than a wildcard address, since a wildcard bind can share its port with another process's own loopback listener on macOS and silently misroute the request. Three real fixes in 2026 (Aug 15, Sep 22, Sep 29) hardened exactly this address-family and binding behavior.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "b6f5995",
+      "title": "fix: match ephemeral server address family",
+      "author": "pnookala-godaddy",
+      "at": "2026-08-15"
+    },
+    {
+      "kind": "commit",
+      "ref": "71dc5fb",
+      "title": "fix: stabilize ephemeral server requests and assertions",
+      "author": "titanism",
+      "at": "2026-09-22"
+    },
+    {
+      "kind": "commit",
+      "ref": "e74a1e0",
+      "title": "fix: bind ephemeral server to the loopback address it connects to",
+      "author": "jh8459",
+      "at": "2026-09-29"
+    }
+  ],
+  "children": []
+}

@@ -5,12 +5,13 @@
 // (1202 lines total). Artifact coverage (releases/issues/PRs) covers the
 // ones actually significant to this code, not all ~950 real GitHub
 // objects on the repo, which isn't a useful bar for "full."
-import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Rung } from "../engine/ladder.js";
+import { REPO_RUNG_PATH, type Rung } from "../engine/ladder.js";
+import { readRung, readRungChildren, writeLadder } from "../engine/store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const stateDir = join(here, "..", "state", "supertest");
 
 const indexJs: Rung = {
   path: "index.js",
@@ -28,7 +29,7 @@ const indexJs: Rung = {
   ],
   children: [
     {
-      path: "index.js#module.exports",
+      path: "index.js/module.exports",
       kind: "function",
       summary:
         "Takes an app and returns an object with one method per HTTP verb. If given a function, starts a real server for it, http2 if options.http2 is set and supported, otherwise plain http. If given a Server, uses it directly. Each verb method constructs a new Test bound to that server.",
@@ -38,14 +39,14 @@ const indexJs: Rung = {
       ],
       children: [
         {
-          path: "index.js:30-41",
+          path: "index.js/lines-30-41",
           kind: "lines",
           summary: "Picks the transport for the implicit server, throwing explicitly if http2 is requested on a Node build without it.",
           sources: [{ kind: "commit", ref: "da57804", title: "feat: supports http2", author: "Lam Wei Li", at: "2022-10-04" }],
           children: [],
         },
         {
-          path: "index.js:54",
+          path: "index.js/lines-54",
           kind: "lines",
           summary: "obj.del = obj.delete, a backward-compatible alias kept since 2014.",
           sources: [{ kind: "commit", ref: "8741283", title: "Moved usage of 'del' to support the proper http verb 'delete'", author: "TJ Holowaychuk", at: "2014-03-24" }],
@@ -70,14 +71,14 @@ const agentJs: Rung = {
   ],
   children: [
     {
-      path: "lib/agent.js#TestAgent",
+      path: "lib/agent.js/TestAgent",
       kind: "function",
       summary: "Constructor. Builds on a real superagent Agent (for its cookie jar and defaults), starts an implicit server the same way index.js does if given a function, and stores it as this.app.",
       sources: [{ kind: "commit", ref: "da57804", title: "feat: supports http2", author: "Lam Wei Li", at: "2022-10-04" }],
       children: [],
     },
     {
-      path: "lib/agent.js:64-89",
+      path: "lib/agent.js/lines-64-89",
       kind: "function",
       summary:
         "Overrides every HTTP verb (except query, explicitly preserved) to return a Test that shares this agent's server, host header, and cookie jar, resaving cookies on every response and redirect so the agent behaves like a real browser session across requests.",
@@ -88,7 +89,7 @@ const agentJs: Rung = {
       children: [],
     },
     {
-      path: "lib/agent.js:94",
+      path: "lib/agent.js/lines-94",
       kind: "lines",
       summary: "TestAgent.prototype.del alias, the same backward-compatible pattern as index.js's own obj.del.",
       sources: [{ kind: "commit", ref: "8741283", title: "Moved usage of 'del' to support the proper http verb 'delete'", author: "TJ Holowaychuk", at: "2014-03-24" }],
@@ -108,7 +109,7 @@ const cookiesIndexJs: Rung = {
   ],
   children: [
     {
-      path: "lib/cookies/index.js#ExpectCookies",
+      path: "lib/cookies/index.js/ExpectCookies",
       kind: "function",
       summary: "Thin wrapper: ExpectCookies(secret, asserts) just calls Assertion(secret, asserts); the real work is proxying Assertion's static methods onto it below.",
       sources: [{ kind: "commit", ref: "4f89680", title: "feat(cookies): add cookie assertions", author: "Dolan Murvihill", at: "2025-08-25" }],
@@ -129,7 +130,7 @@ const cookiesAssertionJs: Rung = {
   ],
   children: [
     {
-      path: "lib/cookies/assertion.js#assert-helpers",
+      path: "lib/cookies/assertion.js/assert-helpers",
       kind: "function",
       summary:
         "Four small helpers (assertHasProperties, assertNotHasProperties, assertEqual, assertNotEqual), each throwing a plain Error on mismatch. Grouped here since they're structurally identical; this is the shape a rung takes for closely related trivial functions rather than one rung each.",
@@ -137,7 +138,7 @@ const cookiesAssertionJs: Rung = {
       children: [],
     },
     {
-      path: "lib/cookies/assertion.js#module.exports",
+      path: "lib/cookies/assertion.js/module.exports",
       kind: "function",
       summary:
         "The Assertion factory. Returns a callable that, given a response, parses its request/response cookies and runs every registered assertion against them, short-circuiting on the first failure (returned as a string, not thrown, per the original expect-cookies design).",
@@ -145,7 +146,7 @@ const cookiesAssertionJs: Rung = {
       children: [],
     },
     {
-      path: "lib/cookies/assertion.js#Assertion.parse",
+      path: "lib/cookies/assertion.js/Assertion.parse",
       kind: "function",
       summary:
         "Parses one Set-Cookie or Cookie header string into {name, value, options}. Cookie names are case-sensitive; Set-Cookie attribute names (domain, path, etc.) are lowercased. The first key=value pair is the cookie itself, everything after is an option.",
@@ -153,7 +154,7 @@ const cookiesAssertionJs: Rung = {
       children: [],
     },
     {
-      path: "lib/cookies/assertion.js#assertion-verbs",
+      path: "lib/cookies/assertion.js/assertion-verbs",
       kind: "function",
       summary:
         "Assertion.set/.reset/.new/.renew/.contain: five verbs, each registering a closure that compares the request's and response's cookies. .set checks a cookie exists with given options; .reset checks it was sent and is still present after; .new checks it's present in the response but wasn't in the request; .renew checks expires/max-age increased; .contain checks specific option values, including unsigning a signed value against every configured secret. Grouped as one rung since they share one shape (build expectations, push a comparison closure, return Assertion for chaining); each differs only in what the closure checks.",
@@ -161,7 +162,7 @@ const cookiesAssertionJs: Rung = {
       children: [],
     },
     {
-      path: "lib/cookies/assertion.js#Assertion.not",
+      path: "lib/cookies/assertion.js/Assertion.not",
       kind: "function",
       summary: "Negation modifier: re-invokes the named verb with assert=false, so .not('set', ...) asserts a cookie is absent instead of present.",
       sources: [{ kind: "commit", ref: "4f89680", title: "feat(cookies): add cookie assertions", author: "Dolan Murvihill", at: "2025-08-25" }],
@@ -185,14 +186,14 @@ const testJs: Rung = {
   ],
   children: [
     {
-      path: "lib/test.js#constructor",
+      path: "lib/test.js/constructor",
       kind: "function",
       summary: "Builds the request, disables redirects (supertest asserts against the raw response, not a followed one) and buffers the body, then resolves this.url immediately if app is already listening, or defers to serverAddress otherwise.",
       sources: [{ kind: "commit", ref: "d94ffbc", title: "refactor: Convert test to a class", author: "Jimmy Wärting", at: "2022-01-04" }],
       children: [],
     },
     {
-      path: "lib/test.js#serverAddress",
+      path: "lib/test.js/serverAddress",
       kind: "function",
       summary:
         "Starts the implicit server at most once per app (tracked in a WeakMap so user-owned servers are never touched), binding explicitly to 127.0.0.1 rather than a wildcard address, since a wildcard bind can share its port with another process's own loopback listener on macOS and silently misroute the request. Three real fixes in 2026 (Aug 15, Sep 22, Sep 29) hardened exactly this address-family and binding behavior.",
@@ -204,14 +205,14 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#formatServerUrl",
+      path: "lib/test.js/formatServerUrl",
       kind: "function",
       summary: "Builds the request URL from a listening server's address, mapping wildcard addresses (:: or 0.0.0.0) to the IPv4 loopback so the client doesn't construct an IPv6 URL superagent can't resolve, while leaving an explicitly IPv6-only server's own address alone.",
       sources: [{ kind: "commit", ref: "71dc5fb", title: "fix: stabilize ephemeral server requests and assertions", author: "titanism", at: "2026-09-22" }],
       children: [],
     },
     {
-      path: "lib/test.js#expect",
+      path: "lib/test.js/expect",
       kind: "function",
       summary:
         "Overloaded assertion registrar: dispatches on argument shape to status, body, header, status-array, or custom-function assertions, pushing each as a wrapped closure checked later in assert(). The array-of-statuses form (.expect([200, 404])) was added in 2021 and needed two follow-up fixes the same year for its interaction with JSON bodies and empty-array responses, a real small saga of a feature landing imperfectly and getting corrected in public.",
@@ -223,7 +224,7 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#end",
+      path: "lib/test.js/end",
       kind: "function",
       summary:
         "Defers superagent's real .end() until the implicit server is confirmed listening (or reports a start error), then runs it and decrements a shared pending-request count, closing the server only once every concurrent request against it has settled. This function's real history is the most consequential in the file: a 2025 attempt at automatic server closing had to be reverted per issue #651 after it broke manually-started-server usage, and the September 2026 stabilization commit fixed four more real issues against this exact lifecycle logic.",
@@ -243,7 +244,7 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#assert",
+      path: "lib/test.js/assert",
       kind: "function",
       summary:
         "Runs every registered assertion against the response and calls the callback with the first failure (or null). Specifically distinguishes real connection-level system errors (ECONNREFUSED, ECONNRESET, EPIPE, ETIMEDOUT) from assertion failures, citing Node's own error documentation in a code comment.",
@@ -251,7 +252,7 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#bearer",
+      path: "lib/test.js/bearer",
       kind: "function",
       summary: "Shortcut for .set('Authorization', `Bearer ${token}`). Added 2024-08-04; the September 2026 stabilization commit notes removing a duplicate implementation of this exact method that had crept in elsewhere.",
       sources: [
@@ -261,14 +262,14 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#assert-helpers",
+      path: "lib/test.js/assert-helpers",
       kind: "function",
       summary: "Five small helpers (_assertBody, _assertHeader, _assertStatus, _assertStatusArray, _assertFunction), each returning an Error or undefined for one expectation kind. Grouped for the same reason as assertion.js's small helpers: structurally identical, not worth a rung each.",
       sources: [{ kind: "commit", ref: "d94ffbc", title: "refactor: Convert test to a class", author: "Jimmy Wärting", at: "2022-01-04" }],
       children: [],
     },
     {
-      path: "lib/test.js#wrapAssertFn",
+      path: "lib/test.js/wrapAssertFn",
       kind: "function",
       summary:
         "Captures a clean stack trace at registration time and splices it onto any assertion error's own stack, so a failed .expect() in test output points at the calling test code instead of disappearing into supertest's internals. Itself has a real, multi-year fix history: Node-version-dependent stack formats, and an error-object check that had to be added after a real reported bug (#700).",
@@ -282,7 +283,7 @@ const testJs: Rung = {
       children: [],
     },
     {
-      path: "lib/test.js#error",
+      path: "lib/test.js/error",
       kind: "function",
       summary: "Builds an Error carrying .expected/.actual/.showDiff, so a test runner can render a diff instead of just a message.",
       sources: [],
@@ -340,7 +341,7 @@ const issue_651: Rung = {
     { kind: "issue", ref: "#651", title: "Fix end() not called when app is started manually", author: "(reporter)", at: "2020-05-15" },
     { kind: "commit", ref: "b6fd281", title: "fix: revert automatic server closing (per #651)", author: "titanism", at: "2025-07-07" },
   ],
-  touches: ["lib/test.js#end"],
+  touches: ["lib/test.js/end"],
   children: [
     {
       path: "issues/651/comments/1",
@@ -398,14 +399,23 @@ const libDir: Rung = {
 };
 
 const repo: Rung = {
-  path: ".",
+  path: REPO_RUNG_PATH,
   kind: "repo",
   summary: "visionmedia/supertest: a fluent assertion library for testing Node.js HTTP servers, built on superagent. 539 commits, 2012-06-26 to 2026-10-02, 1202 lines of real source across 5 files.",
   sources: [],
   children: [indexJs, libDir, packageJson, release_v6_3_1, issue_798, issue_651],
 };
 
-function render(rung: Rung, depth = 0): string {
+// Write every rung as its own file under state/supertest/.zz/ladder/.
+writeLadder(stateDir, repo);
+
+// Render by reading back from disk, following children by path, one rung
+// at a time -- proving the lazy-load model actually works, not just that
+// writeLadder produced files.
+function renderFromDisk(rungPath: string, depth = 0): { text: string; count: number } {
+  const rung = readRung(stateDir, rungPath);
+  if (!rung) return { text: `${"  ".repeat(depth)}[missing] ${rungPath}`, count: 0 };
+
   const indent = "  ".repeat(depth);
   const lines = [`${indent}[${rung.kind}] ${rung.path}`, `${indent}  ${rung.summary}`];
   if (rung.sources.length) {
@@ -414,15 +424,15 @@ function render(rung: Rung, depth = 0): string {
   if (rung.touches?.length) {
     lines.push(`${indent}  touches: ${rung.touches.join(", ")}`);
   }
-  for (const child of rung.children) lines.push(render(child, depth + 1));
-  return lines.join("\n");
+  let count = 1;
+  for (const child of readRungChildren(stateDir, rung)) {
+    const sub = renderFromDisk(child.path, depth + 1);
+    lines.push(sub.text);
+    count += sub.count;
+  }
+  return { text: lines.join("\n"), count };
 }
 
-function countRungs(rung: Rung): number {
-  return 1 + rung.children.reduce((sum, c) => sum + countRungs(c), 0);
-}
-
-const output = render(repo);
-console.log(output);
-console.log(`\n${countRungs(repo)} total rungs.`);
-writeFileSync(join(here, "ladder-full-supertest.output.txt"), output + "\n");
+const { text, count } = renderFromDisk(REPO_RUNG_PATH);
+console.log(text);
+console.log(`\n${count} total rungs, read from ${count} individual files under state/supertest/.zz/ladder/.`);

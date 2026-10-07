@@ -1,0 +1,39 @@
+{
+  "path": "lib/test.js/end",
+  "kind": "function",
+  "summary": "Defers superagent's real .end() until the implicit server is confirmed listening (or reports a start error), then runs it and decrements a shared pending-request count, closing the server only once every concurrent request against it has settled. This function's real history is the most consequential in the file: a 2025 attempt at automatic server closing had to be reverted per issue #651 after it broke manually-started-server usage, and the September 2026 stabilization commit fixed four more real issues against this exact lifecycle logic.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "b6fd281",
+      "title": "fix: revert automatic server closing (per #651)",
+      "author": "titanism",
+      "at": "2025-07-07"
+    },
+    {
+      "kind": "commit",
+      "ref": "6d060e3",
+      "title": "feat: fix server lifecycle, callback handling, and SuperAgent v10 compatibility",
+      "author": "titanism",
+      "at": "2025-07-07"
+    },
+    {
+      "kind": "commit",
+      "ref": "96c06e3",
+      "title": "fix: avoid server re-use race conditions",
+      "author": "alxndrsn",
+      "at": "2025-03-19"
+    },
+    {
+      "kind": "commit",
+      "ref": "71dc5fb",
+      "title": "fix: stabilize ephemeral server requests and assertions (fixes #726, #876, #879, #891; supersedes 10 open PRs)",
+      "author": "titanism",
+      "at": "2026-09-22"
+    }
+  ],
+  "touches": [
+    "issues/651"
+  ],
+  "children": []
+}

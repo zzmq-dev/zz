@@ -1,0 +1,15 @@
+{
+  "path": "issues/798/comments/1",
+  "kind": "comment",
+  "summary": "titanism: \"v6.3.1 released which bumps to superagent v8.0.3 which was released a bit ago today\" (links the release).",
+  "sources": [
+    {
+      "kind": "issue",
+      "ref": "#798",
+      "title": "pin superagent to 8.0.0",
+      "author": "titanism",
+      "at": "2022-10-24T20:31:15Z"
+    }
+  ],
+  "children": []
+}

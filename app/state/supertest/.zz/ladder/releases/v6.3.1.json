@@ -1,0 +1,25 @@
+{
+  "path": "releases/v6.3.1",
+  "kind": "release",
+  "summary": "Bumped the pinned superagent version to close #798, the same day the real upstream bug (superagent#1743) was finally fixed.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "25122e6",
+      "title": "fix: bump superagent (closes #798)",
+      "author": "titanism",
+      "at": "2022-10-24"
+    },
+    {
+      "kind": "issue",
+      "ref": "#798",
+      "title": "pin superagent to 8.0.0",
+      "author": "smolinari",
+      "at": "2022-10-23"
+    }
+  ],
+  "touches": [
+    "package.json"
+  ],
+  "children": []
+}

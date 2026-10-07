@@ -1,0 +1,15 @@
+{
+  "path": "lib/agent.js/lines-94",
+  "kind": "lines",
+  "summary": "TestAgent.prototype.del alias, the same backward-compatible pattern as index.js's own obj.del.",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "8741283",
+      "title": "Moved usage of 'del' to support the proper http verb 'delete'",
+      "author": "TJ Holowaychuk",
+      "at": "2014-03-24"
+    }
+  ],
+  "children": []
+}

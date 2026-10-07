@@ -1,0 +1,43 @@
+{
+  "path": "lib/test.js/wrapAssertFn",
+  "kind": "function",
+  "summary": "Captures a clean stack trace at registration time and splices it onto any assertion error's own stack, so a failed .expect() in test output points at the calling test code instead of disappearing into supertest's internals. Itself has a real, multi-year fix history: Node-version-dependent stack formats, and an error-object check that had to be added after a real reported bug (#700).",
+  "sources": [
+    {
+      "kind": "commit",
+      "ref": "0288826",
+      "title": "produces edited stack that starts with error name",
+      "author": "JP Bochi",
+      "at": "2021-01-15"
+    },
+    {
+      "kind": "commit",
+      "ref": "d41d10b",
+      "title": "Wraps assert functions, updating stack trace of generated errors",
+      "author": "JP Bochi",
+      "at": "2020-12-03"
+    },
+    {
+      "kind": "commit",
+      "ref": "0a06ef1",
+      "title": "fix: Fix unappropriate stack trace issue on Node.js prior than 14",
+      "author": "Ketut Sandiarsa",
+      "at": "2021-01-24"
+    },
+    {
+      "kind": "commit",
+      "ref": "b628d34",
+      "title": "fix: Check error object before updating stack. (Fixes #700)",
+      "author": "Andres Torres",
+      "at": "2021-01-25"
+    },
+    {
+      "kind": "commit",
+      "ref": "3dba4e9",
+      "title": "fix: add stacktrace to failed expect function call",
+      "author": "Alexandre ABRIOUX",
+      "at": "2022-03-29"
+    }
+  ],
+  "children": []
+}
