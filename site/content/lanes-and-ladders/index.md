@@ -60,7 +60,7 @@ A Lane produces one or more **Changesets** as it works, the reviewable units of 
 
 ### Cascade
 
-A cascade is a Lane whose `trigger` is `dependency_cascade` instead of `manual`. A breaking change detected using the Ladder MCP's dependency graph proposes a Lane per affected downstream consumer automatically. These cascaded Lanes are opened by the Maintainer of an already-existing, independent repo that depends on the one that changed.
+A cascade isn't a special mechanism. It's one of the integration tasks a Maintainer handles while merging a change: using the [Ladder MCP](/mcp/#ladder-mcp)'s dependency graph, it checks whether any dependents need to update to keep working, and for each one that does, `ASK`s that repo's Maintainer to take the work, much like filing a PR against it. The resulting Lane is opened in that already-existing, independent repo like any other; only its `trigger.kind` (`dependency_cascade` instead of `manual`) and `trigger.origin_changeset` record where the need came from.
 
 ## How a Ladder works
 
