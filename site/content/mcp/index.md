@@ -82,3 +82,4 @@ payload: {
 - Auth and scoping: how an MCP tool call carries the same Auth Token and Role scoping the CLI and protocol already require.
 - Whether zz-git, zz-ladder-lanes, and zz-roles end up as one server or three — grouped separately above because they have different trust boundaries (zz-git never writes; zz-ladder-lanes' two write tools are coordinator-gated; zz-roles' writes are admin-only), not because the split is final.
 - Tool granularity within each group: one broad query tool or several narrow ones.
+- Whether cross-agent coordination (one agent asking another to do something, rather than an agent calling zz's own tools) should eventually run over [A2A](https://github.com/a2aproject/a2a) instead of being proxied through more MCP tool calls. Well beyond current scope; worth evaluating once there's more than one real agent in the system.

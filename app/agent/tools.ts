@@ -174,22 +174,34 @@ function normalizeRung(rung: unknown): Rung {
 const RUNG_KINDS_NEEDING_A_COMMIT_SOURCE = new Set(["repo", "directory", "file", "release", "changeset"]);
 const VALID_TOP_LEVEL_KINDS = new Set(["repo", "directory", "file", "release", "changeset", "ask", "contributor", "dependencies"]);
 
+// Small local models follow a literal example far more reliably than a
+// prose description of the right shape -- appended to every validation
+// error below so there's always something concrete to copy, not just
+// something to interpret.
+const VALID_RUNG_EXAMPLE = JSON.stringify({
+  path: "changesets/abc123",
+  kind: "changeset",
+  summary: "Fixed the off-by-one error in the pagination helper.",
+  sources: [{ kind: "commit", ref: "abc123def456...", title: "Fix pagination off-by-one", author: "Jane Doe", at: "2026-01-01T00:00:00Z" }],
+  children: [{ path: "pagination.js", kind: "filechange", summary: "Changed the loop bound from <= to < to fix the off-by-one.", sources: [], children: [] }],
+});
+
 function validateTopLevelKind(rung: Rung): string | null {
   if (!VALID_TOP_LEVEL_KINDS.has(rung.kind)) {
-    return `rung "${rung.path}" has kind "${rung.kind}", which can't be written as a top-level rung -- it has no git object of its own to anchor to. Nest it inside its parent's children array instead (e.g. a "filechange" goes inside a "changeset"'s children, not alongside it).`;
+    return `rung "${rung.path}" has kind "${rung.kind}", which can't be written as a top-level rung -- it has no git object of its own to anchor to. Nest it inside its parent's children array instead (e.g. a "filechange" goes inside a "changeset"'s children, not alongside it). Example of a correct call's rung argument: ${VALID_RUNG_EXAMPLE}`;
   }
   return null;
 }
 
 function validateAnchorSources(rung: Rung): string | null {
   if (RUNG_KINDS_NEEDING_A_COMMIT_SOURCE.has(rung.kind) && !rung.sources.some((s) => s.kind === "commit" && s.ref)) {
-    return `rung "${rung.path}" (kind "${rung.kind}") has no commit source to anchor its note to. Add a sources entry: {kind: "commit", ref: "<the real commit sha this rung is about>", title, author, at}.`;
+    return `rung "${rung.path}" (kind "${rung.kind}") has no commit source to anchor its note to. Add a sources entry: {kind: "commit", ref: "<the real commit sha this rung is about>", title, author, at}. Example of a correct call's rung argument: ${VALID_RUNG_EXAMPLE}`;
   }
   return null;
 }
 
 function validateHasSummary(rung: Rung): string | null {
-  if (!rung.summary.trim()) return `rung "${rung.path}" has an empty summary. Every rung needs a real description -- if it shouldn't be there at all, leave it out of children entirely rather than including it with nothing to say.`;
+  if (!rung.summary.trim()) return `rung "${rung.path}" has an empty summary. Every rung needs a real description -- if it shouldn't be there at all, leave it out of children entirely rather than including it with nothing to say. Example of a correct call's rung argument: ${VALID_RUNG_EXAMPLE}`;
   for (const child of rung.children) {
     const problem = validateHasSummary(child);
     if (problem) return problem;
