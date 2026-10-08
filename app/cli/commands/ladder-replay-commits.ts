@@ -79,15 +79,29 @@ async function buildFileChangeRung(model: ModelBackend, repoDir: string, commit:
   return { path: change.path, kind: "filechange", summary: overview, sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }], children: lineRungs };
 }
 
-/** Builds the updated current-state Rung for a file, given its existing anchor and the latest change's summary. Only one level of "previously" is kept, and sources are capped, so this never grows unboundedly across however many commits touch the file -- the full history lives in the filechange rungs, this is a snapshot. Returns null when there's nothing safe to update (no existing anchor, or it has nested children this pass can't preserve). */
-function buildUpdatedFileRung(existing: Awaited<ReturnType<typeof readAnchor>>, commit: CommitRow, changeSummary: string): Rung | null {
+/**
+ * Builds the updated current-state Rung for a file: a fresh synthesis of
+ * its current description, not the old description with the latest
+ * change tacked on. The model decides whether the change actually
+ * matters -- a cosmetic change (formatting, whitespace, a rename with no
+ * behavior change) shouldn't alter the description at all, let alone
+ * read as if that cosmetic change were now the file's defining fact.
+ * Sources are capped so provenance stays bounded; the full history lives
+ * in the filechange rungs, this is a snapshot, not an archive. Returns
+ * null when there's nothing safe to update (no existing anchor, or it
+ * has nested children this pass can't preserve).
+ */
+async function buildUpdatedFileRung(model: ModelBackend, existing: Awaited<ReturnType<typeof readAnchor>>, commit: CommitRow, changeSummary: string): Promise<Rung | null> {
   if (!existing) return null;
   if (existing.children.length > 0) return null;
   const previousClean = existing.summary.replace(/ \(previously:.*\)$/s, "");
+  const synthesized = await model.summarize(
+    `You maintain a short, current description of what a file is and does. Below is its existing description and a note about what changed in the latest commit. Decide first whether the change is material -- does it actually alter the file's purpose, behavior, or exports? If not (formatting, whitespace, comments, a rename with no behavior change, reordering with no effect), output the existing description completely unchanged, with no mention of the latest commit at all -- not even a passing remark that something was reformatted. Only write a revised description, folding in what changed, when the change is actually material. Never append the new note onto the old description as an extra sentence.\n\nExisting description: ${previousClean}\n\nWhat changed in the latest commit: ${changeSummary}\n\nUpdated description:`,
+  );
   return {
     path: existing.path,
     kind: existing.kind,
-    summary: `${changeSummary} (previously: ${previousClean})`,
+    summary: synthesized ?? `${changeSummary} (previously: ${previousClean})`,
     sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }, ...existing.sources].slice(0, 5),
     touches: existing.touches,
     children: [],
@@ -130,7 +144,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
     rung_update_request: async (theAsk: AskEntry) => {
       const { path, commit, changeSummary } = theAsk.payload as { path: string; commit: CommitRow; changeSummary: string };
       const existing = await readAnchor(repo.repoDir, repo.stateDir, path);
-      const updated = buildUpdatedFileRung(existing, commit, changeSummary);
+      const updated = await buildUpdatedFileRung(model, existing, commit, changeSummary);
       if (updated) await writeLadder(repo.repoDir, repo.stateDir, updated);
     },
     ingest_repo: async () => {
