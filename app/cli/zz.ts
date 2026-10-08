@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { ladderBuild } from "./commands/ladder-build.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
+import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
 
 const program = new Command();
 program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");
@@ -29,6 +30,24 @@ ladder
       return;
     }
     await ladderDump(repo, { format, out: opts.out });
+  });
+
+const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");
+
+lane
+  .command("log <repo>")
+  .description("chronological log of every ASK/ANSWER across every Lane for a repo")
+  .option("--format <format>", "text or json", "text")
+  .option("--lane <id>", "show only one lane")
+  .option("--out <path>", "write to a file instead of stdout")
+  .action(async (repo: string, opts: { format: string; lane?: string; out?: string }) => {
+    const format = opts.format as LaneLogFormat;
+    if (format !== "text" && format !== "json") {
+      console.error(`unknown format "${opts.format}"; expected text or json`);
+      process.exitCode = 1;
+      return;
+    }
+    await laneLog(repo, { format, lane: opts.lane, out: opts.out });
   });
 
 program.parseAsync(process.argv);
