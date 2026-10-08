@@ -53,6 +53,7 @@ This project started as a design sketch for Cloudflare's ["next git platform"](h
 - [Name & background](/name-and-background/)
 - [Competition plan](/competition-plan/)
 - [Ladder design](/ladder-design/)
+- [Remote backend](/remote-backend/)
 
 </nav-links>
 
