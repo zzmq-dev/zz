@@ -30,9 +30,39 @@ function flatten(lanes: Lane[]): LogRow[] {
   return rows.sort((a, b) => a.at.localeCompare(b.at));
 }
 
+// A payload can carry a whole Rung (or array of Rungs), a commit, or
+// just a few scalar fields -- print enough to identify what's being
+// asked for/answered without dumping a full diff or Ladder subtree into
+// every line of the log.
+function summarizePayload(payload: unknown): string {
+  if (payload === undefined || payload === null) return "";
+  if (typeof payload !== "object") return String(payload);
+  const p = payload as Record<string, unknown>;
+  if (p.target) return `{target: ${p.target}}`;
+  if (p.grant) return `{grant: ${p.grant}}`;
+  if (p.commit && typeof p.commit === "object") {
+    const c = p.commit as { sha?: string; message?: string };
+    return `{commit: ${c.sha?.slice(0, 7)} "${c.message}"${p.change ? `, change: ${(p.change as { path?: string }).path}` : ""}}`;
+  }
+  if (p.path && p.changeSummary) return `{path: ${p.path}}`;
+  if (p.ladder) {
+    const ladder = p.ladder as { path?: string; kind?: string } | { path?: string; kind?: string }[];
+    const rungs = Array.isArray(ladder) ? ladder : [ladder];
+    return `{ladder: ${rungs.map((r) => `${r.kind}:${r.path}`).join(", ")}}`;
+  }
+  if ("path" in p && "kind" in p) return `{${p.kind}:${p.path}}`;
+  const json = JSON.stringify(payload);
+  return json.length > 80 ? json.slice(0, 77) + "..." : json;
+}
+
 function renderEntry(entry: HistoryEntry): string {
-  if (entry.type === "ASK") return `ASK    ${entry.kind.padEnd(18)} from ${entry.from}`;
-  if (entry.type === "ANSWER") return `ANSWER ${entry.action.padEnd(18)} from ${entry.from}`;
+  if (entry.type === "ASK") {
+    const deps = entry.depends_on?.length ? ` deps=[${entry.depends_on.join(",")}]` : "";
+    return `ASK    ${entry.id.padEnd(14)} ${entry.kind.padEnd(18)} from ${entry.from}${deps} ${summarizePayload(entry.payload)}`;
+  }
+  if (entry.type === "ANSWER") {
+    return `ANSWER ${entry.id.padEnd(14)} -> ${entry.ask.padEnd(14)} ${entry.action.padEnd(9)} from ${entry.from} ${summarizePayload(entry.payload)}`;
+  }
   return `INSIGHT ${entry.kind.padEnd(17)} from ${entry.from}: ${entry.text}`;
 }
 

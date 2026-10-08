@@ -37,6 +37,10 @@ export interface BuildOptions {
 }
 
 const AGENT = process.env.ZZ_AGENT ?? "zz-local";
+// Same identity ladder-replay-commits.ts uses for the repo Lane's own
+// coordinator -- both commands touch the same `_repo` Lane, and whoever
+// creates it first fixes its `coordinators` list, so they need to agree.
+const COORDINATOR = process.env.ZZ_COORDINATOR ?? "zz-coordinator";
 
 /**
  * Runs one history item through the real protocol: propose, claim
@@ -58,8 +62,7 @@ async function runItemLane(
 
   const mergeRequest = ask(stateDir, lane.id, { kind: "merge_request", from: AGENT });
   answer(stateDir, lane.id, mergeRequest, { from: AGENT, action: "grant" });
-  const current = readLane(stateDir, lane.id)!;
-  await mergeLaneLadder(repoDir, stateDir, current, laneLadder);
+  await mergeLaneLadder(repoDir, stateDir, laneLadder);
 }
 
 async function isPresent(repoDir: string, stateDir: string, path: string): Promise<boolean> {
@@ -146,9 +149,9 @@ export async function ladderBuild(slug: string, options: BuildOptions): Promise<
   // as origin.
   let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: AGENT });
+    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
     const review = ask(repo.stateDir, repoLane.id, { kind: "review_request", from: AGENT });
-    answer(repo.stateDir, repoLane.id, review, { from: AGENT, action: "grant" });
+    answer(repo.stateDir, repoLane.id, review, { from: COORDINATOR, action: "grant" });
   }
   const origin: LaneRef = { repo: slug, lane: repoLane.id };
 

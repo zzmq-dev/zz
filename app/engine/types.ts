@@ -31,21 +31,42 @@ export interface Trigger {
   reason?: string;
 }
 
+export type AskKind =
+  | "claim_request"
+  | "review_request"
+  | "change_request"
+  | "coordinator_request"
+  | "merge_request"
+  | "rung_update_request"
+  | "ingest_repo"
+  | "analyze_changeset"
+  | "add_filechange"
+  | "summarize_changeset";
+
 export interface AskEntry {
+  id: string;
   type: "ASK";
-  kind: "claim_request" | "review_request" | "change_request" | "coordinator_request" | "merge_request" | "rung_update_request";
+  kind: AskKind;
   from: string;
+  /** Kind-specific data: what's actually being asked for (a commit sha, a target ask id to claim, a Rung to merge, etc). */
+  payload?: unknown;
+  /** Ask ids (same lane) that must each have a "grant"/"complete" Answer before this one may be claimed. */
+  depends_on?: string[];
+  /** Higher = more urgent. A query-time sort hint (see engine/workqueue.ts), not a scheduling guarantee. */
+  priority?: number;
   at: string;
-  /** What this ASK is about, for a legible log -- a commit sha, a rung path, etc. Not interpreted by the protocol itself. */
-  ref?: string;
 }
 
 export interface AnswerEntry {
+  id: string;
   type: "ANSWER";
+  /** The AskEntry.id this answers. */
+  ask: string;
   from: string;
-  action: "grant" | "deny" | "inform";
+  action: "grant" | "deny" | "complete";
+  /** Kind-specific data: a grant id for a claim, a built Rung for a work item, etc. */
+  payload?: unknown;
   at: string;
-  ref?: string;
 }
 
 export interface InsightEntry {

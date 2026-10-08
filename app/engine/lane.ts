@@ -2,10 +2,14 @@
 // the existing .zz/ persistence (engine/store.ts) and Ladder storage
 // (engine/ladderNotes.ts), not just data types. Role-checking is deferred
 // to a later step (see the plan) -- this step is about getting the
-// protocol functions themselves working end to end.
+// protocol functions themselves working end to end. The actual work
+// queue (claiming, dependencies, the worker loop) lives in
+// engine/workqueue.ts, built on top of the ask()/answer() primitives
+// here.
+import { randomBytes } from "node:crypto";
 import { readLane, writeLane } from "./store.js";
 import { appendRepoChildren, writeLadder } from "./ladderNotes.js";
-import type { AskEntry, AnswerEntry, Lane, LaneRef, LaneStatus, Trigger } from "./types.js";
+import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, Trigger } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import { REPO_RUNG_PATH } from "./ladder.js";
 
@@ -13,9 +17,17 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+// Random, not sequential: ids are minted independently by whoever
+// creates an Ask/Answer, with no shared counter to coordinate around --
+// a monotonic counter is exactly the kind of contended state that breaks
+// once there are multiple concurrent readers/writers of the same queue.
+function randomId(prefix: string): string {
+  return `${prefix}-${randomBytes(5).toString("hex")}`;
+}
+
 export function proposeLane(
   stateDir: string,
-  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string },
+  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[] },
 ): Lane {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
   const lane: Lane = {
@@ -27,7 +39,7 @@ export function proposeLane(
     status: "proposed",
     scope: input.scope,
     trigger,
-    coordinators: [],
+    coordinators: input.coordinators ?? [input.proposedBy],
     history: [],
     related_lanes: [],
   };
@@ -41,26 +53,35 @@ function requireLane(stateDir: string, laneId: string): Lane {
   return lane;
 }
 
-export function ask(stateDir: string, laneId: string, input: { kind: AskEntry["kind"]; from: string; ref?: string }): AskEntry {
+export function ask(stateDir: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): AskEntry {
   const lane = requireLane(stateDir, laneId);
-  const entry: AskEntry = { type: "ASK", kind: input.kind, from: input.from, at: nowIso(), ref: input.ref };
+  const entry: AskEntry = {
+    id: randomId("ask"),
+    type: "ASK",
+    kind: input.kind,
+    from: input.from,
+    payload: input.payload,
+    depends_on: input.depends_on,
+    priority: input.priority,
+    at: nowIso(),
+  };
   lane.history.push(entry);
   writeLane(stateDir, lane);
   return entry;
 }
 
-const STATUS_ON_GRANT: Record<AskEntry["kind"], LaneStatus | null> = {
+// Only kinds that describe *this lane's own* lifecycle drive a status
+// transition. Work-item kinds (ingest_repo, analyze_changeset, ...) and
+// cross-lane messages (merge_request lands in a *different* lane's
+// queue than the one whose work it's about) never do.
+const STATUS_ON_GRANT: Partial<Record<AskKind, LaneStatus>> = {
   claim_request: "claimed",
   review_request: "active",
-  change_request: null,
-  coordinator_request: null,
-  merge_request: "merged",
-  rung_update_request: null,
 };
 
-export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; ref?: string }): AnswerEntry {
+export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
   const lane = requireLane(stateDir, laneId);
-  const entry: AnswerEntry = { type: "ANSWER", from: input.from, action: input.action, at: nowIso(), ref: input.ref };
+  const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   lane.history.push(entry);
   if (input.action === "grant") {
     const nextStatus = STATUS_ON_GRANT[theAsk.kind];
@@ -70,37 +91,38 @@ export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input
   return entry;
 }
 
-/**
- * A non-decision round trip: the actor ASKs the coordinator to update a
- * piece of shared Ladder state it doesn't own outright (e.g. a file's
- * current-state rung, touched by many changesets over time), the
- * coordinator does it, and ANSWERs with `action: "inform"` -- a
- * completion notice, not a grant/deny decision. Both sides are played by
- * the same agent in this single-actor bootstrap, but the two ends of the
- * round trip are still recorded as distinct protocol events.
- */
-export async function requestRungUpdate(stateDir: string, laneId: string, input: { from: string; ref: string }, doUpdate: () => Promise<void>): Promise<void> {
-  const theAsk = ask(stateDir, laneId, { kind: "rung_update_request", from: input.from, ref: input.ref });
-  await doUpdate();
-  answer(stateDir, laneId, theAsk, { from: input.from, action: "inform", ref: input.ref });
-}
+// Which actor may act on (claim, or grant/deny/complete) an ask of a
+// given kind: "coordinator" means only someone in that lane's
+// `coordinators` list; "open" means anyone. A property of the kind, not
+// a central lock -- the query that reads this (engine/workqueue.ts's
+// claimableAsks) is what a real concurrent actor would run against a
+// shared queue.
+export const ASK_SCOPE: Record<AskKind, "coordinator" | "open"> = {
+  claim_request: "coordinator",
+  merge_request: "coordinator",
+  review_request: "coordinator",
+  change_request: "coordinator",
+  coordinator_request: "coordinator",
+  rung_update_request: "coordinator",
+  ingest_repo: "open",
+  analyze_changeset: "open",
+  add_filechange: "open",
+  summarize_changeset: "open",
+};
 
 /**
- * Merges a Lane's own local Ladder into the repo's Ladder -- the one
- * write path anything (replay, or later a live Lane) uses to actually
- * change stored Ladder state. Usually one top-level rung; a Lane whose
- * work produced several top-level entries (e.g. describing a whole
- * directory's immediate contents) passes an array instead.
+ * Writes a Rung (or several top-level Rungs) into the repo's Ladder.
+ * The only place git notes actually get mutated -- called from the
+ * `merge_request` handler when the repo Lane's queue processes one, not
+ * by whoever built the Ladder. No longer gated on any Lane's `.status`:
+ * in the queue model, access is controlled by who's allowed to claim a
+ * `merge_request` ask (ASK_SCOPE above), not by this function.
  */
-export async function mergeLaneLadder(repoDir: string, stateDir: string, lane: Lane, laneLadder: Rung | Rung[]): Promise<void> {
-  if (lane.status !== "merged") throw new Error(`lane ${lane.id} is not merged (status: ${lane.status}); refusing to merge its Ladder`);
+export async function mergeLaneLadder(repoDir: string, stateDir: string, laneLadder: Rung | Rung[]): Promise<void> {
   const rungs = Array.isArray(laneLadder) ? laneLadder : [laneLadder];
   for (const rung of rungs) {
     await writeLadder(repoDir, stateDir, rung);
   }
-  // The repo's own root rung is never a *child* of itself -- writing its
-  // note (above) already embeds its own children correctly. Only other
-  // top-level rungs get registered as new children of the repo root.
   const asChildren = rungs.filter((r) => r.path !== REPO_RUNG_PATH);
   if (asChildren.length) {
     await appendRepoChildren(repoDir, stateDir, asChildren.map((r) => ({ path: r.path, kind: r.kind as RungKind })));

@@ -1,20 +1,24 @@
 // `zz ladder replay-commits <owner/repo> [--limit N]`: walks the commit
-// log from the root commit forward, one Lane per commit, building a
-// changeset rung (with nested filechange/linechange rungs) for each and
-// merging it into the repo's Ladder -- the historical changelog, as
-// opposed to `ladder-build.ts`'s snapshot-at-HEAD file tree and GitHub
-// metadata. Run `zz ladder build` first: this expects a file rung to
+// log from the root commit forward through a real work queue
+// (engine/workqueue.ts), not a hand-written call sequence. One Lane per
+// commit, each building a changeset rung (nested filechange/linechange
+// rungs) and asking the repo Lane's own queue to merge it -- the repo
+// Lane is the only thing that ever writes git notes, and only when it
+// gets around to processing that ask, not when the commit-Lane finishes
+// its own work. Run `zz ladder build` first: this expects a file rung to
 // already exist for files it updates (it won't create one from
 // scratch, to avoid re-deriving the whole current-state tree here too).
+import { randomBytes } from "node:crypto";
 import { ensureCloned, resolveRepo } from "../lib/repo.js";
 import { commitFileChanges, fileContentAtCommit, listCommitsChronological, type CommitRow, type FileChangeRow } from "../../engine/ingest.js";
 import { resolveModelBackend, type ModelBackend } from "../../engine/model.js";
-import { ask, answer, mergeLaneLadder, proposeLane, requestRungUpdate } from "../../engine/lane.js";
+import { ask, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
+import { runWorkerLoop } from "../../engine/workqueue.js";
 import type { Rung } from "../../engine/ladder.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
 import { readAnchor, writeLadder } from "../../engine/ladderNotes.js";
 import { readLane } from "../../engine/store.js";
-import type { LaneRef } from "../../engine/types.js";
+import type { AskEntry, LaneRef } from "../../engine/types.js";
 
 export interface ReplayOptions {
   limit?: number;
@@ -24,21 +28,25 @@ export interface ReplayOptions {
 
 const DEFAULT_MAX_FILES = 25;
 
-function mechanicalFileChangeRung(commit: CommitRow, change: FileChangeRow, fileCount: number): Rung {
-  const note = change.status === "modified" ? `modified, ${change.hunks.length} hunk(s)` : change.status;
-  return { path: change.path, kind: "filechange", summary: `${note}, as part of a ${fileCount}-file commit described at the commit level only.`, sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }], children: [] };
-}
-
-const AGENT = process.env.ZZ_AGENT ?? "zz-local";
 // A distinct name for the coordinator side of the protocol, even though
-// one local model plays both parts in this bootstrap -- per the project's
-// own framing, every actor (human or agent) is a client of the same
-// protocol, and that includes "the coordinator" as a named party, not an
-// implicit system behavior.
+// one local model plays both parts in this bootstrap -- per the
+// project's own framing, every actor (human or agent) is a client of
+// the same protocol, and that includes "the coordinator" as a named
+// party, not an implicit system behavior.
+const AGENT = process.env.ZZ_AGENT ?? "zz-local";
 const COORDINATOR = process.env.ZZ_COORDINATOR ?? "zz-coordinator";
+
+function shortId(prefix: string): string {
+  return `${prefix}-${randomBytes(4).toString("hex")}`;
+}
 
 async function isPresent(repoDir: string, stateDir: string, path: string): Promise<boolean> {
   return (await readAnchor(repoDir, stateDir, path)) !== null;
+}
+
+function mechanicalFileChangeRung(commit: CommitRow, change: FileChangeRow, fileCount: number): Rung {
+  const note = change.status === "modified" ? `modified, ${change.hunks.length} hunk(s)` : change.status;
+  return { path: change.path, kind: "filechange", summary: `${note}, as part of a ${fileCount}-file commit described at the commit level only.`, sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }], children: [] };
 }
 
 async function describeHunk(model: ModelBackend, path: string, hunk: string): Promise<string> {
@@ -71,28 +79,32 @@ async function buildFileChangeRung(model: ModelBackend, repoDir: string, commit:
   return { path: change.path, kind: "filechange", summary: overview, sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }], children: lineRungs };
 }
 
-/** The coordinator's own current-state file rung, kept up to date as changesets land -- distinct from the filechange rungs above, which are this one commit's historical record. Only updates an existing anchor (created by `ladder build`'s file-tree pass); doesn't create one from scratch, to avoid re-deriving tree attachment here too. */
-async function updateCurrentFileRung(repoDir: string, stateDir: string, laneId: string, commit: CommitRow, change: FileChangeRow, changeSummary: string): Promise<void> {
-  const existing = await readAnchor(repoDir, stateDir, change.path);
-  if (!existing) return; // not in the current tree (e.g. later deleted before HEAD); known gap, see file header.
-  if (existing.children.length > 0) return; // has nested (e.g. hand-researched function/line) children this pass can't safely preserve; leave it alone rather than risk dropping them.
-  // Keep only one level of "previously" -- strip any prior one already
-  // baked into the existing summary, so this doesn't grow into an
-  // ever-longer chain across however many commits touch this file. The
-  // full history is what the filechange rungs in each changeset are for;
-  // this rung is a snapshot, not an archive.
+/** Builds the updated current-state Rung for a file, given its existing anchor and the latest change's summary. Only one level of "previously" is kept, and sources are capped, so this never grows unboundedly across however many commits touch the file -- the full history lives in the filechange rungs, this is a snapshot. Returns null when there's nothing safe to update (no existing anchor, or it has nested children this pass can't preserve). */
+function buildUpdatedFileRung(existing: Awaited<ReturnType<typeof readAnchor>>, commit: CommitRow, changeSummary: string): Rung | null {
+  if (!existing) return null;
+  if (existing.children.length > 0) return null;
   const previousClean = existing.summary.replace(/ \(previously:.*\)$/s, "");
-  await requestRungUpdate(stateDir, laneId, { from: AGENT, ref: change.path }, async () => {
-    const updated: Rung = {
-      path: existing.path,
-      kind: existing.kind,
-      summary: `${changeSummary} (previously: ${previousClean})`,
-      sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }, ...existing.sources].slice(0, 5),
-      touches: existing.touches,
-      children: [], // `file` rungs have no nested children of their own kind; the parameter here is always [].
-    };
-    await writeLadder(repoDir, stateDir, updated);
-  });
+  return {
+    path: existing.path,
+    kind: existing.kind,
+    summary: `${changeSummary} (previously: ${previousClean})`,
+    sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }, ...existing.sources].slice(0, 5),
+    touches: existing.touches,
+    children: [],
+  };
+}
+
+interface AddFileChangePayload {
+  commit: CommitRow;
+  change: FileChangeRow;
+  large: boolean;
+  fileCount: number;
+}
+
+interface SummarizeChangesetPayload {
+  commit: CommitRow;
+  large: boolean;
+  fileCount: number;
 }
 
 export async function ladderReplayCommits(slug: string, options: ReplayOptions): Promise<void> {
@@ -100,66 +112,122 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
   ensureCloned(repo);
   const model = await resolveModelBackend();
   console.error(`model backend: ${model.name}`);
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
 
   let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR });
-    const review = ask(repo.stateDir, repoLane.id, { kind: "review_request", from: COORDINATOR });
-    answer(repo.stateDir, repoLane.id, review, { from: COORDINATOR, action: "grant" });
+    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
   }
-  const origin: LaneRef = { repo: slug, lane: repoLane.id };
+  const repoOrigin: LaneRef = { repo: slug, lane: repoLane.id };
 
-  const commits = listCommitsChronological(repo.repoDir);
-  const limit = options.limit ?? commits.length;
-  let processed = 0;
-  let skipped = 0;
+  // --- handlers that run on the repo Lane's own queue: the only place
+  // git notes actually get written. -----------------------------------
+  const repoHandlers = {
+    merge_request: async (theAsk: AskEntry) => {
+      const { ladder } = theAsk.payload as { ladder: Rung | Rung[] };
+      await mergeLaneLadder(repo.repoDir, repo.stateDir, ladder);
+    },
+    rung_update_request: async (theAsk: AskEntry) => {
+      const { path, commit, changeSummary } = theAsk.payload as { path: string; commit: CommitRow; changeSummary: string };
+      const existing = await readAnchor(repo.repoDir, repo.stateDir, path);
+      const updated = buildUpdatedFileRung(existing, commit, changeSummary);
+      if (updated) await writeLadder(repo.repoDir, repo.stateDir, updated);
+    },
+    ingest_repo: async () => {
+      const commits = listCommitsChronological(repo.repoDir);
+      const limit = options.limit ?? commits.length;
+      const sessionLane = proposeLane(repo.stateDir, {
+        id: shortId("replay"),
+        repo: slug,
+        name: `replay session (${new Date().toISOString()})`,
+        objective: "walk the commit log and build a changeset per commit",
+        scope: ["**"],
+        origin: repoOrigin,
+        proposedBy: AGENT,
+        coordinators: [AGENT],
+      });
 
-  for (const commit of commits) {
-    if (processed >= limit) break;
-    const laneId = `commit-${commit.sha.slice(0, 10)}`;
-    const path = `changesets/${commit.sha}`;
-    if (!options.force && (await isPresent(repo.repoDir, repo.stateDir, path))) {
-      skipped += 1;
-      continue;
-    }
+      let posted = 0;
+      let skipped = 0;
+      for (const commit of commits) {
+        if (posted >= limit) break;
+        if (!options.force && (await isPresent(repo.repoDir, repo.stateDir, `changesets/${commit.sha}`))) {
+          skipped += 1;
+          continue;
+        }
+        ask(repo.stateDir, sessionLane.id, { kind: "analyze_changeset", from: AGENT, payload: { commit } });
+        posted += 1;
+      }
+      console.error(`posted ${posted} analyze_changeset ask(s), ${skipped} commit(s) already onboarded`);
 
-    // The coordinator files the task; the actor claims it.
-    const lane = proposeLane(repo.stateDir, { id: laneId, repo: slug, name: `replay commit ${commit.sha.slice(0, 7)}`, objective: commit.message, scope: [path], origin, proposedBy: COORDINATOR, reason: commit.message });
-    const claim = ask(repo.stateDir, lane.id, { kind: "claim_request", from: AGENT, ref: commit.sha });
-    answer(repo.stateDir, lane.id, claim, { from: COORDINATOR, action: "grant", ref: commit.sha });
+      await runWorkerLoop(repo.stateDir, sessionLane.id, AGENT, {
+        analyze_changeset: async (theAsk) => {
+          const { commit } = theAsk.payload as { commit: CommitRow };
+          const changes = commitFileChanges(repo.repoDir, commit);
+          const large = changes.length > maxFiles;
+          console.error(`${commit.sha.slice(0, 7)} "${commit.message}" -- ${changes.length} file(s)${large ? " (large commit: mechanical only)" : ""}`);
 
-    const changes = commitFileChanges(repo.repoDir, commit);
-    const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
-    const large = changes.length > maxFiles;
-    console.error(`[${processed + 1}/${limit}] ${commit.sha.slice(0, 7)} "${commit.message}" -- ${changes.length} file(s)${large ? " (large commit: mechanical only)" : ""}`);
+          const changesetLane = proposeLane(repo.stateDir, {
+            id: `commit-${commit.sha.slice(0, 10)}`,
+            repo: slug,
+            name: `analyze commit ${commit.sha.slice(0, 7)}`,
+            objective: commit.message,
+            scope: [`changesets/${commit.sha}`],
+            origin: { repo: slug, lane: sessionLane.id },
+            proposedBy: AGENT,
+            coordinators: [AGENT],
+          });
 
-    const fileChangeRungs: Rung[] = [];
-    for (const change of changes) {
-      const rung = large ? mechanicalFileChangeRung(commit, change, changes.length) : await buildFileChangeRung(model, repo.repoDir, commit, change);
-      fileChangeRungs.push(rung);
-      // A separate, non-blocking round trip per file: the actor asks the
-      // coordinator to fold this change into the file's current-state
-      // rung, which is shared across every changeset that touches it.
-      // Skipped for large commits too -- the mechanical summary isn't
-      // worth propagating into the file's current-state rung.
-      if (!large) await updateCurrentFileRung(repo.repoDir, repo.stateDir, lane.id, commit, change, rung.summary);
-    }
+          const fileAskIds: string[] = [];
+          for (const change of changes) {
+            const payload: AddFileChangePayload = { commit, change, large, fileCount: changes.length };
+            const fileAsk = ask(repo.stateDir, changesetLane.id, { kind: "add_filechange", from: AGENT, payload });
+            fileAskIds.push(fileAsk.id);
+          }
+          const summarizePayload: SummarizeChangesetPayload = { commit, large, fileCount: changes.length };
+          ask(repo.stateDir, changesetLane.id, { kind: "summarize_changeset", from: AGENT, payload: summarizePayload, depends_on: fileAskIds });
 
-    const changesetRung: Rung = {
-      path,
-      kind: "changeset",
-      summary: `${commit.message} (${commit.author}, ${commit.at}). ${changes.length} file(s) changed.${large ? " A large commit; files described at a glance, not individually." : ""}`,
-      sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }],
-      children: fileChangeRungs,
-    };
+          await runWorkerLoop(repo.stateDir, changesetLane.id, AGENT, {
+            add_filechange: async (fcAsk) => {
+              const { commit: c, change, large: isLarge, fileCount } = fcAsk.payload as AddFileChangePayload;
+              const rung = isLarge ? mechanicalFileChangeRung(c, change, fileCount) : await buildFileChangeRung(model, repo.repoDir, c, change);
+              // Non-blocking: posted into the repo Lane's queue, not
+              // awaited here. The repo Lane's own loop (resumed once
+              // this whole ingest_repo handler returns) will get to it.
+              if (!isLarge) {
+                ask(repo.stateDir, repoLane!.id, { kind: "rung_update_request", from: AGENT, payload: { path: change.path, commit: c, changeSummary: rung.summary } });
+              }
+              return rung;
+            },
+            summarize_changeset: async (scAsk) => {
+              const { commit: c, large: isLarge, fileCount } = scAsk.payload as SummarizeChangesetPayload;
+              const lane = readLane(repo.stateDir, changesetLane.id)!;
+              const fileChangeRungs = fileAskIds.map((id) => {
+                const a = lane.history.find((e) => e.type === "ANSWER" && e.ask === id);
+                return (a as { payload: Rung }).payload;
+              });
+              const changesetRung: Rung = {
+                path: `changesets/${c.sha}`,
+                kind: "changeset",
+                summary: `${c.message} (${c.author}, ${c.at}). ${fileCount} file(s) changed.${isLarge ? " A large commit; files described at a glance, not individually." : ""}`,
+                sources: [{ kind: "commit", ref: c.sha, title: c.message, author: c.author, at: c.at }],
+                children: fileChangeRungs,
+              };
+              // Also non-blocking: fire the merge ask at the repo Lane's
+              // queue and move on, same as the per-file rung updates.
+              ask(repo.stateDir, repoLane!.id, { kind: "merge_request", from: AGENT, payload: { ladder: changesetRung } });
+              return changesetRung;
+            },
+          });
+        },
+      });
 
-    const mergeRequest = ask(repo.stateDir, lane.id, { kind: "merge_request", from: AGENT, ref: commit.sha });
-    answer(repo.stateDir, lane.id, mergeRequest, { from: COORDINATOR, action: "grant", ref: commit.sha });
-    const merged = readLane(repo.stateDir, lane.id)!;
-    await mergeLaneLadder(repo.repoDir, repo.stateDir, merged, changesetRung);
+      return { processed: posted, skipped, remaining: commits.length - posted - skipped };
+    },
+  };
 
-    processed += 1;
-  }
+  ask(repo.stateDir, repoLane.id, { kind: "ingest_repo", from: COORDINATOR });
+  await runWorkerLoop(repo.stateDir, repoLane.id, COORDINATOR, repoHandlers);
 
-  console.error(`done: ${processed} commits replayed, ${skipped} already onboarded, ${commits.length - processed - skipped} remaining.`);
+  console.error("done.");
 }
