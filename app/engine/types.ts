@@ -41,7 +41,11 @@ export type AskKind =
   | "ingest_repo"
   | "analyze_changeset"
   | "add_filechange"
-  | "summarize_changeset";
+  | "summarize_changeset"
+  // A generic task with no dedicated handler: payload.description is
+  // prose for an agent to read like a prompt and figure out on its own,
+  // rather than a kind-specific typed payload.
+  | "work";
 
 export interface AskEntry {
   id: string;

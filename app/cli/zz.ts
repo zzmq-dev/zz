@@ -4,6 +4,7 @@ import { ladderBuild } from "./commands/ladder-build.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
 import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
 import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
+import { work } from "./commands/work.js";
 
 const program = new Command();
 program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");
@@ -59,6 +60,15 @@ lane
       return;
     }
     await laneLog(repo, { format, lane: opts.lane, out: opts.out });
+  });
+
+program
+  .command("work <repo>")
+  .description("run a general agent loop against the zz-git/zz-ladder-lanes tools, working one prose-described Ask")
+  .option("--task <description>", "what to ask the agent to do (default: ingest the whole repo)")
+  .option("--max-turns <n>", "stop after this many tool-calling turns (default: 40)", (v) => parseInt(v, 10))
+  .action(async (repo: string, opts: { task?: string; maxTurns?: number }) => {
+    await work(repo, { task: opts.task, maxTurns: opts.maxTurns });
   });
 
 program.parseAsync(process.argv);
