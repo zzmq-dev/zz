@@ -83,6 +83,25 @@ export function fetchPullRequests(slug: string): PrRow[] {
   return ghJsonLines<PrRow>(`repos/${slug}/pulls?state=all&per_page=100`, ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at}");
 }
 
+export interface CommentRow {
+  author: string;
+  body: string;
+}
+
+/** The comment thread for an issue or PR (GitHub serves both through the same issues/comments endpoint). Zero-cost: no model call, just data. */
+export function fetchThreadComments(slug: string, number: number): CommentRow[] {
+  return ghJsonLines<CommentRow>(`repos/${slug}/issues/${number}/comments?per_page=100`, ".[] | {author: .user.login, body}");
+}
+
+/** A contributor's own commit messages, used to describe what they worked on. Zero-cost: no model call, just data. */
+export function fetchContributorCommitMessages(slug: string, login: string): string[] {
+  // jq extracts just the first line of each message itself (raw-output,
+  // so gh prints it unquoted): a multi-line commit message's embedded
+  // newlines would otherwise corrupt the one-line-per-commit split below.
+  const raw = gh(["api", `repos/${slug}/commits?author=${encodeURIComponent(login)}&per_page=100`, "--paginate", "--jq", '.[].commit.message | split("\\n")[0]']);
+  return raw.trim().split("\n").filter(Boolean);
+}
+
 export interface ReleaseRow {
   tag_name: string;
   published_at: string;
@@ -137,6 +156,34 @@ export function parseDependencies(repoDir: string): DependencyRow[] {
   return Object.entries(deps).map(([name, versionRange]) => ({ name, versionRange }));
 }
 
+export interface UsageSite {
+  file: string;
+  line: string;
+}
+
+/** Where a dependency is actually imported/required in the tracked source. Zero-cost: a grep, no model call. */
+export function findDependencyUsage(repoDir: string, name: string): UsageSite[] {
+  let raw: string;
+  try {
+    raw = execFileSync(
+      "grep",
+      ["-rn", "-F", "--include=*.js", "--include=*.ts", "--include=*.mjs", "--include=*.cjs", "--exclude-dir=node_modules", "--exclude-dir=.git", name, repoDir],
+      { encoding: "utf8" },
+    );
+  } catch {
+    return []; // grep exits 1 when there are no matches
+  }
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((entry) => {
+      const [file, , ...rest] = entry.split(":");
+      return { file: file.replace(`${repoDir}/`, ""), line: rest.join(":") };
+    })
+    .filter((site) => /require\(|from\s+['"]/.test(site.line));
+}
+
 // --- mechanical file tree: real git log per file, no narrative ---------
 // This is the part that didn't exist as code at all before this file --
 // every file-level rung before this was hand-written after reading the
@@ -174,14 +221,35 @@ async function fileCommitSummary(repoDir: string, filepath: string): Promise<Fil
   };
 }
 
+async function readFileSafe(absPath: string): Promise<string> {
+  try {
+    return readFileSync(absPath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
 /**
- * Walks the real tracked file tree at HEAD and builds one lightweight
- * file/directory Rung per real path, each sourced from that file's real
- * commit history (count, date range, most recent real commit). No
- * function- or line-level rungs: that split requires actually reading and
- * understanding the code, which stays a by-hand pass (see the file header).
+ * Called once per file during walkFileTree, with that file's content and
+ * the default mechanical (commit-history-only) summary text. Returning
+ * the mechanical text unchanged is the zero-cost default; a caller that
+ * wants real content analysis does its own work here (e.g. running a
+ * Lane through ask/answer and a model call) and returns the result.
  */
-export async function walkFileTree(repoDir: string): Promise<Rung[]> {
+export type DescribeFile = (path: string, content: string, mechanical: string) => Promise<string>;
+
+const defaultDescribeFile: DescribeFile = async (_path, _content, mechanical) => mechanical;
+
+/**
+ * Walks the tracked file tree at HEAD and builds one file/directory Rung
+ * per path, each sourced from that file's commit history (count, date
+ * range, most recent commit). Returns only the top-level entries (files
+ * and directories directly under the repo root) -- each one's nested
+ * children, if it's a directory, are already built in underneath it.
+ * No function- or line-level rungs: that split requires actually reading
+ * and understanding the code, which stays a by-hand pass.
+ */
+export async function walkFileTree(repoDir: string, describeFile: DescribeFile = defaultDescribeFile): Promise<Rung[]> {
   const allPaths = await git.listFiles({ fs, dir: repoDir });
   const paths = allPaths.filter((p) => !shouldSkip(p));
 
@@ -194,10 +262,13 @@ export async function walkFileTree(repoDir: string): Promise<Rung[]> {
   const fileRungs = new Map<string, Rung>();
   for (const p of paths) {
     const summary = await fileCommitSummary(repoDir, p);
+    const mechanical = `${summary.count} commits, ${summary.first} to ${summary.last}. Last: "${summary.lastMessage}" (${summary.lastAuthor}).`;
+    const content = await readFileSafe(join(repoDir, p));
+    const described = await describeFile(p, content, mechanical);
     fileRungs.set(p, {
       path: p,
       kind: "file",
-      summary: `${summary.count} real commits, ${summary.first} to ${summary.last}. Last: "${summary.lastMessage}" (${summary.lastAuthor}). Not read in depth; no function- or line-level rungs yet.`,
+      summary: described,
       sources: summary.count ? [{ kind: "commit", ref: "HEAD", title: summary.lastMessage, author: summary.lastAuthor, at: summary.last }] : [],
       children: [],
     });
@@ -222,6 +293,14 @@ export async function walkFileTree(repoDir: string): Promise<Rung[]> {
   };
   for (const [p, r] of fileRungs) attach(p, r);
   for (const [p, r] of dirRungs) attach(p, r);
+
+  // Directory summaries are a plain listing of what's in them -- the
+  // children are already each individually described, so this just
+  // names them rather than describing a directory itself.
+  for (const rung of dirRungs.values()) {
+    const names = rung.children.map((c) => c.path.split("/").pop()).join(", ");
+    rung.summary = `Directory containing ${rung.children.length} entries: ${names}.`;
+  }
 
   return roots;
 }
