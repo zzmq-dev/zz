@@ -1,19 +1,8 @@
-// The real ingest/analysis workflow, as actual functions, not ad-hoc shell
-// exploration. Everything that previously happened as one-off `git log`/
-// `git blame`/`gh api` calls run by hand while researching a rung's real
-// content now has a named function here, callable the same way for any
-// repo, not just the one it was first written against.
-//
-// Two tiers, both honest about which they are:
-//   - Mechanical (this file): real data, lightly transformed, no narrative
-//     research. Runs unattended for any repo. This is what a `zz ladder
-//     build` actually automates today.
-//   - Deep research (not here): reading a file and genuinely understanding
-//     what a function does, or reading a real comment thread and judging
-//     which replies are asks versus answers, the way asks/798 and asks/651
-//     got built. That's not mechanical, and nothing in this file claims to
-//     automate it; it stays a by-hand pass until there's a real
-//     summarization model wired in (see ladder-design.md's open questions).
+// The ingest/analysis workflow, as named functions, not ad-hoc shell
+// exploration run by hand during a conversation. Everything here is
+// mechanical data-gathering only (git/gh calls, no model calls) -- the
+// actual content analysis happens in the callers (cli/commands/ladder-
+// build.ts, cli/commands/ladder-replay-commits.ts) via engine/model.ts.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -303,4 +292,88 @@ export async function walkFileTree(repoDir: string, describeFile: DescribeFile =
   }
 
   return roots;
+}
+
+// --- commit-by-commit history, for changeset replay ---------------------
+// A different cut through the same repo: not "what does HEAD look like"
+// (walkFileTree, above) but "what changed, commit by commit, from the
+// root commit forward" -- the raw material for one Lane/changeset per
+// commit. Shells out to real git (diff-tree, diff) for the same reason
+// cloneIfMissing does: this is a CLI-local convenience step, not part of
+// the Workers-bound engine.
+
+export interface CommitRow {
+  sha: string;
+  parent: string | null; // null for the repo's root commit
+  author: string;
+  at: string;
+  message: string;
+}
+
+/** Every commit on the current branch, oldest first -- the order a changeset replay walks them in. Merge commits are walked against their first parent only; a merge's other parents' commits were already visited on their own branch. */
+export function listCommitsChronological(repoDir: string): CommitRow[] {
+  const sep = "\x1f";
+  const raw = execFileSync("git", ["-C", repoDir, "log", "--reverse", "--first-parent", `--format=%H${sep}%P${sep}%an${sep}%aI${sep}%s`], { encoding: "utf8" });
+  return raw
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [sha, parents, author, at, message] = line.split(sep);
+      return { sha, parent: parents.split(" ")[0] || null, author, at, message };
+    });
+}
+
+// The well-known empty-tree object every git repo has; diffing a root
+// commit (no parent) against it reports every one of its files as added.
+const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+export interface FileChangeRow {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  /** Unified diff hunks for this file in this commit (empty for added/deleted, where the whole file is the change). */
+  hunks: string[];
+}
+
+function parseHunks(unifiedDiff: string): string[] {
+  const lines = unifiedDiff.split("\n");
+  const hunks: string[] = [];
+  let current: string[] | null = null;
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      if (current) hunks.push(current.join("\n"));
+      current = [line];
+    } else if (current) {
+      current.push(line);
+    }
+  }
+  if (current) hunks.push(current.join("\n"));
+  return hunks;
+}
+
+/** What changed in one commit: which files, how, and (for modified files) the actual diff hunks. */
+export function commitFileChanges(repoDir: string, commit: CommitRow): FileChangeRow[] {
+  const base = commit.parent ?? EMPTY_TREE_SHA;
+  const nameStatus = execFileSync("git", ["-C", repoDir, "diff", "--name-status", base, commit.sha], { encoding: "utf8" });
+  const rows: FileChangeRow[] = [];
+  for (const line of nameStatus.trim().split("\n").filter(Boolean)) {
+    const [statusCode, path] = line.split("\t");
+    const status = statusCode.startsWith("A") ? "added" : statusCode.startsWith("D") ? "deleted" : "modified";
+    let hunks: string[] = [];
+    if (status === "modified") {
+      const diff = execFileSync("git", ["-C", repoDir, "diff", "--unified=1", base, commit.sha, "--", path], { encoding: "utf8" });
+      hunks = parseHunks(diff);
+    }
+    rows.push({ path, status, hunks });
+  }
+  return rows;
+}
+
+/** A file's full content as of a specific commit -- used to describe a newly-added file without needing a second checkout. */
+export function fileContentAtCommit(repoDir: string, sha: string, path: string): string {
+  try {
+    return execFileSync("git", ["-C", repoDir, "show", `${sha}:${path}`], { encoding: "utf8" });
+  } catch {
+    return "";
+  }
 }

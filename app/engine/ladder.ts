@@ -37,7 +37,16 @@ export type RungKind =
   | "ask"
   | "answer"
   | "contributor"
-  | "dependencies";
+  | "dependencies"
+  // Historical changelog: one changeset per commit, replayed in order.
+  // A changeset's filechange children are embedded in its one note, not
+  // separate anchors -- they're only ever read as part of that commit's
+  // record, never addressed independently. Distinct from the `file` kind
+  // above, which tracks a file's *current* state at HEAD, kept up to date
+  // by the coordinator as changesets land, not the file's full history.
+  | "changeset"
+  | "filechange"
+  | "linechange";
 
 export interface RungSource {
   kind: "commit" | "pr" | "issue";

@@ -33,9 +33,11 @@ export interface Trigger {
 
 export interface AskEntry {
   type: "ASK";
-  kind: "claim_request" | "review_request" | "change_request" | "coordinator_request" | "merge_request";
+  kind: "claim_request" | "review_request" | "change_request" | "coordinator_request" | "merge_request" | "rung_update_request";
   from: string;
   at: string;
+  /** What this ASK is about, for a legible log -- a commit sha, a rung path, etc. Not interpreted by the protocol itself. */
+  ref?: string;
 }
 
 export interface AnswerEntry {
@@ -43,6 +45,7 @@ export interface AnswerEntry {
   from: string;
   action: "grant" | "deny" | "inform";
   at: string;
+  ref?: string;
 }
 
 export interface InsightEntry {

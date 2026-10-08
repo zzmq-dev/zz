@@ -41,9 +41,9 @@ function requireLane(stateDir: string, laneId: string): Lane {
   return lane;
 }
 
-export function ask(stateDir: string, laneId: string, input: { kind: AskEntry["kind"]; from: string }): AskEntry {
+export function ask(stateDir: string, laneId: string, input: { kind: AskEntry["kind"]; from: string; ref?: string }): AskEntry {
   const lane = requireLane(stateDir, laneId);
-  const entry: AskEntry = { type: "ASK", kind: input.kind, from: input.from, at: nowIso() };
+  const entry: AskEntry = { type: "ASK", kind: input.kind, from: input.from, at: nowIso(), ref: input.ref };
   lane.history.push(entry);
   writeLane(stateDir, lane);
   return entry;
@@ -55,11 +55,12 @@ const STATUS_ON_GRANT: Record<AskEntry["kind"], LaneStatus | null> = {
   change_request: null,
   coordinator_request: null,
   merge_request: "merged",
+  rung_update_request: null,
 };
 
-export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"] }): AnswerEntry {
+export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; ref?: string }): AnswerEntry {
   const lane = requireLane(stateDir, laneId);
-  const entry: AnswerEntry = { type: "ANSWER", from: input.from, action: input.action, at: nowIso() };
+  const entry: AnswerEntry = { type: "ANSWER", from: input.from, action: input.action, at: nowIso(), ref: input.ref };
   lane.history.push(entry);
   if (input.action === "grant") {
     const nextStatus = STATUS_ON_GRANT[theAsk.kind];
@@ -67,6 +68,21 @@ export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input
   }
   writeLane(stateDir, lane);
   return entry;
+}
+
+/**
+ * A non-decision round trip: the actor ASKs the coordinator to update a
+ * piece of shared Ladder state it doesn't own outright (e.g. a file's
+ * current-state rung, touched by many changesets over time), the
+ * coordinator does it, and ANSWERs with `action: "inform"` -- a
+ * completion notice, not a grant/deny decision. Both sides are played by
+ * the same agent in this single-actor bootstrap, but the two ends of the
+ * round trip are still recorded as distinct protocol events.
+ */
+export async function requestRungUpdate(stateDir: string, laneId: string, input: { from: string; ref: string }, doUpdate: () => Promise<void>): Promise<void> {
+  const theAsk = ask(stateDir, laneId, { kind: "rung_update_request", from: input.from, ref: input.ref });
+  await doUpdate();
+  answer(stateDir, laneId, theAsk, { from: input.from, action: "inform", ref: input.ref });
 }
 
 /**

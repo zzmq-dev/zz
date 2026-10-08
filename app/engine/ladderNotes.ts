@@ -21,7 +21,7 @@ import { dirname, join } from "node:path";
 // that same thread -- it's still part of that one conversation, not a
 // fresh top-level item. contributor/dependencies never thread, so they're
 // always anchors wherever they appear.
-const STRUCTURAL_ANCHOR_KINDS = new Set<RungKind>(["repo", "directory", "file", "release"]);
+const STRUCTURAL_ANCHOR_KINDS = new Set<RungKind>(["repo", "directory", "file", "release", "changeset"]);
 const REPO_WIDE_ROOT_KINDS = new Set<RungKind>(["ask", "contributor", "dependencies"]);
 
 // Git ref names forbid several characters a real-world path segment can
@@ -35,6 +35,7 @@ function sanitizeRefSegment(segment: string): string {
 function notesRef(kind: RungKind, path: string): string {
   if (REPO_WIDE_ROOT_KINDS.has(kind)) return `refs/notes/zz/ladder/${sanitizeRefSegment(path)}`;
   if (kind === "release") return "refs/notes/zz/ladder/release";
+  if (kind === "changeset") return "refs/notes/zz/ladder/changeset";
   return "refs/notes/zz/ladder/code";
 }
 
@@ -180,6 +181,11 @@ export async function readAnchor(repoDir: string, stateDir: string, path: string
   if (path === "dependencies" || path.startsWith("dependencies/") || path === "dependents") {
     const sha = await cachedRootCommit(repoDir);
     return readNote<EmbeddedRung>(repoDir, notesRef("dependencies", path), sha);
+  }
+  if (path.startsWith("changesets/")) {
+    const sha = readIndex(stateDir)[path];
+    if (!sha) return null;
+    return readNote<EmbeddedRung>(repoDir, notesRef("changeset", path), sha);
   }
   const fileSha = await resolvePathSha(repoDir, path);
   if (fileSha) return readNote<EmbeddedRung>(repoDir, notesRef("file", path), fileSha);

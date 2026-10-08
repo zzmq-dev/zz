@@ -2,6 +2,7 @@
 import { Command } from "commander";
 import { ladderBuild } from "./commands/ladder-build.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
+import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
 import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
 
 const program = new Command();
@@ -30,6 +31,16 @@ ladder
       return;
     }
     await ladderDump(repo, { format, out: opts.out });
+  });
+
+ladder
+  .command("replay-commits <repo>")
+  .description("walk the commit log from the root commit forward, one Lane per commit, building changeset/filechange/linechange rungs")
+  .option("--limit <n>", "only replay the first N not-yet-onboarded commits", (v) => parseInt(v, 10))
+  .option("--force", "re-replay commits that already have a changeset rung")
+  .option("--max-files <n>", "commits touching more files than this get a mechanical summary instead of per-file/per-hunk analysis (default: 25)", (v) => parseInt(v, 10))
+  .action(async (repo: string, opts: { limit?: number; force?: boolean; maxFiles?: number }) => {
+    await ladderReplayCommits(repo, { limit: opts.limit, force: opts.force, maxFiles: opts.maxFiles });
   });
 
 const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");

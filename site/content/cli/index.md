@@ -7,18 +7,24 @@ description: "The zz command-line reference, early sketch."
 
 This is a starting point. Commands and flags here will change once there's a real Maintainer to drive them against. `zz` wraps git/Artifacts for content operations and adds the coordination protocol on top; it does not reimplement git.
 
-## Ladder (implemented)
+## Ladder and Lane (implemented)
 
-The one part of this page with working code behind it today. Builds and reads a repo's Ladder, stored in git notes.
+The one part of this page with working code behind it today. Onboarding drives the same Lane/ASK/ANSWER engine a live Maintainer uses, not a script writing straight into storage; a local model (configurable, currently an Ollama backend) does the content analysis.
 
 ```
 zz ladder build <owner/repo> [--force]
+zz ladder replay-commits <owner/repo> [--limit <n>] [--force]
 zz ladder dump <owner/repo> [--format text|json|html] [--out <path>]
+zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>]
 ```
 
-`build` walks the repo's real file tree and fetches its issues, PRs, releases, and contributors, writing one rung per item. It skips any rung that already has a note, so running it again — or against a repo that already has hand-researched content layered on top — never overwrites what's there; `--force` rebuilds anyway.
+`build` describes the file tree at HEAD and onboards issues, PRs, releases, and contributors, each as its own Lane that claims, does the work, and merges its result into the repo's Ladder. It skips anything that already has a note — running it again, or against a repo that already has hand-researched content layered on top, never overwrites what's there — `--force` rebuilds the file tree anyway.
 
-`dump` materializes the resulting tree for reading, without touching the notes: plain text, JSON, or a self-contained HTML page. Written to stdout by default, or to a file with `--out`.
+`replay-commits` walks the commit log from the root commit forward, one Lane per commit, building a `changeset` rung with nested `filechange` and `linechange` children from that commit's diff. Each file touched also gets a separate, non-blocking request to update its current-state `file` rung (what it looked like before this commit, what it looks like now) — the repo's own long-lived Lane is the coordinator for those. `--limit` bounds how many not-yet-onboarded commits to replay in one run.
+
+`dump` materializes the resulting Ladder for reading, without touching the notes: plain text, JSON, or a self-contained HTML page.
+
+`lane log` shows the protocol trail itself — every ASK/ANSWER across every Lane, in order — which is what produced the Ladder `dump` shows the result of.
 
 ## Content operations (thin wrappers over Artifacts/git)
 
