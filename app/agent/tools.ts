@@ -19,6 +19,11 @@ import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
 import { claimableAsks } from "../engine/workqueue.js";
 import { readAnchor } from "../engine/ladderNotes.js";
 import { readLane } from "../engine/store.js";
+import { commitChangeset, type ChangesetFile } from "../engine/changeset.js";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Rung } from "../engine/ladder.js";
 import type { AskEntry, AskKind, LaneRef } from "../engine/types.js";
 
@@ -260,13 +265,14 @@ const laneProposeTool: ToolDef = {
       objective: { type: "string" },
       scope: { type: "array", items: { type: "string" }, description: "Ladder paths this Lane's work covers" },
       origin_lane: { type: "string", description: "The lane id this one originates from, if any" },
+      origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
   },
-  async execute({ repo, name, objective, scope, origin_lane, actor }) {
+  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor }) {
     const r = resolveRepo(repo as string);
-    const origin: LaneRef | undefined = origin_lane ? { repo: r.slug, lane: origin_lane as string } : undefined;
+    const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? r.slug, lane: origin_lane as string } : undefined;
     return proposeLane(r.stateDir, {
       id: shortId("lane"),
       repo: r.slug,
@@ -363,6 +369,133 @@ const askAnswerTool: ToolDef = {
   },
 };
 
+// --- real code: committing it, and testing it before committing -------
+
+function validateChangesetFiles(files: unknown): string | null {
+  if (!Array.isArray(files) || files.length === 0) return 'files must be a non-empty array of {path, content}. Example: [{"path": "index.js", "content": "..."}]';
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i] as Record<string, unknown>;
+    if (!f || typeof f !== "object") return `files[${i}] must be an object {path, content}, got ${JSON.stringify(f)}`;
+    if (typeof f.path !== "string" || !f.path) return `files[${i}] is missing a non-empty "path" string.`;
+    if (typeof f.content !== "string") return `files[${i}] ("${f.path}") is missing a "content" string.`;
+  }
+  return null;
+}
+
+const commitChangesetTool: ToolDef = {
+  name: "commit_changeset",
+  description:
+    "Commits file content as a git commit -- the only tool that writes code. No working-tree file is needed first: content lives entirely in this call (the same content you should have already posted in a submit_changeset ask). Call this once you're ready to commit, after posting that ask, mirroring how ladder_write_rung is only called once a merge_request has been posted.",
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      files: { type: "array", items: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+      message: { type: "string" },
+      author_name: { type: "string" },
+      author_email: { type: "string" },
+    },
+    required: ["repo", "files", "message", "author_name", "author_email"],
+  },
+  async execute({ repo, files, message, author_name, author_email }) {
+    const problem = validateChangesetFiles(files);
+    if (problem) throw new Error(problem);
+    const r = resolveRepo(repo as string);
+    const commitOid = await commitChangeset(r.repoDir, {
+      files: files as ChangesetFile[],
+      message: message as string,
+      author: { name: author_name as string, email: author_email as string },
+    });
+    return { commitOid };
+  },
+};
+
+interface SandboxRepoSpec {
+  repo: string;
+  files?: ChangesetFile[];
+}
+
+const runInSandbox: ToolDef = {
+  name: "run_in_sandbox",
+  description:
+    "Runs a command (e.g. a test suite) against one or more repos in a disposable, throwaway checkout -- never the real repo. Use this to verify your work BEFORE committing it, not after. Pass each repo you need (the one you're changing, plus any it depends on); give `files` only for the repo whose proposed-but-not-yet-committed content you want to test -- repos listed without `files` are checked out at their real current state, so a cross-repo dependency resolves the same way it would for real.",
+  parameters: {
+    type: "object",
+    properties: {
+      repos: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            files: { type: "array", items: { type: "object", properties: { path: { type: "string" }, content: { type: "string" } }, required: ["path", "content"] } },
+          },
+          required: ["repo"],
+        },
+      },
+      command: { type: "string", description: "Shell command to run, e.g. \"node --test\"" },
+      cwd: { type: "string", description: "Which repo (by slug) to run the command in" },
+    },
+    required: ["repos", "command", "cwd"],
+  },
+  async execute({ repos, command, cwd }) {
+    const sandboxRoot = mkdtempSync(join(tmpdir(), "zz-sandbox-"));
+    const worktrees: { repoDir: string; worktreePath: string; shortName: string }[] = [];
+    try {
+      for (const spec of repos as SandboxRepoSpec[]) {
+        const r = resolveRepo(spec.repo);
+        const worktreePath = join(sandboxRoot, r.name);
+        execFileSync("git", ["-C", r.repoDir, "worktree", "add", "--detach", worktreePath, "HEAD"], { encoding: "utf8" });
+        worktrees.push({ repoDir: r.repoDir, worktreePath, shortName: r.name });
+        for (const f of spec.files ?? []) {
+          const dest = join(worktreePath, f.path);
+          mkdirSync(join(dest, ".."), { recursive: true });
+          writeFileSync(dest, f.content);
+        }
+      }
+      // Cross-repo dependencies resolve via a plain symlink (whether the
+      // package.json says "file:../x" or a version range -- no real
+      // registry exists for these packages either way) rather than
+      // requiring `npm install` to succeed against something that isn't
+      // actually published.
+      const shortNames = new Set(worktrees.map((w) => w.shortName));
+      for (const { worktreePath } of worktrees) {
+        const pkgPath = join(worktreePath, "package.json");
+        if (!existsSync(pkgPath)) continue;
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        const depNames = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+        for (const dep of depNames) {
+          if (!shortNames.has(dep)) continue;
+          const other = worktrees.find((w) => w.shortName === dep)!;
+          const nodeModules = join(worktreePath, "node_modules");
+          mkdirSync(nodeModules, { recursive: true });
+          const linkPath = join(nodeModules, dep);
+          if (!existsSync(linkPath)) symlinkSync(other.worktreePath, linkPath);
+        }
+      }
+      const cwdRepo = resolveRepo(cwd as string);
+      const runDir = join(sandboxRoot, cwdRepo.name);
+      try {
+        const stdout = execFileSync("/bin/sh", ["-c", command as string], { cwd: runDir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        return { exitCode: 0, stdout, stderr: "" };
+      } catch (err) {
+        const e = err as { status?: number; stdout?: string; stderr?: string };
+        return { exitCode: e.status ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? String(err) };
+      }
+    } finally {
+      for (const { repoDir, worktreePath } of worktrees) {
+        try {
+          execFileSync("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath]);
+        } catch {
+          // best-effort cleanup
+        }
+      }
+      rmSync(sandboxRoot, { recursive: true, force: true });
+    }
+  },
+};
+
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
 export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderWriteRung, laneProposeTool, laneGet, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
-export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS];
+export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
+export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];

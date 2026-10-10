@@ -81,6 +81,10 @@ const STATUS_ON_GRANT: Partial<Record<AskKind, LaneStatus>> = {
 
 export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
   const lane = requireLane(stateDir, laneId);
+  const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
+  if (existing) {
+    throw new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`);
+  }
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   lane.history.push(entry);
   if (input.action === "grant") {

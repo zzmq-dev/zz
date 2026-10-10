@@ -4,4 +4,6 @@ demo-repos/superagent/
 demo-repos/supertest/
 demo-repos/numkit/
 demo-repos/numkit-cli/
+demo-repos/mathkit/
+demo-repos/mathkit-cli/
 .env
