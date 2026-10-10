@@ -10,6 +10,7 @@ import { LadderView } from "./LadderView.js";
 import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { useLadderTrees } from "./useLadderTrees.js";
 import { flattenEvents } from "./types.js";
+import { laneListText, liveLogText, ladderText } from "./textExport.js";
 
 export function TopApp({ repos }: { repos: { repo: string; repoDir: string; stateDir: string }[] }) {
   const snapshots = useLaneSnapshots(repos);
@@ -18,9 +19,13 @@ export function TopApp({ repos }: { repos: { repo: string; repoDir: string; stat
     <TabView
       title="zz top"
       tabs={[
-        { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} /> },
-        { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} /> },
-        { label: "protocol", content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} /> },
+        { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
+        { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
+        {
+          label: "protocol",
+          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} />,
+          getFullText: () => liveLogText(flattenEvents(snapshots)),
+        },
       ]}
     />
   );

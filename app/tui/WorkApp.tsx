@@ -11,6 +11,7 @@ import { LadderView } from "./LadderView.js";
 import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { useLadderTrees } from "./useLadderTrees.js";
 import { flattenEvents } from "./types.js";
+import { laneListText, liveLogText, ladderText } from "./textExport.js";
 import type { LogBuffer } from "./LogBuffer.js";
 
 export function WorkApp({
@@ -37,10 +38,18 @@ export function WorkApp({
     <TabView
       title={`zz work -- ${agent}`}
       tabs={[
-        { label: "activity", content: (maxRows, scrollOffset) => <ActivityLog lines={logBuffer.all} status={statusRef.current} maxRows={maxRows} scrollOffset={scrollOffset} /> },
-        { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} /> },
-        { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} /> },
-        { label: "protocol", content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} /> },
+        {
+          label: "activity",
+          content: (maxRows, scrollOffset) => <ActivityLog lines={logBuffer.all} status={statusRef.current} maxRows={maxRows} scrollOffset={scrollOffset} />,
+          getFullText: () => logBuffer.all.join("\n"),
+        },
+        { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
+        { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
+        {
+          label: "protocol",
+          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} />,
+          getFullText: () => liveLogText(flattenEvents(snapshots)),
+        },
       ]}
     />
   );
