@@ -7,8 +7,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
+    "jsx": "react-jsx",
     "outDir": "dist"
   },
-  "include": ["engine/**/*.ts", "demo/**/*.ts", "demo-repos/**/*.ts"],
+  "include": ["engine/**/*.ts", "demo/**/*.ts", "demo-repos/**/*.ts", "agent/**/*.ts", "cli/**/*.ts", "cli/**/*.tsx", "tui/**/*.tsx", "tui/**/*.ts"],
   "exclude": ["node_modules", "demo-repos/superagent", "demo-repos/supertest"]
 }

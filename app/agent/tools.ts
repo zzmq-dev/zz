@@ -19,6 +19,7 @@ import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
 import { claimableAsks } from "../engine/workqueue.js";
 import { readAnchor } from "../engine/ladderNotes.js";
 import { readLane } from "../engine/store.js";
+import { resolveModelBackend } from "../engine/model.js";
 import { commitChangeset, type ChangesetFile } from "../engine/changeset.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -214,6 +215,32 @@ function validateHasSummary(rung: Rung): string | null {
   return null;
 }
 
+// A changeset is a historical event (one per commit) and is never
+// rewritten. A file/directory/repo/release rung is current-state,
+// cumulative by nature -- updating it should describe everything it is
+// now, not just the newest change. Relying on the calling agent to
+// always remember to ladder_read first and hand-synthesize that is
+// unreliable in practice (observed: a file's rung describing only the
+// change from several commits ago, with nothing since folded in), so
+// this is enforced here, automatically, on every write -- not just
+// hoped for via the system prompt.
+const CUMULATIVE_SUMMARY_KINDS = new Set(["repo", "directory", "file", "release"]);
+
+async function foldInSummary(existingSummary: string, incomingSummary: string): Promise<string> {
+  const model = await resolveModelBackend();
+  const synthesized = await model.summarize(
+    `You maintain a short, current, holistic description of what something is and does -- not a changelog entry. Below is its existing description and a proposed new one (which may only describe the latest change, not the whole thing). Decide first whether the proposed text actually adds anything the existing description doesn't already cover. If the existing description already covers it, or the difference is purely cosmetic, output the existing description completely unchanged. Otherwise, write ONE updated description that holistically covers everything this currently is/does -- everything the existing description said, plus what's new -- not the new text appended as an extra sentence, and not just a description of the latest change alone.\n\nExisting description: ${existingSummary}\n\nProposed new description: ${incomingSummary}\n\nUpdated description:`,
+  );
+  if (!synthesized) return `${existingSummary} ${incomingSummary}`;
+  // The model sometimes reasons out loud before giving the final text
+  // despite the prompt ending with "Updated description:" expecting a
+  // direct continuation -- keep only what comes after the last such
+  // marker, if present, rather than storing the reasoning preamble too.
+  const marker = /updated description:\s*/i;
+  const parts = synthesized.split(marker);
+  return parts[parts.length - 1].trim() || synthesized.trim();
+}
+
 const ladderWriteRung: ToolDef = {
   name: "ladder_write_rung",
   description:
@@ -248,6 +275,13 @@ const ladderWriteRung: ToolDef = {
     for (const one of rungs) {
       const problem = validateTopLevelKind(one) ?? validateAnchorSources(one) ?? validateHasSummary(one);
       if (problem) throw new Error(problem);
+    }
+    for (const one of rungs) {
+      if (!CUMULATIVE_SUMMARY_KINDS.has(one.kind)) continue;
+      const existing = await readAnchor(r.repoDir, r.stateDir, one.path);
+      if (existing?.summary && existing.summary !== one.summary) {
+        one.summary = await foldInSummary(existing.summary, one.summary);
+      }
     }
     await mergeLaneLadder(r.repoDir, r.stateDir, rungs);
     return { ok: true, wrote: rungs.map((x) => x.path) };
@@ -499,3 +533,12 @@ export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues
 export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderWriteRung, laneProposeTool, laneGet, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
+
+// The two tools that actually mutate committed state (a real commit, a
+// real Ladder write) -- real RBAC enforcement for `zz work` isn't just
+// the system prompt telling the model to behave; it's not handing these
+// to the model at all unless the ask it's currently working is one
+// where it's confirmed to be a coordinator (see ASK_SCOPE in
+// engine/lane.ts and how cli/commands/work.ts picks a tool set per ask).
+export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool];
+export const CONTRIBUTOR_TOOLS: ToolDef[] = ALL_TOOLS.filter((t) => !COORDINATOR_ONLY_TOOLS.includes(t));

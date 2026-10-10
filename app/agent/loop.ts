@@ -15,10 +15,18 @@ function toOllamaTools(tools: ToolDef[]) {
   return tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
 }
 
-function summarizeForLog(value: unknown): string {
-  const json = JSON.stringify(value);
+// Full (pretty-printed, multi-line) rather than a one-line truncated
+// summary -- the activity log is meant to show what the model is
+// actually doing (the real diffs/content in a commit_changeset or
+// ladder_write_rung call, not just its shape), the same way Claude
+// Code's own transcript shows full tool calls, not a gist of them. The
+// cap is generous, not absent, so one pathological payload can't lock
+// up the log.
+function formatForLog(value: unknown): string {
+  if (typeof value === "string") return value;
+  const json = JSON.stringify(value, null, 2);
   if (!json) return String(value);
-  return json.length > 200 ? json.slice(0, 197) + "..." : json;
+  return json.length > 6000 ? json.slice(0, 5997) + "..." : json;
 }
 
 // Some models (observed with qwen3-coder:30b) serialize a complex
@@ -49,6 +57,8 @@ export interface RunAgentOptions {
   maxTurns?: number;
   model?: string;
   baseUrl?: string;
+  /** Called with each log line instead of `console.error`, so a TUI can capture the agent's activity instead of it scrolling over the rendered screen. Defaults to `console.error`. */
+  onLog?: (line: string) => void;
 }
 
 export interface RunAgentResult {
@@ -63,6 +73,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   const baseUrl = opts.baseUrl ?? process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
   const model = opts.model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct";
   const maxTurns = opts.maxTurns ?? 40;
+  const log = opts.onLog ?? ((line: string) => console.error(line));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
 
   const messages: ChatMessage[] = [
@@ -84,6 +95,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     const { message } = data;
     messages.push(message);
 
+    if (message.content && message.content.trim()) {
+      log(`[turn ${turn}] says: ${message.content.trim()}`);
+    }
+
     if (!message.tool_calls || message.tool_calls.length === 0) {
       // Stopping right after an unresolved tool error usually means the
       // model gave up, not that it finished -- the one real failure mode
@@ -92,21 +107,21 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
       // bounded number of times so a genuinely stuck agent still ends.
       if (lastTurnHadError && nudgesUsed < MAX_GIVE_UP_NUDGES) {
         nudgesUsed += 1;
-        console.error(`[turn ${turn}] (stopped right after a tool error -- nudging instead of ending, ${nudgesUsed}/${MAX_GIVE_UP_NUDGES})`);
+        log(`[turn ${turn}] (stopped right after a tool error -- nudging instead of ending, ${nudgesUsed}/${MAX_GIVE_UP_NUDGES})`);
         messages.push({
           role: "user",
           content: "Your last tool call failed and you haven't resolved it -- you stopped instead of retrying. Either fix the error and retry the call, or if you genuinely can't complete the work, call ask_answer with action \"deny\" and explain why. Don't just stop without one of those.",
         });
         continue;
       }
-      console.error(`[turn ${turn}] (no tool calls -- agent considers itself done)`);
+      log(`[turn ${turn}] (no tool calls -- agent considers itself done)`);
       return { turns: turn, finished: true, finalMessage: message.content };
     }
 
     lastTurnHadError = false;
     for (const call of message.tool_calls) {
       const tool = byName.get(call.function.name);
-      console.error(`[turn ${turn}] -> ${call.function.name}(${summarizeForLog(call.function.arguments)})`);
+      log(`[turn ${turn}] -> ${call.function.name}(\n${formatForLog(call.function.arguments)}\n)`);
       let result: unknown;
       if (!tool) {
         result = { error: `no such tool: ${call.function.name}` };
@@ -114,15 +129,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
         try {
           result = await tool.execute(coerceJsonStringArgs(call.function.arguments));
         } catch (err) {
-          result = { error: err instanceof Error ? err.message : String(err) };
+          const resolved = err instanceof Error && (err as { resolved?: boolean }).resolved === true;
+          result = { error: err instanceof Error ? err.message : String(err), ...(resolved ? { resolved: true } : {}) };
         }
       }
       if (result && typeof result === "object" && "error" in result) lastTurnHadError = true;
-      console.error(`           <- ${summarizeForLog(result)}`);
+      log(`[turn ${turn}] <- ${call.function.name} result:\n${formatForLog(result)}`);
+      // A structural "this work is already resolved" signal (see
+      // engine/lane.ts's duplicate-answer guard) ends the loop here,
+      // regardless of what the model does next -- observed repeatedly:
+      // a model that retries this exact call despite the error text
+      // keeps retrying it rather than stopping on its own.
+      if (result && typeof result === "object" && (result as { resolved?: boolean }).resolved === true) {
+        log(`[turn ${turn}] (already resolved -- ending here instead of letting the model keep retrying)`);
+        return { turns: turn, finished: true, finalMessage: "" };
+      }
       messages.push({ role: "tool", content: JSON.stringify(result) });
     }
   }
 
-  console.error(`stopped after ${maxTurns} turns without the agent finishing on its own.`);
+  log(`stopped after ${maxTurns} turns without the agent finishing on its own.`);
   return { turns: maxTurns, finished: false, finalMessage: "" };
 }

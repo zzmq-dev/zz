@@ -5,6 +5,8 @@ import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
 import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
 import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
 import { work } from "./commands/work.js";
+import { top } from "./commands/top.js";
+import { askPost } from "./commands/ask-post.js";
 
 const program = new Command();
 program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");
@@ -62,13 +64,44 @@ lane
     await laneLog(repo, { format, lane: opts.lane, out: opts.out });
   });
 
+const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");
+
+askCmd
+  .command("post <repo> <lane>")
+  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up')
+  .option("--kind <kind>", 'Ask kind (default: "work")')
+  .option("--from <agent>", 'who it\'s from (default: "human")')
+  .option("--description <text>", 'shorthand for payload { description: text } -- what kind "work" expects')
+  .option("--payload <json>", "raw JSON payload, for any other kind")
+  .option("--priority <n>", "higher = more urgent at query time", (v) => parseInt(v, 10))
+  .action(async (repo: string, laneId: string, opts: { kind?: string; from?: string; description?: string; payload?: string; priority?: number }) => {
+    await askPost(repo, laneId, opts);
+  });
+
 program
-  .command("work <repo>")
-  .description("run a general agent loop against the zz-git/zz-ladder-lanes tools, working one prose-described Ask")
-  .option("--task <description>", "what to ask the agent to do (default: ingest the whole repo)")
-  .option("--max-turns <n>", "stop after this many tool-calling turns (default: 40)", (v) => parseInt(v, 10))
-  .action(async (repo: string, opts: { task?: string; maxTurns?: number }) => {
-    await work(repo, { task: opts.task, maxTurns: opts.maxTurns });
+  .command("work")
+  .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on, across every repo in your zz config")
+  .option("--agent <id>", "your agent identity (default: from ~/.zz/config.json)")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .option("--scope <scope>", "coordinator, contributor, or all (default: all)", "all")
+  .option("--stdio", "one flat combined log stream instead of the live TUI")
+  .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 200)", (v) => parseInt(v, 10))
+  .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
+  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number }) => {
+    if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
+      console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
+      process.exitCode = 1;
+      return;
+    }
+    await work({ agent: opts.agent, repos: opts.repos, scope: opts.scope as "coordinator" | "contributor" | "all" | undefined, stdio: opts.stdio, maxTurns: opts.maxTurns, pollMs: opts.pollMs });
+  });
+
+program
+  .command("top")
+  .description("real-time dashboard over every Lane in the repos from your zz config -- lanes overview + a live, filterable protocol feed")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .action(async (opts: { repos?: string[] }) => {
+    await top({ repos: opts.repos });
   });
 
 program.parseAsync(process.argv);

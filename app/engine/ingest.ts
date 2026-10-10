@@ -49,12 +49,13 @@ export interface IssueRow {
   created_at: string;
   closed_at: string | null;
   comments: number;
+  body: string | null;
 }
 
 export function fetchIssues(slug: string): IssueRow[] {
   return ghJsonLines<IssueRow>(
     `repos/${slug}/issues?state=all&per_page=100`,
-    ".[] | select(.pull_request == null) | {number, title, state, user: .user.login, created_at, closed_at, comments}",
+    ".[] | select(.pull_request == null) | {number, title, state, user: .user.login, created_at, closed_at, comments, body}",
   );
 }
 
@@ -66,10 +67,11 @@ export interface PrRow {
   user: string;
   created_at: string;
   closed_at: string | null;
+  body: string | null;
 }
 
 export function fetchPullRequests(slug: string): PrRow[] {
-  return ghJsonLines<PrRow>(`repos/${slug}/pulls?state=all&per_page=100`, ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at}");
+  return ghJsonLines<PrRow>(`repos/${slug}/pulls?state=all&per_page=100`, ".[] | {number, title, state, merged_at, user: .user.login, created_at, closed_at, body}");
 }
 
 export interface CommentRow {

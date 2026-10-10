@@ -19,6 +19,9 @@ export interface ResolvedRepo {
 }
 
 export function parseSlug(slug: string): { owner: string; name: string } {
+  if (typeof slug !== "string" || !slug) {
+    throw new Error(`expected a "repo" argument shaped "owner/repo", got ${JSON.stringify(slug)} -- every tool call that touches a repo needs one, even if you already passed it on an earlier call.`);
+  }
   const parts = slug.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`expected "owner/repo", got "${slug}"`);

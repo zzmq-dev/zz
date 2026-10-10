@@ -7,7 +7,7 @@
 // engine/workqueue.ts, built on top of the ask()/answer() primitives
 // here.
 import { randomBytes } from "node:crypto";
-import { readLane, writeLane } from "./store.js";
+import { writeLane, withLane } from "./store.js";
 import { appendRepoChildren, writeLadder } from "./ladderNotes.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, Trigger } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
@@ -47,14 +47,7 @@ export function proposeLane(
   return lane;
 }
 
-function requireLane(stateDir: string, laneId: string): Lane {
-  const lane = readLane(stateDir, laneId);
-  if (!lane) throw new Error(`no such lane: ${laneId}`);
-  return lane;
-}
-
 export function ask(stateDir: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): AskEntry {
-  const lane = requireLane(stateDir, laneId);
   const entry: AskEntry = {
     id: randomId("ask"),
     type: "ASK",
@@ -65,8 +58,12 @@ export function ask(stateDir: string, laneId: string, input: { kind: AskKind; fr
     priority: input.priority,
     at: nowIso(),
   };
-  lane.history.push(entry);
-  writeLane(stateDir, lane);
+  // Atomic: two processes posting into the same Lane at once must not
+  // let one's history.push silently overwrite the other's (see
+  // engine/store.ts's withLane).
+  withLane(stateDir, laneId, (lane) => {
+    lane.history.push(entry);
+  });
   return entry;
 }
 
@@ -80,18 +77,50 @@ const STATUS_ON_GRANT: Partial<Record<AskKind, LaneStatus>> = {
 };
 
 export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
-  const lane = requireLane(stateDir, laneId);
-  const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
-  if (existing) {
-    throw new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`);
-  }
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
-  lane.history.push(entry);
-  if (input.action === "grant") {
-    const nextStatus = STATUS_ON_GRANT[theAsk.kind];
-    if (nextStatus) lane.status = nextStatus;
-  }
-  writeLane(stateDir, lane);
+  // Atomic: the duplicate-answer check, the RBAC check, and the write
+  // all happen inside one transaction (engine/store.ts's withLane), so
+  // two processes racing to answer the same Ask can't both pass the
+  // "not yet answered" check before either one writes -- the second to
+  // reach this lane blocks until the first commits, then sees its
+  // answer and correctly reports "already answered" instead of
+  // clobbering it.
+  withLane(stateDir, laneId, (lane) => {
+    const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
+    if (existing) {
+      // `resolved: true` is a structural signal (see agent/loop.ts), not
+      // just phrasing -- a model that keeps retrying this exact call
+      // despite the message has, in practice, kept retrying it (observed
+      // repeatedly); the loop itself ends on this signal instead of
+      // depending on the model reading and acting on the text correctly.
+      throw Object.assign(new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`), { resolved: true });
+    }
+    // RBAC enforcement: a coordinator-scope ask (ASK_SCOPE below) may
+    // only be granted/completed/denied by one of this Lane's actual
+    // coordinators -- the backend-level counterpart to claimableAsks
+    // already filtering these out of a non-coordinator's claimable
+    // list, so a client that calls answer() directly (bypassing that
+    // filter) still can't act on something it was never entitled to see.
+    if (ASK_SCOPE[theAsk.kind] === "coordinator" && !lane.coordinators.includes(input.from)) {
+      throw new Error(
+        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's coordinator-scope and "${input.from}" is not one of lane "${laneId}"'s coordinators (${lane.coordinators.join(", ")}).`,
+      );
+    }
+    lane.history.push(entry);
+    if (input.action === "grant") {
+      const nextStatus = STATUS_ON_GRANT[theAsk.kind];
+      if (nextStatus) lane.status = nextStatus;
+    } else if ((input.action === "complete" || input.action === "deny") && theAsk.kind !== "claim_request" && theAsk.kind !== "review_request") {
+      // A claim_request grant moves status to "claimed" for exactly as
+      // long as that claimed work is in flight -- without this, status
+      // sticks at "claimed" forever after the very first claim, even
+      // once the thing that was claimed is actually done. claim_request
+      // and review_request themselves are the meta-asks that drive
+      // STATUS_ON_GRANT above, not the work being claimed, so they're
+      // excluded here.
+      lane.status = "active";
+    }
+  });
   return entry;
 }
 

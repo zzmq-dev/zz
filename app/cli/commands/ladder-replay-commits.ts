@@ -102,7 +102,7 @@ async function buildUpdatedFileRung(model: ModelBackend, existing: Awaited<Retur
     path: existing.path,
     kind: existing.kind,
     summary: synthesized ?? `${changeSummary} (previously: ${previousClean})`,
-    sources: [{ kind: "commit", ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }, ...existing.sources].slice(0, 5),
+    sources: [{ kind: "commit" as const, ref: commit.sha, title: commit.message, author: commit.author, at: commit.at }, ...existing.sources].slice(0, 5),
     touches: existing.touches,
     children: [],
   };

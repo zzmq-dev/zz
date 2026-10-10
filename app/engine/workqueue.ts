@@ -4,7 +4,7 @@
 // concurrent actors) changes where claimableAsks reads from, not the
 // shape of the loop itself.
 import { ask, answer, ASK_SCOPE } from "./lane.js";
-import { readLane } from "./store.js";
+import { listLanes, readLane } from "./store.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane } from "./types.js";
 
 function isAnswer(entry: Lane["history"][number]): entry is AnswerEntry {
@@ -34,6 +34,39 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .filter((a) => (a.depends_on ?? []).every((depId) => isResolved(lane, depId, ["grant", "complete"])))
     .filter((a) => ASK_SCOPE[a.kind] === "open" || lane.coordinators.includes(actor))
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+}
+
+export type WorkScope = "coordinator" | "contributor" | "all";
+
+export interface ClaimableEntry {
+  repo: string;
+  laneId: string;
+  ask: AskEntry;
+}
+
+/**
+ * `claimableAsks`, generalized across every Lane in a set of repos: the
+ * "an agent doesn't know its role up front, it just knows what repos it
+ * cares about and sends its identity" mechanism. Access filtering itself
+ * is unchanged -- still `claimableAsks` per lane, keyed off
+ * `lane.coordinators` -- this just aggregates it. `scope` is a separate,
+ * client-side convenience filter on top of that (e.g. so a coordinator
+ * can ask for only coordinator-scope work without also being handed every
+ * open-scope ask it's merely *permitted* to pick up).
+ */
+export function claimableAcrossRepos(repos: { repo: string; stateDir: string }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
+  const out: ClaimableEntry[] = [];
+  for (const { repo, stateDir } of repos) {
+    for (const lane of listLanes(stateDir)) {
+      for (const a of claimableAsks(lane, actor)) {
+        const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
+        if (scope === "coordinator" && !isCoordScope) continue;
+        if (scope === "contributor" && isCoordScope) continue;
+        out.push({ repo, laneId: lane.id, ask: a });
+      }
+    }
+  }
+  return out;
 }
 
 /**
