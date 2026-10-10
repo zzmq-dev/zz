@@ -97,11 +97,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   const isActuallyDone = opts.isActuallyDone ?? (() => true);
 
   for (let turn = 1; turn <= maxTurns; turn++) {
+    // Logged *before* the request, not just after -- a non-streaming
+    // call can legitimately take 10-30+ seconds for a 14B-class local
+    // model, and with nothing printed in that window it reads as hung
+    // rather than working. Reporting elapsed time after the fact turns
+    // "is this stuck?" into a concrete, comparable number across turns.
+    log(`[turn ${turn}] waiting for ${model}...`);
+    const turnStart = Date.now();
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, messages, tools: toOllamaTools(opts.tools), stream: false }),
     });
+    log(`[turn ${turn}] got a response in ${((Date.now() - turnStart) / 1000).toFixed(1)}s`);
     if (!res.ok) throw new Error(`ollama chat failed: ${res.status} ${await res.text()}`);
     const data = (await res.json()) as { message: ChatMessage };
     const { message } = data;

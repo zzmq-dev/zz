@@ -85,15 +85,36 @@ program
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--scope <scope>", "coordinator, contributor, or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
-  .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 200)", (v) => parseInt(v, 10))
+  .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
-  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number }) => {
+  .option("--model <name>", 'which Ollama model to use (default: $ZZ_OLLAMA_MODEL or "qwen2.5:14b-instruct") -- run `zz models` to see what\'s available locally')
+  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string }) => {
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
       process.exitCode = 1;
       return;
     }
-    await work({ agent: opts.agent, repos: opts.repos, scope: opts.scope as "coordinator" | "contributor" | "all" | undefined, stdio: opts.stdio, maxTurns: opts.maxTurns, pollMs: opts.pollMs });
+    await work({ agent: opts.agent, repos: opts.repos, scope: opts.scope as "coordinator" | "contributor" | "all" | undefined, stdio: opts.stdio, maxTurns: opts.maxTurns, pollMs: opts.pollMs, model: opts.model });
+  });
+
+program
+  .command("models")
+  .description("list Ollama models available locally, for --model")
+  .action(async () => {
+    const baseUrl = process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
+    const res = await fetch(`${baseUrl}/api/tags`);
+    if (!res.ok) {
+      console.error(`could not reach ollama at ${baseUrl}: ${res.status}`);
+      process.exitCode = 1;
+      return;
+    }
+    const data = (await res.json()) as { models: { name: string; size: number; details: { parameter_size?: string } }[] };
+    const current = process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct";
+    for (const m of data.models) {
+      const sizeGb = (m.size / 1e9).toFixed(1);
+      console.log(`${m.name === current ? "* " : "  "}${m.name.padEnd(45)} ${sizeGb.padStart(6)}GB  ${m.details.parameter_size ?? "?"}`);
+    }
+    console.log(`\n* = current default (ZZ_OLLAMA_MODEL, or qwen2.5:14b-instruct). Pick one with: zz work --model <name>`);
   });
 
 program

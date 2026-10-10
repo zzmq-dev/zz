@@ -25,7 +25,13 @@ import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 
 const DEFAULT_POLL_MS = 1000;
-const DEFAULT_MAX_TURNS = 200; // high, not infinite -- a runaway loop should still end somewhere even with a free local model
+// Bounded well below "infinite" on purpose: every turn resends the
+// whole growing conversation, so a long attempt gets slower, not just
+// longer, the further it runs -- and in practice a real completion
+// (or a legitimate "deny") has happened well under this in every
+// observed run. isActuallyDone's nudging (agent/loop.ts) already ends
+// a stuck attempt early in the common case; this is the hard backstop.
+const DEFAULT_MAX_TURNS = 60;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,7 +96,7 @@ Writing code: there is no write_file tool, ever. Content is always composed as d
 You act as agent "${agent}" for every claim/post/answer/write below.`;
 }
 
-async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry, agent: string, alreadyClaimed: boolean, onLog: (line: string) => void, maxTurns: number): Promise<void> {
+async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry, agent: string, alreadyClaimed: boolean, onLog: (line: string) => void, maxTurns: number, model?: string): Promise<void> {
   // The ask only ever reached us via claimableAcrossRepos if we're
   // actually entitled to act on it -- for a coordinator-scope kind,
   // that means we ARE this Lane's coordinator. Hand over the write
@@ -109,6 +115,7 @@ async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: Ask
     userMessage: `You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. ${beginInstruction}`,
     tools: isCoordinatorAsk ? ALL_TOOLS : CONTRIBUTOR_TOOLS,
     maxTurns,
+    model,
     onLog,
     // The real check, not "did the model stop calling tools" -- a
     // model that only describes a plan in prose and then stops has not
@@ -128,6 +135,7 @@ export interface WorkOptions {
   stdio?: boolean;
   maxTurns?: number;
   pollMs?: number;
+  model?: string;
 }
 
 export async function work(options: WorkOptions): Promise<void> {
@@ -144,7 +152,7 @@ export async function work(options: WorkOptions): Promise<void> {
   const onLog = options.stdio ? (line: string) => console.error(line) : (line: string) => logBuffer.push(line);
 
   if (options.stdio) {
-    console.error(`zz work: agent="${config.agent}" scope=${scope} repos=${config.repos.join(", ")}`);
+    console.error(`zz work: agent="${config.agent}" scope=${scope} model=${options.model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct"} repos=${config.repos.join(", ")}`);
   } else {
     render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef }));
   }
@@ -170,6 +178,6 @@ export async function work(options: WorkOptions): Promise<void> {
     const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
     statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
     onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns);
+    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, options.model);
   }
 }
