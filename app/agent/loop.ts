@@ -60,6 +60,17 @@ export interface RunAgentOptions {
   /** Called with each log line instead of `console.error`, so a TUI can capture the agent's activity instead of it scrolling over the rendered screen. Defaults to `console.error`. */
   onLog?: (line: string) => void;
   /**
+   * Called repeatedly with the accumulated text-so-far of the current
+   * turn's response as it streams in (verified against Ollama's real
+   * wire format: prose content arrives token-by-token, tool_calls
+   * arrive as one complete chunk once decided -- same total generation
+   * time as non-streaming, just delivered incrementally instead of
+   * buffered until the end). A TUI wires this to a live status line
+   * instead of a log line, so it doesn't spam the scrollback with one
+   * entry per token.
+   */
+  onPartial?: (textSoFar: string) => void;
+  /**
    * Checked whenever the model stops calling tools, before trusting
    * that as completion -- observed repeatedly: a model describes a
    * plan in prose ("Now I'll implement X and test it") and then simply
@@ -107,12 +118,32 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, messages, tools: toOllamaTools(opts.tools), stream: false }),
+      body: JSON.stringify({ model, messages, tools: toOllamaTools(opts.tools), stream: true }),
     });
-    log(`[turn ${turn}] got a response in ${((Date.now() - turnStart) / 1000).toFixed(1)}s`);
     if (!res.ok) throw new Error(`ollama chat failed: ${res.status} ${await res.text()}`);
-    const data = (await res.json()) as { message: ChatMessage };
-    const { message } = data;
+    if (!res.body) throw new Error("ollama chat response had no body to stream");
+
+    let content = "";
+    let toolCalls: ChatMessage["tool_calls"];
+    let buffer = "";
+    for await (const rawChunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += Buffer.from(rawChunk).toString("utf8");
+      let newlineAt: number;
+      while ((newlineAt = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newlineAt).trim();
+        buffer = buffer.slice(newlineAt + 1);
+        if (!line) continue;
+        const chunk = JSON.parse(line) as { message?: { content?: string; tool_calls?: ChatMessage["tool_calls"] } };
+        if (chunk.message?.content) {
+          content += chunk.message.content;
+          opts.onPartial?.(content);
+        }
+        if (chunk.message?.tool_calls) toolCalls = chunk.message.tool_calls;
+      }
+    }
+    log(`[turn ${turn}] got a response in ${((Date.now() - turnStart) / 1000).toFixed(1)}s`);
+
+    const message: ChatMessage = { role: "assistant", content, tool_calls: toolCalls };
     messages.push(message);
 
     if (message.content && message.content.trim()) {

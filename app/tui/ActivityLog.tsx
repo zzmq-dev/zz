@@ -15,7 +15,9 @@ export function ActivityLog({ lines, status, maxRows, scrollOffset }: { lines: r
   const shown = lines.slice(Math.max(0, end - windowSize), end);
   return (
     <Box flexDirection="column">
-      <Text color="cyan">{offset > 0 ? `${status}  (${offset} line(s) back from live -- End to catch up)` : status}</Text>
+      <Text color="cyan" wrap="truncate-end">
+        {offset > 0 ? `${status}  (${offset} line(s) back from live -- End to catch up)` : status}
+      </Text>
       {shown.length === 0 ? (
         <Text dimColor>(nothing yet)</Text>
       ) : (

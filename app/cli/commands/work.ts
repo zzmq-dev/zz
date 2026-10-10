@@ -96,7 +96,18 @@ Writing code: there is no write_file tool, ever. Content is always composed as d
 You act as agent "${agent}" for every claim/post/answer/write below.`;
 }
 
-async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry, agent: string, alreadyClaimed: boolean, onLog: (line: string) => void, maxTurns: number, model?: string): Promise<void> {
+async function runClaimedAsk(
+  resolved: ResolvedRepo,
+  laneId: string,
+  theAsk: AskEntry,
+  agent: string,
+  alreadyClaimed: boolean,
+  onLog: (line: string) => void,
+  maxTurns: number,
+  model: string | undefined,
+  statusRef: { current: string },
+): Promise<void> {
+  const baseStatus = statusRef.current;
   // The ask only ever reached us via claimableAcrossRepos if we're
   // actually entitled to act on it -- for a coordinator-scope kind,
   // that means we ARE this Lane's coordinator. Hand over the write
@@ -117,6 +128,14 @@ async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: Ask
     maxTurns,
     model,
     onLog,
+    onPartial: (textSoFar) => {
+      // Single line, tail-truncated -- ActivityLog budgets exactly one
+      // row for the status line, so showing the most recent text (not
+      // the start) is what makes this feel like live typing rather
+      // than a static prefix that never changes.
+      const tail = textSoFar.replace(/\s+/g, " ").slice(-120);
+      statusRef.current = `${baseStatus} -- says: ${tail}`;
+    },
     // The real check, not "did the model stop calling tools" -- a
     // model that only describes a plan in prose and then stops has not
     // answered this ask, no matter how confident it sounds.
@@ -125,6 +144,7 @@ async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: Ask
       return lane?.history.some((e) => e.type === "ANSWER" && e.ask === theAsk.id) ?? false;
     },
   });
+  statusRef.current = baseStatus;
   onLog(`done with ${theAsk.id}: ${result.turns} turns, ${result.finished ? "finished on its own" : "hit the turn limit"}.`);
 }
 
@@ -178,6 +198,6 @@ export async function work(options: WorkOptions): Promise<void> {
     const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
     statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
     onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, options.model);
+    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, options.model, statusRef);
   }
 }
