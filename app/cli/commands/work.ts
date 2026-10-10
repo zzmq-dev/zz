@@ -23,6 +23,7 @@ import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
+import { enterFullscreen } from "../../tui/fullscreen.js";
 
 const DEFAULT_POLL_MS = 1000;
 // Bounded well below "infinite" on purpose: every turn resends the
@@ -78,7 +79,7 @@ The ask you've been handed below was already filtered for you: it's one you're a
 Conventions:
 - The repo's root is one long-lived Lane, id "_repo", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
 - To work on something substantial, propose your own Lane (lane_propose) with "_repo" (or whatever Lane you're inside) as origin_lane, then post child Asks into it for the sub-work, using ask_post's depends_on when one piece of work can't start until another finishes. You're that new Lane's coordinator by default.
-- Once you've broken a task into sub-Asks in your own Lane, use ask_query_claimable/ask_claim to work them yourself one at a time, unless you intend to leave some for another agent.
+- Decompose aggressively: whenever a task splits into pieces that don't depend on each other, post them as separate sub-Asks rather than one big one, even if you could do it all yourself in one pass. Then leave them in the queue -- don't immediately claim and work through all of them yourself. Two things make this worth doing, not just permissible: another agent polling the same repo can pick up any sub-Ask you leave open (that's the whole point of posting into a queue instead of a private to-do list), and each sub-Ask you (or someone else) later claims starts with a small, focused context instead of one agent accumulating everything about the whole task into a single, ever-growing conversation.
 - Only call ladder_write_rung for a Lane whose scope actually covers the rung's path and that you coordinate. If the right place to write is a different Lane's Ladder (e.g. the repo's own), post an Ask to that Lane instead of writing directly.
 - When updating a rung that already exists (ladder_read first), judge whether the change is actually material. A cosmetic change (formatting, whitespace, a rename with no behavior change) should leave the existing description essentially untouched -- do not append a note about a trivial change just because one happened.
 - You're done with the Ask you were handed once everything it depends on is itself answered. Answer it last, with a short summary of what you did as payload.
@@ -174,6 +175,7 @@ export async function work(options: WorkOptions): Promise<void> {
   if (options.stdio) {
     console.error(`zz work: agent="${config.agent}" scope=${scope} model=${options.model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct"} repos=${config.repos.join(", ")}`);
   } else {
+    enterFullscreen();
     render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef }));
   }
 
