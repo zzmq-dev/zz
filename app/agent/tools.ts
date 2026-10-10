@@ -416,6 +416,45 @@ function validateChangesetFiles(files: unknown): string | null {
   return null;
 }
 
+// A regex-based export scan, not a real parser -- good enough to catch
+// the actual failure mode observed: a model asked to add one function
+// rewrites the WHOLE file from scratch instead of reading what's there
+// first, silently dropping something that previously worked (one real
+// case: a file re-exporting three functions got replaced by a file
+// containing only the fourth, newly-added one -- no error, no trace,
+// just gone). This can't tell a deliberate removal from an accidental
+// one, so it blocks the write either way and makes the agent say so
+// explicitly by re-adding it or by fixing the real content.
+const EXPORT_NAME_RE = /export\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)|export\s*\{([^}]+)\}/g;
+
+function extractExportedNames(content: string): Set<string> {
+  const names = new Set<string>();
+  for (const m of content.matchAll(EXPORT_NAME_RE)) {
+    if (m[1]) names.add(m[1]);
+    if (m[2]) {
+      for (const part of m[2].split(",")) {
+        const name = part.trim().split(/\s+as\s+/i)[0]?.trim();
+        if (name) names.add(name);
+      }
+    }
+  }
+  return names;
+}
+
+function checkNoDroppedExports(repoDir: string, files: ChangesetFile[]): string | null {
+  for (const f of files) {
+    const before = fileContentAtCommit(repoDir, "HEAD", f.path);
+    if (!before.trim()) continue; // new file, nothing to preserve
+    const beforeNames = extractExportedNames(before);
+    const afterNames = extractExportedNames(f.content);
+    const dropped = [...beforeNames].filter((n) => !afterNames.has(n));
+    if (dropped.length > 0) {
+      return `Your new content for "${f.path}" drops previously-exported name(s): ${dropped.join(", ")}. If that's genuinely intentional, that's fine -- but first double-check you actually read the file's current content (git_show_file) rather than rewriting it from scratch; the most common cause of this is composing a whole new file around just the one thing you're adding instead of preserving what was already there.`;
+    }
+  }
+  return null;
+}
+
 const commitChangesetTool: ToolDef = {
   name: "commit_changeset",
   description:
@@ -435,6 +474,8 @@ const commitChangesetTool: ToolDef = {
     const problem = validateChangesetFiles(files);
     if (problem) throw new Error(problem);
     const r = resolveRepo(repo as string);
+    const dropProblem = checkNoDroppedExports(r.repoDir, files as ChangesetFile[]);
+    if (dropProblem) throw new Error(dropProblem);
     const commitOid = await commitChangeset(r.repoDir, {
       files: files as ChangesetFile[],
       message: message as string,
