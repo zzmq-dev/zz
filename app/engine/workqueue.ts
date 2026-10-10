@@ -20,11 +20,34 @@ function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "complet
 }
 
 /**
+ * Who currently holds the claim on an ask, if anyone -- the actual
+ * lease this project didn't have until now. A claim_request targeting
+ * this ask, once granted, makes its `from` the holder; a later granted
+ * claim_request on the same target (e.g. the same actor resuming after
+ * a failed attempt) replaces the holder, but there's still always at
+ * most one at a time. Nothing here expires a claim on its own; a holder
+ * only changes by a new claim_request being granted. There's
+ * deliberately no separate "release" -- the ask leaving the claimable
+ * set entirely once it's answered is what ends the need for a holder.
+ */
+function claimHolder(lane: Lane, askId: string): string | null {
+  let holder: string | null = null;
+  for (const e of lane.history) {
+    if (e.type !== "ASK" || e.kind !== "claim_request") continue;
+    if ((e.payload as { target?: string } | undefined)?.target !== askId) continue;
+    const granted = lane.history.some((a) => a.type === "ANSWER" && a.ask === e.id && a.action === "grant");
+    if (granted) holder = e.from;
+  }
+  return holder;
+}
+
+/**
  * Every Ask with no matching Answer yet, where every id in depends_on
- * already has a "grant"/"complete" Answer, and actor is permitted to
- * act on it (ASK_SCOPE). Sorted by priority (descending); order among
- * equal priority is unspecified on purpose -- this is the query a real
- * concurrent actor runs against a shared queue, not a scheduling promise.
+ * already has a "grant"/"complete" Answer, actor is permitted to act on
+ * it (ASK_SCOPE), and it isn't already held by some other actor's
+ * claim. Sorted by priority (descending); order among equal priority is
+ * unspecified on purpose -- this is the query a real concurrent actor
+ * runs against a shared queue, not a scheduling promise.
  */
 export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
   const answeredAskIds = new Set(lane.history.filter(isAnswer).map((e) => e.ask));
@@ -33,6 +56,10 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .filter((a) => !answeredAskIds.has(a.id))
     .filter((a) => (a.depends_on ?? []).every((depId) => isResolved(lane, depId, ["grant", "complete"])))
     .filter((a) => ASK_SCOPE[a.kind] === "open" || lane.coordinators.includes(actor))
+    .filter((a) => {
+      const holder = claimHolder(lane, a.id);
+      return holder === null || holder === actor;
+    })
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
 
@@ -42,6 +69,8 @@ export interface ClaimableEntry {
   repo: string;
   laneId: string;
   ask: AskEntry;
+  /** True if `actor` already holds a granted claim on this ask (e.g. a previous attempt claimed it but didn't finish) -- no need to claim it again. */
+  alreadyClaimed: boolean;
 }
 
 /**
@@ -62,7 +91,7 @@ export function claimableAcrossRepos(repos: { repo: string; stateDir: string }[]
         const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
         if (scope === "coordinator" && !isCoordScope) continue;
         if (scope === "contributor" && isCoordScope) continue;
-        out.push({ repo, laneId: lane.id, ask: a });
+        out.push({ repo, laneId: lane.id, ask: a, alreadyClaimed: claimHolder(lane, a.id) === actor });
       }
     }
   }

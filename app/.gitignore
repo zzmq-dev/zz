@@ -7,3 +7,5 @@ demo-repos/numkit-cli/
 demo-repos/mathkit/
 demo-repos/mathkit-cli/
 .env
+*.db-shm
+*.db-wal

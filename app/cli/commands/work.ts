@@ -90,16 +90,23 @@ Writing code: there is no write_file tool, ever. Content is always composed as d
 You act as agent "${agent}" for every claim/post/answer/write below.`;
 }
 
-async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry, agent: string, onLog: (line: string) => void, maxTurns: number): Promise<void> {
+async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry, agent: string, alreadyClaimed: boolean, onLog: (line: string) => void, maxTurns: number): Promise<void> {
   // The ask only ever reached us via claimableAcrossRepos if we're
   // actually entitled to act on it -- for a coordinator-scope kind,
   // that means we ARE this Lane's coordinator. Hand over the write
   // tools only in that case; a contributor working an open-scope ask
   // never sees commit_changeset/ladder_write_rung at all.
   const isCoordinatorAsk = ASK_SCOPE[theAsk.kind] === "coordinator";
+  // If a previous attempt already claimed this ask (e.g. it hit the
+  // turn limit before finishing), there's an existing lease on it --
+  // claiming it again would just be a second, redundant claim_request
+  // for the same target. Skip straight to the work instead.
+  const beginInstruction = alreadyClaimed
+    ? `You already hold a claim on this ask from an earlier attempt -- no need to call ask_claim again, go straight to doing the work, then ask_answer it.`
+    : `Begin by calling ask_claim on it (repo "${resolved.slug}", lane_id "${laneId}", ask_id "${theAsk.id}", actor "${agent}"), then do the work, then ask_answer it.`;
   const result = await runAgent({
     systemPrompt: systemPromptFor(agent, resolved.slug),
-    userMessage: `You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. Begin by calling ask_claim on it (repo "${resolved.slug}", lane_id "${laneId}", ask_id "${theAsk.id}", actor "${agent}"), then do the work, then ask_answer it.`,
+    userMessage: `You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. ${beginInstruction}`,
     tools: isCoordinatorAsk ? ALL_TOOLS : CONTRIBUTOR_TOOLS,
     maxTurns,
     onLog,
@@ -156,6 +163,6 @@ export async function work(options: WorkOptions): Promise<void> {
     const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
     statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
     onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, onLog, maxTurns);
+    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns);
   }
 }
