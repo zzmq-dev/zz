@@ -1,17 +1,18 @@
 // A real full-screen tabbed frame: fixed to the terminal's actual size
 // (see useTerminalSize) with a bordered content pane sized to fit, so
-// nothing spills into scrollback. Left/right arrows (or h/l) switch
-// tabs; up/down arrows (or k/j), Page Up/Down, Home/End, and the mouse
-// wheel scroll the active tab's content -- each content renderer
-// decides what a given scroll offset actually means (older entries for
-// a log, earlier rows for a list) since that differs per view. y copies
-// the active tab's full (untruncated) content to the system clipboard.
-// q or Ctrl+C quits (restoring the normal screen first).
+// nothing spills into scrollback. Left/right arrows (or h/l), 1-9, or
+// clicking a tab's label switches tabs; up/down arrows (or k/j), Page
+// Up/Down, Home/End, and the mouse wheel scroll the active tab's
+// content -- each content renderer decides what a given scroll offset
+// actually means (older entries for a log, earlier rows for a list)
+// since that differs per view. y copies the active tab's full
+// (untruncated) content to the system clipboard. q or Ctrl+C quits
+// (restoring the normal screen first).
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, useStdin } from "ink";
 import { spawn } from "node:child_process";
 import { useTerminalSize } from "./useTerminalSize.js";
-import { useMouseWheel } from "./useMouseWheel.js";
+import { useMouse } from "./useMouse.js";
 import { exitFullscreen } from "./fullscreen.js";
 
 export interface Tab {
@@ -23,6 +24,7 @@ export interface Tab {
 }
 
 const CHROME_ROWS = 5; // title/tab bar (1) + blank (1) + content box border (2) + footer (1)
+const TAB_BAR_ROW = 1; // the tab bar is the very first rendered line
 
 function copyToClipboard(text: string): void {
   // macOS only, matching this project's one supported platform -- pipe
@@ -30,6 +32,22 @@ function copyToClipboard(text: string): void {
   const proc = spawn("pbcopy");
   proc.stdin.write(text);
   proc.stdin.end();
+}
+
+// Where each tab's clickable label actually sits on screen, in 1-indexed
+// terminal columns -- has to mirror the real layout below exactly
+// (title, then a 2-space gap, then each "N:label" with a 2-space
+// marginRight) since that's the only way to turn a raw click column
+// back into "which tab was that".
+function tabClickRanges(title: string, tabs: Tab[]): { start: number; end: number }[] {
+  const ranges: { start: number; end: number }[] = [];
+  let col = title.length + 1 + 2; // title, then the "  " gap after it
+  for (let i = 0; i < tabs.length; i++) {
+    const label = `${i + 1}:${tabs[i].label}`;
+    ranges.push({ start: col, end: col + label.length - 1 });
+    col += label.length + 2; // + marginRight={2}
+  }
+  return ranges;
 }
 
 export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
@@ -50,7 +68,16 @@ export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
 
   const scrollUp = () => setScroll((s) => s + 1);
   const scrollDown = () => setScroll((s) => Math.max(0, s - 1));
-  useMouseWheel(scrollUp, scrollDown);
+  useMouse({
+    onWheelUp: scrollUp,
+    onWheelDown: scrollDown,
+    onClick: (col, row) => {
+      if (row !== TAB_BAR_ROW) return;
+      const ranges = tabClickRanges(title, tabs);
+      const clicked = ranges.findIndex((r) => col >= r.start && col <= r.end);
+      if (clicked >= 0) setActive(clicked);
+    },
+  });
 
   useInput(
     (input, key) => {
@@ -102,7 +129,7 @@ export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
       </Box>
       <Box>
         <Text dimColor>
-          {flash ?? (isRawModeSupported ? "←/→ or 1-9: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y: copy tab   q: quit" : "(non-interactive terminal -- controls disabled)")}
+          {flash ?? (isRawModeSupported ? "←/→ or 1-9 or click: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y: copy tab   q: quit" : "(non-interactive terminal -- controls disabled)")}
         </Text>
       </Box>
     </Box>
