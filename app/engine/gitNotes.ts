@@ -37,12 +37,6 @@ export async function resolvePathSha(repoDir: string, path: string): Promise<str
   }
 }
 
-export async function resolveRootTreeSha(repoDir: string): Promise<string> {
-  const oid = await headCommitOid(repoDir);
-  const { oid: treeOid } = await git.readTree({ fs, dir: repoDir, oid });
-  return treeOid;
-}
-
 /**
  * The repo's first commit (no parents) -- a fixed point that never changes
  * for the life of the repo, unlike HEAD. The anchor for repo-wide things

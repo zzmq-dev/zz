@@ -45,7 +45,13 @@ export type AskKind =
   // A generic task with no dedicated handler: payload.description is
   // prose for an agent to read like a prompt and figure out on its own,
   // rather than a kind-specific typed payload.
-  | "work";
+  | "work"
+  // Proposes a real code change, with the full content of every
+  // changed file as payload -- granting it is what actually commits
+  // it (engine/changeset.ts's commitChangeset), the same pattern as
+  // merge_request granting a Ladder write. No file ever needs to exist
+  // on disk before this: the content lives entirely in the payload.
+  | "submit_changeset";
 
 export interface AskEntry {
   id: string;

@@ -1,0 +1,107 @@
+{
+  "id": "implement-average-command",
+  "repo": "zz-demo/numkit-cli",
+  "origin": {
+    "repo": "zz-demo/numkit-cli",
+    "lane": "_repo"
+  },
+  "name": "implement average command",
+  "objective": "Add `numkit-cli average <n1> <n2> ...`, delegating to numkit's average().",
+  "status": "claimed",
+  "scope": [
+    "cli.js",
+    "cli.test.js",
+    "package.json"
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-dev"
+  },
+  "coordinators": [
+    "zz-dev"
+  ],
+  "history": [
+    {
+      "id": "ask-7143881d4e",
+      "type": "ASK",
+      "kind": "claim_request",
+      "from": "zz-dev",
+      "at": "2026-10-10T03:36:04.353Z"
+    },
+    {
+      "id": "answer-4df79d3655",
+      "type": "ANSWER",
+      "ask": "ask-7143881d4e",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.354Z"
+    },
+    {
+      "id": "ask-01ab2a07c1",
+      "type": "ASK",
+      "kind": "submit_changeset",
+      "from": "zz-dev",
+      "payload": {
+        "files": [
+          {
+            "path": "package.json",
+            "content": "{\n  \"name\": \"numkit-cli\",\n  \"version\": \"0.2.0\",\n  \"description\": \"A command-line wrapper over numkit.\",\n  \"type\": \"module\",\n  \"bin\": {\n    \"numkit-cli\": \"./cli.js\"\n  },\n  \"dependencies\": {\n    \"numkit\": \"file:../numkit\"\n  },\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+          },
+          {
+            "path": "cli.js",
+            "content": "#!/usr/bin/env node\nimport { clamp, average } from \"numkit\";\n\nexport function run(argv) {\n  const [command, ...args] = argv;\n  if (command === \"clamp\") {\n    const [value, min, max] = args.map(Number);\n    return String(clamp(value, min, max));\n  }\n  if (command === \"average\") {\n    return String(average(args.map(Number)));\n  }\n  throw new Error(`Unknown command: ${command}`);\n}\n\nif (import.meta.url === `file://${process.argv[1]}`) {\n  console.log(run(process.argv.slice(2)));\n}\n"
+          },
+          {
+            "path": "cli.test.js",
+            "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { run } from \"./cli.js\";\n\ntest(\"clamp command clamps into range\", () => {\n  assert.equal(run([\"clamp\", \"15\", \"0\", \"10\"]), \"10\");\n});\n\ntest(\"clamp command passes through in-range values\", () => {\n  assert.equal(run([\"clamp\", \"5\", \"0\", \"10\"]), \"5\");\n});\n\ntest(\"average command averages its arguments\", () => {\n  assert.equal(run([\"average\", \"1\", \"2\", \"3\"]), \"2\");\n});\n\ntest(\"unknown command throws\", () => {\n  assert.throws(() => run([\"nope\"]), /Unknown command/);\n});\n"
+          }
+        ],
+        "message": "Add the average command"
+      },
+      "at": "2026-10-10T03:36:04.354Z"
+    },
+    {
+      "id": "answer-7650ad2e28",
+      "type": "ANSWER",
+      "ask": "ask-01ab2a07c1",
+      "from": "zz-dev",
+      "action": "grant",
+      "payload": {
+        "commit": "e6443d2b890fdab2f2b6af6b666ccbc5d666db9f"
+      },
+      "at": "2026-10-10T03:36:04.377Z"
+    },
+    {
+      "id": "ask-56fa658829",
+      "type": "ASK",
+      "kind": "merge_request",
+      "from": "zz-dev",
+      "payload": {
+        "ladder": [
+          {
+            "path": "package.json",
+            "kind": "file"
+          },
+          {
+            "path": "cli.js",
+            "kind": "file"
+          },
+          {
+            "path": "cli.test.js",
+            "kind": "file"
+          }
+        ]
+      },
+      "at": "2026-10-10T03:36:04.377Z"
+    },
+    {
+      "id": "answer-10fd730e10",
+      "type": "ANSWER",
+      "ask": "ask-56fa658829",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.393Z"
+    }
+  ],
+  "related_lanes": []
+}

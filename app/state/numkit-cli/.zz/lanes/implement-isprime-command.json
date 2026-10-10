@@ -1,0 +1,107 @@
+{
+  "id": "implement-isprime-command",
+  "repo": "zz-demo/numkit-cli",
+  "origin": {
+    "repo": "zz-demo/numkit-cli",
+    "lane": "_repo"
+  },
+  "name": "implement isprime command",
+  "objective": "Add `numkit-cli isprime <n>`, delegating to numkit's isPrime(). Bumps the numkit dependency from a local file: path to a real version range (^0.3.0), now that numkit has a real version with everything this CLI uses.",
+  "status": "claimed",
+  "scope": [
+    "cli.js",
+    "cli.test.js",
+    "package.json"
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-dev"
+  },
+  "coordinators": [
+    "zz-dev"
+  ],
+  "history": [
+    {
+      "id": "ask-c503ed941d",
+      "type": "ASK",
+      "kind": "claim_request",
+      "from": "zz-dev",
+      "at": "2026-10-10T03:36:04.977Z"
+    },
+    {
+      "id": "answer-fc3d47eadf",
+      "type": "ANSWER",
+      "ask": "ask-c503ed941d",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.977Z"
+    },
+    {
+      "id": "ask-f42c784e5c",
+      "type": "ASK",
+      "kind": "submit_changeset",
+      "from": "zz-dev",
+      "payload": {
+        "files": [
+          {
+            "path": "package.json",
+            "content": "{\n  \"name\": \"numkit-cli\",\n  \"version\": \"0.4.0\",\n  \"description\": \"A command-line wrapper over numkit.\",\n  \"type\": \"module\",\n  \"bin\": {\n    \"numkit-cli\": \"./cli.js\"\n  },\n  \"dependencies\": {\n    \"numkit\": \"^0.3.0\"\n  },\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+          },
+          {
+            "path": "cli.js",
+            "content": "#!/usr/bin/env node\nimport { clamp, average, isPrime } from \"numkit\";\n\nexport function run(argv) {\n  const [command, ...args] = argv;\n  if (command === \"clamp\") {\n    const [value, min, max] = args.map(Number);\n    return String(clamp(value, min, max));\n  }\n  if (command === \"average\") {\n    return String(average(args.map(Number)));\n  }\n  if (command === \"isprime\") {\n    return String(isPrime(Number(args[0])));\n  }\n  throw new Error(`Unknown command: ${command}`);\n}\n\nexport function main(argv) {\n  try {\n    return { ok: true, output: run(argv) };\n  } catch (err) {\n    return { ok: false, message: err instanceof Error ? err.message : String(err) };\n  }\n}\n\nif (import.meta.url === `file://${process.argv[1]}`) {\n  const result = main(process.argv.slice(2));\n  if (result.ok) {\n    console.log(result.output);\n  } else {\n    console.error(`error: ${result.message}`);\n    process.exit(1);\n  }\n}\n"
+          },
+          {
+            "path": "cli.test.js",
+            "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { run, main } from \"./cli.js\";\n\ntest(\"clamp command clamps into range\", () => {\n  assert.equal(run([\"clamp\", \"15\", \"0\", \"10\"]), \"10\");\n});\n\ntest(\"average command averages its arguments\", () => {\n  assert.equal(run([\"average\", \"1\", \"2\", \"3\"]), \"2\");\n});\n\ntest(\"isprime command reports primality\", () => {\n  assert.equal(run([\"isprime\", \"17\"]), \"true\");\n  assert.equal(run([\"isprime\", \"18\"]), \"false\");\n});\n\ntest(\"unknown command throws\", () => {\n  assert.throws(() => run([\"nope\"]), /Unknown command/);\n});\n\ntest(\"average with no numbers reports a clean error, not a crash\", () => {\n  const result = main([\"average\"]);\n  assert.equal(result.ok, false);\n  assert.match(result.message, /must not be empty/);\n});\n"
+          }
+        ],
+        "message": "Add the isprime command"
+      },
+      "at": "2026-10-10T03:36:04.978Z"
+    },
+    {
+      "id": "answer-51b63b272b",
+      "type": "ANSWER",
+      "ask": "ask-f42c784e5c",
+      "from": "zz-dev",
+      "action": "grant",
+      "payload": {
+        "commit": "30578609b75ed99c4604bc87acdafb20f43054bc"
+      },
+      "at": "2026-10-10T03:36:05.003Z"
+    },
+    {
+      "id": "ask-45834f87ed",
+      "type": "ASK",
+      "kind": "merge_request",
+      "from": "zz-dev",
+      "payload": {
+        "ladder": [
+          {
+            "path": "package.json",
+            "kind": "file"
+          },
+          {
+            "path": "cli.js",
+            "kind": "file"
+          },
+          {
+            "path": "cli.test.js",
+            "kind": "file"
+          }
+        ]
+      },
+      "at": "2026-10-10T03:36:05.003Z"
+    },
+    {
+      "id": "answer-65cd10652c",
+      "type": "ANSWER",
+      "ask": "ask-45834f87ed",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:05.020Z"
+    }
+  ],
+  "related_lanes": []
+}

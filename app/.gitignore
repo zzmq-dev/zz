@@ -2,4 +2,6 @@ node_modules/
 dist/
 demo-repos/superagent/
 demo-repos/supertest/
+demo-repos/numkit/
+demo-repos/numkit-cli/
 .env

@@ -1,0 +1,107 @@
+{
+  "id": "implement-clamp-command",
+  "repo": "zz-demo/numkit-cli",
+  "origin": {
+    "repo": "zz-demo/numkit-cli",
+    "lane": "_repo"
+  },
+  "name": "implement clamp command",
+  "objective": "A CLI wrapper over numkit's clamp(): `numkit-cli clamp <value> <min> <max>`.",
+  "status": "claimed",
+  "scope": [
+    "cli.js",
+    "cli.test.js",
+    "package.json"
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-dev"
+  },
+  "coordinators": [
+    "zz-dev"
+  ],
+  "history": [
+    {
+      "id": "ask-3f6b2c7410",
+      "type": "ASK",
+      "kind": "claim_request",
+      "from": "zz-dev",
+      "at": "2026-10-10T03:36:04.053Z"
+    },
+    {
+      "id": "answer-24ada621d0",
+      "type": "ANSWER",
+      "ask": "ask-3f6b2c7410",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.053Z"
+    },
+    {
+      "id": "ask-fa9d34e068",
+      "type": "ASK",
+      "kind": "submit_changeset",
+      "from": "zz-dev",
+      "payload": {
+        "files": [
+          {
+            "path": "package.json",
+            "content": "{\n  \"name\": \"numkit-cli\",\n  \"version\": \"0.1.0\",\n  \"description\": \"A command-line wrapper over numkit.\",\n  \"type\": \"module\",\n  \"bin\": {\n    \"numkit-cli\": \"./cli.js\"\n  },\n  \"dependencies\": {\n    \"numkit\": \"file:../numkit\"\n  },\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+          },
+          {
+            "path": "cli.js",
+            "content": "#!/usr/bin/env node\nimport { clamp } from \"numkit\";\n\nexport function run(argv) {\n  const [command, ...args] = argv;\n  if (command === \"clamp\") {\n    const [value, min, max] = args.map(Number);\n    return String(clamp(value, min, max));\n  }\n  throw new Error(`Unknown command: ${command}`);\n}\n\nif (import.meta.url === `file://${process.argv[1]}`) {\n  console.log(run(process.argv.slice(2)));\n}\n"
+          },
+          {
+            "path": "cli.test.js",
+            "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { run } from \"./cli.js\";\n\ntest(\"clamp command clamps into range\", () => {\n  assert.equal(run([\"clamp\", \"15\", \"0\", \"10\"]), \"10\");\n});\n\ntest(\"clamp command passes through in-range values\", () => {\n  assert.equal(run([\"clamp\", \"5\", \"0\", \"10\"]), \"5\");\n});\n\ntest(\"unknown command throws\", () => {\n  assert.throws(() => run([\"nope\"]), /Unknown command/);\n});\n"
+          }
+        ],
+        "message": "Implement the clamp command"
+      },
+      "at": "2026-10-10T03:36:04.053Z"
+    },
+    {
+      "id": "answer-a9a48bf0a5",
+      "type": "ANSWER",
+      "ask": "ask-fa9d34e068",
+      "from": "zz-dev",
+      "action": "grant",
+      "payload": {
+        "commit": "b145b4dc0abbb95cbf97e6317df634ebe1260aaa"
+      },
+      "at": "2026-10-10T03:36:04.073Z"
+    },
+    {
+      "id": "ask-a003ee3363",
+      "type": "ASK",
+      "kind": "merge_request",
+      "from": "zz-dev",
+      "payload": {
+        "ladder": [
+          {
+            "path": "package.json",
+            "kind": "file"
+          },
+          {
+            "path": "cli.js",
+            "kind": "file"
+          },
+          {
+            "path": "cli.test.js",
+            "kind": "file"
+          }
+        ]
+      },
+      "at": "2026-10-10T03:36:04.073Z"
+    },
+    {
+      "id": "answer-305462f8f1",
+      "type": "ANSWER",
+      "ask": "ask-a003ee3363",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.089Z"
+    }
+  ],
+  "related_lanes": []
+}

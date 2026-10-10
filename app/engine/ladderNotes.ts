@@ -8,7 +8,7 @@
 // while still letting you read "everything about this one file" or "this
 // whole ask thread" in a single note.
 import type { Rung, RungKind, RungSource } from "./ladder.js";
-import { resolvePathSha, resolveRootTreeSha, resolveRootCommit, writeNote, readNote, expandOid } from "./gitNotes.js";
+import { resolvePathSha, resolveRootCommit, writeNote, readNote, expandOid } from "./gitNotes.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -117,7 +117,11 @@ function cachedRootCommit(repoDir: string): Promise<string> {
 }
 
 async function anchorSha(repoDir: string, stateDir: string, rung: Rung): Promise<string> {
-  if (rung.kind === "repo") return resolveRootTreeSha(repoDir);
+  // The repo's own root commit, not the current/HEAD tree: the tree sha
+  // changes on every commit, which would silently orphan _repo's note
+  // (and everything registered under it) on the very next commit in any
+  // repo under live development, not just a one-time onboarding pass.
+  if (rung.kind === "repo") return cachedRootCommit(repoDir);
   if (rung.kind === "file" || rung.kind === "directory") {
     const sha = await resolvePathSha(repoDir, rung.path);
     if (!sha) throw new Error(`${rung.path}: not found in the repo at HEAD`);
@@ -160,14 +164,14 @@ export async function appendRepoChildren(repoDir: string, stateDir: string, newC
   const existingRefs = new Set(current.children.filter(isRef).map((c) => c.ref));
   const toAdd = newChildren.filter((c) => !existingRefs.has(c.path));
   current.children.push(...toAdd.map((c) => ({ ref: c.path })));
-  const sha = await resolveRootTreeSha(repoDir);
+  const sha = await cachedRootCommit(repoDir);
   await writeNote(repoDir, notesRef("repo", "_repo"), sha, current);
 }
 
 /** Reads one anchor's note (its own fields plus everything embedded under it, inline). */
 export async function readAnchor(repoDir: string, stateDir: string, path: string): Promise<EmbeddedRung | null> {
   if (path === "_repo") {
-    const sha = await resolveRootTreeSha(repoDir);
+    const sha = await cachedRootCommit(repoDir);
     return readNote<EmbeddedRung>(repoDir, notesRef("repo", path), sha);
   }
   if (path.startsWith("asks/")) {

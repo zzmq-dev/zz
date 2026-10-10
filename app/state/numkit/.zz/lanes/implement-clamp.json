@@ -1,0 +1,116 @@
+{
+  "id": "implement-clamp",
+  "repo": "zz-demo/numkit",
+  "origin": {
+    "repo": "zz-demo/numkit",
+    "lane": "_repo"
+  },
+  "name": "implement clamp",
+  "objective": "Add a clamp(value, min, max) function: constrains a number to a range, returns NaN for non-numeric input.",
+  "status": "claimed",
+  "scope": [
+    "clamp.js",
+    "clamp.test.js",
+    "index.js",
+    "package.json"
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-dev"
+  },
+  "coordinators": [
+    "zz-dev"
+  ],
+  "history": [
+    {
+      "id": "ask-53d15cb19f",
+      "type": "ASK",
+      "kind": "claim_request",
+      "from": "zz-dev",
+      "at": "2026-10-10T03:35:53.275Z"
+    },
+    {
+      "id": "answer-2b357f7b35",
+      "type": "ANSWER",
+      "ask": "ask-53d15cb19f",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:35:53.275Z"
+    },
+    {
+      "id": "ask-03e97af44c",
+      "type": "ASK",
+      "kind": "submit_changeset",
+      "from": "zz-dev",
+      "payload": {
+        "files": [
+          {
+            "path": "package.json",
+            "content": "{\n  \"name\": \"numkit\",\n  \"version\": \"0.1.0\",\n  \"description\": \"Small, dependency-free numeric utilities.\",\n  \"type\": \"module\",\n  \"main\": \"index.js\",\n  \"scripts\": {\n    \"test\": \"node --test\"\n  }\n}\n"
+          },
+          {
+            "path": "clamp.js",
+            "content": "export function clamp(value, min, max) {\n  if (typeof value !== \"number\" || Number.isNaN(value)) return NaN;\n  if (min > max) throw new RangeError(\"min must be <= max\");\n  return Math.min(Math.max(value, min), max);\n}\n"
+          },
+          {
+            "path": "clamp.test.js",
+            "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { clamp } from \"./clamp.js\";\n\ntest(\"clamp keeps in-range values unchanged\", () => {\n  assert.equal(clamp(5, 0, 10), 5);\n});\n\ntest(\"clamp pulls values up to min\", () => {\n  assert.equal(clamp(-5, 0, 10), 0);\n});\n\ntest(\"clamp pulls values down to max\", () => {\n  assert.equal(clamp(15, 0, 10), 10);\n});\n\ntest(\"clamp returns NaN for NaN input\", () => {\n  assert.ok(Number.isNaN(clamp(NaN, 0, 10)));\n});\n\ntest(\"clamp returns NaN for non-number input\", () => {\n  assert.ok(Number.isNaN(clamp(\"x\", 0, 10)));\n});\n\ntest(\"clamp throws when min > max\", () => {\n  assert.throws(() => clamp(5, 10, 0), RangeError);\n});\n"
+          },
+          {
+            "path": "index.js",
+            "content": "export { clamp } from \"./clamp.js\";\n"
+          }
+        ],
+        "message": "Implement clamp(value, min, max)"
+      },
+      "at": "2026-10-10T03:35:53.275Z"
+    },
+    {
+      "id": "answer-28785eb371",
+      "type": "ANSWER",
+      "ask": "ask-03e97af44c",
+      "from": "zz-dev",
+      "action": "grant",
+      "payload": {
+        "commit": "d7d0b1ad421933bd3f5bab054d6917d0c87ba3e8"
+      },
+      "at": "2026-10-10T03:35:53.297Z"
+    },
+    {
+      "id": "ask-174eb8ec40",
+      "type": "ASK",
+      "kind": "merge_request",
+      "from": "zz-dev",
+      "payload": {
+        "ladder": [
+          {
+            "path": "package.json",
+            "kind": "file"
+          },
+          {
+            "path": "clamp.js",
+            "kind": "file"
+          },
+          {
+            "path": "clamp.test.js",
+            "kind": "file"
+          },
+          {
+            "path": "index.js",
+            "kind": "file"
+          }
+        ]
+      },
+      "at": "2026-10-10T03:35:53.297Z"
+    },
+    {
+      "id": "answer-39fa62e665",
+      "type": "ANSWER",
+      "ask": "ask-174eb8ec40",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:35:53.319Z"
+    }
+  ],
+  "related_lanes": []
+}

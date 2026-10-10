@@ -109,6 +109,7 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open"> = {
   add_filechange: "open",
   summarize_changeset: "open",
   work: "open",
+  submit_changeset: "coordinator",
 };
 
 /**

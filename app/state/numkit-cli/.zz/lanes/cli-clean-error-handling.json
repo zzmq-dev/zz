@@ -1,0 +1,98 @@
+{
+  "id": "cli-clean-error-handling",
+  "repo": "zz-demo/numkit-cli",
+  "origin": {
+    "repo": "zz-demo/numkit",
+    "lane": "fix-average-empty"
+  },
+  "name": "handle average's empty-input error cleanly",
+  "objective": "numkit's average() now throws RangeError for empty input instead of silently returning NaN. Running `numkit-cli average` with no numbers surfaced that as a raw stack trace. Catch it and print a clean CLI error instead.",
+  "status": "claimed",
+  "scope": [
+    "cli.js",
+    "cli.test.js"
+  ],
+  "trigger": {
+    "kind": "manual",
+    "proposed_by": "zz-dev"
+  },
+  "coordinators": [
+    "zz-dev"
+  ],
+  "history": [
+    {
+      "id": "ask-cdf419f186",
+      "type": "ASK",
+      "kind": "claim_request",
+      "from": "zz-dev",
+      "at": "2026-10-10T03:36:04.664Z"
+    },
+    {
+      "id": "answer-70826450b9",
+      "type": "ANSWER",
+      "ask": "ask-cdf419f186",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.665Z"
+    },
+    {
+      "id": "ask-49d08d0fbe",
+      "type": "ASK",
+      "kind": "submit_changeset",
+      "from": "zz-dev",
+      "payload": {
+        "files": [
+          {
+            "path": "cli.js",
+            "content": "#!/usr/bin/env node\nimport { clamp, average } from \"numkit\";\n\nexport function run(argv) {\n  const [command, ...args] = argv;\n  if (command === \"clamp\") {\n    const [value, min, max] = args.map(Number);\n    return String(clamp(value, min, max));\n  }\n  if (command === \"average\") {\n    return String(average(args.map(Number)));\n  }\n  throw new Error(`Unknown command: ${command}`);\n}\n\n// numkit's average() now throws RangeError on empty input (it used to\n// silently return NaN) -- without this, that surfaced as a raw,\n// unfriendly stack trace instead of a clean CLI error.\nexport function main(argv) {\n  try {\n    return { ok: true, output: run(argv) };\n  } catch (err) {\n    return { ok: false, message: err instanceof Error ? err.message : String(err) };\n  }\n}\n\nif (import.meta.url === `file://${process.argv[1]}`) {\n  const result = main(process.argv.slice(2));\n  if (result.ok) {\n    console.log(result.output);\n  } else {\n    console.error(`error: ${result.message}`);\n    process.exit(1);\n  }\n}\n"
+          },
+          {
+            "path": "cli.test.js",
+            "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { run, main } from \"./cli.js\";\n\ntest(\"clamp command clamps into range\", () => {\n  assert.equal(run([\"clamp\", \"15\", \"0\", \"10\"]), \"10\");\n});\n\ntest(\"average command averages its arguments\", () => {\n  assert.equal(run([\"average\", \"1\", \"2\", \"3\"]), \"2\");\n});\n\ntest(\"unknown command throws\", () => {\n  assert.throws(() => run([\"nope\"]), /Unknown command/);\n});\n\n// Regression test for numkit's fix-average-empty: average([]) used to\n// return NaN silently; now it throws, and the CLI must surface that as\n// a clean error instead of an unhandled exception.\ntest(\"average with no numbers reports a clean error, not a crash\", () => {\n  const result = main([\"average\"]);\n  assert.equal(result.ok, false);\n  assert.match(result.message, /must not be empty/);\n});\n"
+          }
+        ],
+        "message": "Handle numkit's average() empty-input error cleanly"
+      },
+      "at": "2026-10-10T03:36:04.665Z"
+    },
+    {
+      "id": "answer-95b19d6589",
+      "type": "ANSWER",
+      "ask": "ask-49d08d0fbe",
+      "from": "zz-dev",
+      "action": "grant",
+      "payload": {
+        "commit": "cb061f703b5d5dbd2a84652a52e416ff65003f1a"
+      },
+      "at": "2026-10-10T03:36:04.686Z"
+    },
+    {
+      "id": "ask-728971ebd5",
+      "type": "ASK",
+      "kind": "merge_request",
+      "from": "zz-dev",
+      "payload": {
+        "ladder": [
+          {
+            "path": "cli.js",
+            "kind": "file"
+          },
+          {
+            "path": "cli.test.js",
+            "kind": "file"
+          }
+        ]
+      },
+      "at": "2026-10-10T03:36:04.686Z"
+    },
+    {
+      "id": "answer-4145858612",
+      "type": "ANSWER",
+      "ask": "ask-728971ebd5",
+      "from": "zz-dev",
+      "action": "grant",
+      "at": "2026-10-10T03:36:04.700Z"
+    }
+  ],
+  "related_lanes": []
+}
