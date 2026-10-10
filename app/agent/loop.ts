@@ -1,19 +1,9 @@
-// A minimal local tool-calling loop against Ollama's /api/chat, which
-// genuinely supports OpenAI-style function-calling for tool-capable
-// models (verified directly against qwen2.5:14b-instruct before building
-// this). No Claude/Anthropic API, no BYOK -- local model only, per the
-// project's current scope.
+// A generic tool-calling loop over any ChatBackend (agent/
+// chatBackend.ts) -- local Ollama or a remote API (Gemini). The loop
+// itself knows nothing about either provider's wire format; it just
+// exchanges ChatMessages and executes whatever tool_calls come back.
 import type { ToolDef } from "./tools.js";
-
-interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[];
-}
-
-function toOllamaTools(tools: ToolDef[]) {
-  return tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
-}
+import type { ChatBackend, ChatMessage } from "./chatBackend.js";
 
 // Full (pretty-printed, multi-line) rather than a one-line truncated
 // summary -- the activity log is meant to show what the model is
@@ -54,9 +44,8 @@ export interface RunAgentOptions {
   systemPrompt: string;
   userMessage: string;
   tools: ToolDef[];
+  backend: ChatBackend;
   maxTurns?: number;
-  model?: string;
-  baseUrl?: string;
   /** Called with each log line instead of `console.error`, so a TUI can capture the agent's activity instead of it scrolling over the rendered screen. Defaults to `console.error`. */
   onLog?: (line: string) => void;
   /**
@@ -92,8 +81,6 @@ export interface RunAgentResult {
 const MAX_GIVE_UP_NUDGES = 2;
 
 export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
-  const baseUrl = opts.baseUrl ?? process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
-  const model = opts.model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct";
   const maxTurns = opts.maxTurns ?? 40;
   const log = opts.onLog ?? ((line: string) => console.error(line));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
@@ -113,37 +100,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     // model, and with nothing printed in that window it reads as hung
     // rather than working. Reporting elapsed time after the fact turns
     // "is this stuck?" into a concrete, comparable number across turns.
-    log(`[turn ${turn}] waiting for ${model}...`);
+    log(`[turn ${turn}] waiting for ${opts.backend.name}...`);
     const turnStart = Date.now();
-    const res = await fetch(`${baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, messages, tools: toOllamaTools(opts.tools), stream: true }),
-    });
-    if (!res.ok) throw new Error(`ollama chat failed: ${res.status} ${await res.text()}`);
-    if (!res.body) throw new Error("ollama chat response had no body to stream");
-
-    let content = "";
-    let toolCalls: ChatMessage["tool_calls"];
-    let buffer = "";
-    for await (const rawChunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += Buffer.from(rawChunk).toString("utf8");
-      let newlineAt: number;
-      while ((newlineAt = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, newlineAt).trim();
-        buffer = buffer.slice(newlineAt + 1);
-        if (!line) continue;
-        const chunk = JSON.parse(line) as { message?: { content?: string; tool_calls?: ChatMessage["tool_calls"] } };
-        if (chunk.message?.content) {
-          content += chunk.message.content;
-          opts.onPartial?.(content);
-        }
-        if (chunk.message?.tool_calls) toolCalls = chunk.message.tool_calls;
-      }
-    }
+    const message = await opts.backend.chat(messages, opts.tools, opts.onPartial);
     log(`[turn ${turn}] got a response in ${((Date.now() - turnStart) / 1000).toFixed(1)}s`);
-
-    const message: ChatMessage = { role: "assistant", content, tool_calls: toolCalls };
     messages.push(message);
 
     if (message.content && message.content.trim()) {
@@ -205,7 +165,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
         log(`[turn ${turn}] (already resolved -- ending here instead of letting the model keep retrying)`);
         return { turns: turn, finished: true, finalMessage: "" };
       }
-      messages.push({ role: "tool", content: JSON.stringify(result) });
+      messages.push({ role: "tool", content: JSON.stringify(result), name: call.function.name });
     }
   }
 

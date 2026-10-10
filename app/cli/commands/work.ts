@@ -21,9 +21,20 @@ import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js"
 import type { AskEntry } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
+import type { ChatBackend } from "../../agent/chatBackend.js";
+import { createOllamaBackend } from "../../agent/ollamaBackend.js";
+import { createGeminiBackend } from "../../agent/geminiBackend.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
+
+export type Provider = "ollama" | "gemini";
+
+export function resolveBackend(provider: Provider, model?: string): ChatBackend {
+  if (provider === "gemini") return createGeminiBackend(model ?? process.env.GEMINI_MODEL ?? "gemini-2.0-flash");
+  const baseUrl = process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
+  return createOllamaBackend(model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct", baseUrl);
+}
 
 const DEFAULT_POLL_MS = 1000;
 // Bounded well below "infinite" on purpose: every turn resends the
@@ -112,7 +123,7 @@ async function runClaimedAsk(
   alreadyClaimed: boolean,
   onLog: (line: string) => void,
   maxTurns: number,
-  model: string | undefined,
+  backend: ChatBackend,
   statusRef: { current: string },
 ): Promise<void> {
   const baseStatus = statusRef.current;
@@ -134,7 +145,7 @@ async function runClaimedAsk(
     userMessage: `You are agent id "${agent}". You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. ${beginInstruction} Act as agent "${agent}" for every claim/post/answer/write.`,
     tools: isCoordinatorAsk ? ALL_TOOLS : CONTRIBUTOR_TOOLS,
     maxTurns,
-    model,
+    backend,
     onLog,
     onPartial: (textSoFar) => {
       // Single line, tail-truncated -- ActivityLog budgets exactly one
@@ -164,11 +175,14 @@ export interface WorkOptions {
   maxTurns?: number;
   pollMs?: number;
   model?: string;
+  provider?: Provider;
 }
 
 export async function work(options: WorkOptions): Promise<void> {
   const config = readConfig({ agent: options.agent, repos: options.repos });
   const scope: WorkScope = options.scope ?? "all";
+  const provider = options.provider ?? "ollama";
+  const backend = resolveBackend(provider, options.model);
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
   for (const r of resolvedRepos) {
     ensureCloned(r);
@@ -180,7 +194,7 @@ export async function work(options: WorkOptions): Promise<void> {
   const onLog = options.stdio ? (line: string) => console.error(line) : (line: string) => logBuffer.push(line);
 
   if (options.stdio) {
-    console.error(`zz work: agent="${config.agent}" scope=${scope} model=${options.model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct"} repos=${config.repos.join(", ")}`);
+    console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();
     render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef }));
@@ -207,6 +221,6 @@ export async function work(options: WorkOptions): Promise<void> {
     const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
     statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
     onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, options.model, statusRef);
+    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef);
   }
 }

@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+// Loads app/.env if present (e.g. GEMINI_API_KEY) -- never commit that
+// file (already in .gitignore); quiet no-op when it doesn't exist.
+try {
+  process.loadEnvFile();
+} catch {
+  // no .env file -- fine, env vars can still be set the normal way
+}
 import { Command } from "commander";
 import { ladderBuild } from "./commands/ladder-build.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
@@ -87,14 +94,29 @@ program
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
-  .option("--model <name>", 'which Ollama model to use (default: $ZZ_OLLAMA_MODEL or "qwen2.5:14b-instruct") -- run `zz models` to see what\'s available locally')
-  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string }) => {
+  .option("--provider <name>", 'ollama (local, default) or gemini (remote, needs GEMINI_API_KEY)')
+  .option("--model <name>", 'model name for whichever provider -- default is "qwen2.5:14b-instruct" (ollama) or "gemini-2.0-flash" (gemini). Run `zz models` to see what\'s available locally for ollama.')
+  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string }) => {
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
       process.exitCode = 1;
       return;
     }
-    await work({ agent: opts.agent, repos: opts.repos, scope: opts.scope as "coordinator" | "contributor" | "all" | undefined, stdio: opts.stdio, maxTurns: opts.maxTurns, pollMs: opts.pollMs, model: opts.model });
+    if (opts.provider && !["ollama", "gemini"].includes(opts.provider)) {
+      console.error(`unknown --provider "${opts.provider}"; expected ollama or gemini`);
+      process.exitCode = 1;
+      return;
+    }
+    await work({
+      agent: opts.agent,
+      repos: opts.repos,
+      scope: opts.scope as "coordinator" | "contributor" | "all" | undefined,
+      stdio: opts.stdio,
+      maxTurns: opts.maxTurns,
+      pollMs: opts.pollMs,
+      model: opts.model,
+      provider: opts.provider as "ollama" | "gemini" | undefined,
+    });
   });
 
 program
