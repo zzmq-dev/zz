@@ -59,6 +59,17 @@ export interface RunAgentOptions {
   baseUrl?: string;
   /** Called with each log line instead of `console.error`, so a TUI can capture the agent's activity instead of it scrolling over the rendered screen. Defaults to `console.error`. */
   onLog?: (line: string) => void;
+  /**
+   * Checked whenever the model stops calling tools, before trusting
+   * that as completion -- observed repeatedly: a model describes a
+   * plan in prose ("Now I'll implement X and test it") and then simply
+   * stops without ever calling a tool, which used to be read as
+   * "finished" even though nothing happened. Defaults to always true
+   * (trust the stop) for callers that don't have a concrete way to
+   * check; callers that do (e.g. "is the ask I was handed actually
+   * answered yet") should supply a real one.
+   */
+  isActuallyDone?: () => boolean;
 }
 
 export interface RunAgentResult {
@@ -81,8 +92,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     { role: "user", content: opts.userMessage },
   ];
 
-  let lastTurnHadError = false;
+  let lastError: { tool: string; message: string } | null = null;
   let nudgesUsed = 0;
+  const isActuallyDone = opts.isActuallyDone ?? (() => true);
 
   for (let turn = 1; turn <= maxTurns; turn++) {
     const res = await fetch(`${baseUrl}/api/chat`, {
@@ -100,25 +112,33 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     }
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
-      // Stopping right after an unresolved tool error usually means the
-      // model gave up, not that it finished -- the one real failure mode
-      // this project has actually hit. Nudge it to retry or explicitly
-      // deny, rather than trusting silence as completion, up to a small
-      // bounded number of times so a genuinely stuck agent still ends.
-      if (lastTurnHadError && nudgesUsed < MAX_GIVE_UP_NUDGES) {
+      // Stopping doesn't mean finished -- two real failure modes this
+      // project has actually hit, both caught by the same check (is
+      // whatever the caller cares about actually done?) rather than
+      // trusting silence as completion: (1) stopping right after an
+      // unresolved tool error, the model having given up instead of
+      // retrying; (2) describing a plan in prose ("I'll implement X and
+      // test it") and then simply stopping without ever calling a tool
+      // to do it. Nudge either way, up to a small bounded number of
+      // times so a genuinely stuck agent still ends.
+      if (!isActuallyDone() && nudgesUsed < MAX_GIVE_UP_NUDGES) {
         nudgesUsed += 1;
-        log(`[turn ${turn}] (stopped right after a tool error -- nudging instead of ending, ${nudgesUsed}/${MAX_GIVE_UP_NUDGES})`);
-        messages.push({
-          role: "user",
-          content: "Your last tool call failed and you haven't resolved it -- you stopped instead of retrying. Either fix the error and retry the call, or if you genuinely can't complete the work, call ask_answer with action \"deny\" and explain why. Don't just stop without one of those.",
-        });
+        // Naming the specific failing tool and its exact error combats
+        // a real observed failure mode: the model blaming a *different*,
+        // already-succeeded call for an error that actually came from
+        // the one right before it stopped.
+        const reason = lastError
+          ? `Your last tool call (${lastError.tool}) failed with: ${lastError.message} -- fix that specific call (check which arguments it actually needs) and retry it, or if you genuinely can't complete the work, call ask_answer with action "deny" and explain why. Don't just stop without one of those.`
+          : `You described what you'd do but didn't actually call the tools to do it -- describing a plan isn't the same as executing it, and the work isn't done yet. Call the tools now to actually make the change/test/submit, then ask_answer once it's genuinely done.`;
+        log(`[turn ${turn}] (stopped without finishing -- nudging instead of ending, ${nudgesUsed}/${MAX_GIVE_UP_NUDGES})`);
+        messages.push({ role: "user", content: reason });
         continue;
       }
       log(`[turn ${turn}] (no tool calls -- agent considers itself done)`);
       return { turns: turn, finished: true, finalMessage: message.content };
     }
 
-    lastTurnHadError = false;
+    lastError = null;
     for (const call of message.tool_calls) {
       const tool = byName.get(call.function.name);
       log(`[turn ${turn}] -> ${call.function.name}(\n${formatForLog(call.function.arguments)}\n)`);
@@ -133,7 +153,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
           result = { error: err instanceof Error ? err.message : String(err), ...(resolved ? { resolved: true } : {}) };
         }
       }
-      if (result && typeof result === "object" && "error" in result) lastTurnHadError = true;
+      if (result && typeof result === "object" && "error" in result) {
+        lastError = { tool: call.function.name, message: String((result as { error: unknown }).error) };
+      }
       log(`[turn ${turn}] <- ${call.function.name} result:\n${formatForLog(result)}`);
       // A structural "this work is already resolved" signal (see
       // engine/lane.ts's duplicate-answer guard) ends the loop here,

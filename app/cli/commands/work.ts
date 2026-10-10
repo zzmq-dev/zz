@@ -110,6 +110,13 @@ async function runClaimedAsk(resolved: ResolvedRepo, laneId: string, theAsk: Ask
     tools: isCoordinatorAsk ? ALL_TOOLS : CONTRIBUTOR_TOOLS,
     maxTurns,
     onLog,
+    // The real check, not "did the model stop calling tools" -- a
+    // model that only describes a plan in prose and then stops has not
+    // answered this ask, no matter how confident it sounds.
+    isActuallyDone: () => {
+      const lane = readLane(resolved.stateDir, laneId);
+      return lane?.history.some((e) => e.type === "ANSWER" && e.ask === theAsk.id) ?? false;
+    },
   });
   onLog(`done with ${theAsk.id}: ${result.turns} turns, ${result.finished ? "finished on its own" : "hit the turn limit"}.`);
 }
