@@ -71,10 +71,20 @@ async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
   return repoLane;
 }
 
-function systemPromptFor(agent: string, repo: string): string {
-  return `You are an agent in the zz coordination system, working on repo "${repo}" as agent id "${agent}".
+// Deliberately agent- and repo-independent, byte-for-byte identical on
+// every call -- verified directly against Ollama's real caching
+// behavior: a shared prefix gets reused (a cache hit costs ~0.15s here
+// vs ~5-6s for a cache miss on a prompt this size), but only while the
+// text actually matches exactly. Baking "${agent}"/"${repo}" into this
+// string, even just once near the top, broke that for every single
+// call before -- two agents (or the same agent on two different
+// claimed asks) never shared a prefix, so every interleaved turn paid
+// full reprocessing cost. All of that now lives in the per-call user
+// message instead (see runClaimedAsk below), which was always going to
+// be different per call anyway.
+export const SYSTEM_PROMPT = `You are an agent in the zz coordination system. Your own agent id and which repo you're working on are given in the user message below, along with the specific Ask you've been handed.
 
-The ask you've been handed below was already filtered for you: it's one you're actually permitted to act on (open to anyone, or in a Lane where "${agent}" is a coordinator). Whether you may take a *further* coordinator-only action on some OTHER Lane (granting a claim, writing into its Ladder) depends on whether "${agent}" appears in that Lane's \`coordinators\` -- check with lane_get if you're ever unsure; the action will simply fail otherwise.
+The ask you've been handed was already filtered for you: it's one you're actually permitted to act on (open to anyone, or in a Lane where you're a coordinator). Whether you may take a *further* coordinator-only action on some OTHER Lane (granting a claim, writing into its Ladder) depends on whether you appear in that Lane's \`coordinators\` -- check with lane_get if you're ever unsure; the action will simply fail otherwise.
 
 Conventions:
 - The repo's root is one long-lived Lane, id "_repo", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
@@ -92,10 +102,7 @@ Writing code: there is no write_file tool, ever. Content is always composed as d
   1. For each changed file, a kind "file" rung at that file's own path (e.g. "index.js") -- this is the file's CURRENT, HOLISTIC state, not a changelog entry. ladder_read that path first. If it already has content, your new summary needs to describe everything the file does now (what the old summary said, plus what you just changed) -- writing a summary that only covers your latest change and silently drops what the file already did is wrong, even though ladder_write_rung will try to catch and fix this for you.
   2. One kind "changeset" rung (path "changesets/<commitOid>") describing the commit itself, with a nested "filechange" child per file describing what changed in THIS commit specifically -- this one is historical and never gets rewritten later.
   Call ladder_write_rung for both. Then answer the Ask complete. If the change looks wrong, answer "deny" with why instead of committing it.
-- If one repo's change is caused by another repo's change (an actual cross-repo dependency, like a library's bug fix forcing a consumer to adapt), set the dependent Lane's origin to the upstream Lane directly: pass lane_propose's origin_lane AND origin_repo (the other repo's slug), not your own repo's _repo. This is what makes the dependency a queryable fact instead of just a coincidence in timing.
-
-You act as agent "${agent}" for every claim/post/answer/write below.`;
-}
+- If one repo's change is caused by another repo's change (an actual cross-repo dependency, like a library's bug fix forcing a consumer to adapt), set the dependent Lane's origin to the upstream Lane directly: pass lane_propose's origin_lane AND origin_repo (the other repo's slug), not your own repo's _repo. This is what makes the dependency a queryable fact instead of just a coincidence in timing.`;
 
 async function runClaimedAsk(
   resolved: ResolvedRepo,
@@ -123,8 +130,8 @@ async function runClaimedAsk(
     ? `You already hold a claim on this ask from an earlier attempt -- no need to call ask_claim again, go straight to doing the work, then ask_answer it.`
     : `Begin by calling ask_claim on it (repo "${resolved.slug}", lane_id "${laneId}", ask_id "${theAsk.id}", actor "${agent}"), then do the work, then ask_answer it.`;
   const result = await runAgent({
-    systemPrompt: systemPromptFor(agent, resolved.slug),
-    userMessage: `You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. ${beginInstruction}`,
+    systemPrompt: SYSTEM_PROMPT,
+    userMessage: `You are agent id "${agent}". You've been handed this claimable Ask in repo "${resolved.slug}", Lane "${laneId}": id ${theAsk.id}, kind "${theAsk.kind}", payload ${JSON.stringify(theAsk.payload)}. ${beginInstruction} Act as agent "${agent}" for every claim/post/answer/write.`,
     tools: isCoordinatorAsk ? ALL_TOOLS : CONTRIBUTOR_TOOLS,
     maxTurns,
     model,
