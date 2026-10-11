@@ -21,6 +21,7 @@ import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js"
 import type { AskEntry } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
+import { runContributorWorkAsk, runCoordinatorSubmitChangeset } from "../../agent/scriptedWork.js";
 import type { ChatBackend } from "../../agent/chatBackend.js";
 import { createOllamaBackend } from "../../agent/ollamaBackend.js";
 import { createGeminiBackend } from "../../agent/geminiBackend.js";
@@ -39,7 +40,12 @@ export function resolveBackend(provider: Provider, model?: string): ChatBackend 
   // error message steers new keys toward, and the one actually
   // verified working against a real key.
   if (provider === "gemini") return createGeminiBackend(model ?? process.env.GEMINI_MODEL ?? "gemini-3.8-flash");
-  if (provider === "groq") return createGroqBackend(model ?? process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile");
+  // llama-3.3-70b-versatile (the commonly-documented free Groq model)
+  // is gone from their catalog as of this writing (confirmed directly:
+  // a real 404 "does not exist or you do not have access to it") --
+  // openai/gpt-oss-120b is one of the models actually in their current
+  // /v1/models listing with confirmed tool-calling support.
+  if (provider === "groq") return createGroqBackend(model ?? process.env.GROQ_MODEL ?? "openai/gpt-oss-120b");
   if (provider === "cloudflare") return createCloudflareBackend(model ?? process.env.CLOUDFLARE_MODEL ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
   const baseUrl = process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
   return createOllamaBackend(model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct", baseUrl);
@@ -136,6 +142,24 @@ async function runClaimedAsk(
   statusRef: { current: string },
 ): Promise<void> {
   const baseStatus = statusRef.current;
+  // "work" and "submit_changeset" are driven by code instead of the
+  // generic tool-calling loop (agent/scriptedWork.ts) -- both are the
+  // ask kinds where a model assembling a large nested tool-call
+  // argument (a files array, a Ladder rung tree) has actually failed
+  // in practice; here the model only ever produces plain text, and the
+  // code drives claiming/testing/submitting/committing/Ladder-writing
+  // itself, in a fixed order. Every other ask kind still goes through
+  // the generic loop below.
+  if (theAsk.kind === "work") {
+    await runContributorWorkAsk({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    statusRef.current = baseStatus;
+    return;
+  }
+  if (theAsk.kind === "submit_changeset") {
+    await runCoordinatorSubmitChangeset({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    statusRef.current = baseStatus;
+    return;
+  }
   // The ask only ever reached us via claimableAcrossRepos if we're
   // actually entitled to act on it -- for a coordinator-scope kind,
   // that means we ARE this Lane's coordinator. Hand over the write

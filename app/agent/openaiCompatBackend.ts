@@ -72,7 +72,12 @@ export function createOpenAiCompatBackend(opts: { name: string; url: string; mod
       const res = await fetch(opts.url, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${opts.apiKey()}` },
-        body: JSON.stringify({ model: opts.model, messages: toOpenAiMessages(messages), tools: toOpenAiTools(tools) }),
+        // Several OpenAI-compatible providers (confirmed: Groq) reject an
+        // empty `tools` array outright rather than treating it the same
+        // as omitting the field -- needed for a plain-text, no-tools
+        // generation call (agent/scriptedWork.ts), which intentionally
+        // passes [].
+        body: JSON.stringify({ model: opts.model, messages: toOpenAiMessages(messages), ...(tools.length ? { tools: toOpenAiTools(tools) } : {}) }),
       });
       if (!res.ok) throw new Error(`${opts.name} chat failed: ${res.status} ${await res.text()}`);
       const data = await res.json();

@@ -19,7 +19,7 @@ export function createOllamaBackend(model: string, baseUrl: string): ChatBackend
       const res = await fetch(`${baseUrl}/api/chat`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, messages, tools: toOllamaTools(tools), stream: true }),
+        body: JSON.stringify({ model, messages, ...(tools.length ? { tools: toOllamaTools(tools) } : {}), stream: true }),
       });
       if (!res.ok) throw new Error(`ollama chat failed: ${res.status} ${await res.text()}`);
       if (!res.body) throw new Error("ollama chat response had no body to stream");

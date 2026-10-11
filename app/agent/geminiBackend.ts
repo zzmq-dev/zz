@@ -80,7 +80,7 @@ export function createGeminiBackend(model: string): ChatBackend {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey() },
-        body: JSON.stringify({ contents, systemInstruction, tools: toGeminiTools(tools) }),
+        body: JSON.stringify({ contents, systemInstruction, ...(tools.length ? { tools: toGeminiTools(tools) } : {}) }),
       });
       if (!res.ok) throw new Error(`gemini chat failed: ${res.status} ${await res.text()}`);
       const data = await res.json();
