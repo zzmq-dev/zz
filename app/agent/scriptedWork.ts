@@ -27,6 +27,7 @@ import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { AskEntry } from "../engine/types.js";
 import { readLane } from "../engine/store.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
+import { threeWayMerge } from "./threeWayMerge.js";
 
 function findTool(name: string) {
   const tool = ALL_TOOLS.find((t) => t.name === name);
@@ -71,6 +72,13 @@ function currentRepoFiles(resolved: ResolvedRepo): { path: string; content: stri
     .split("\n")
     .filter(Boolean)
     .map((path) => ({ path, content: fileContentAtCommit(resolved.repoDir, "HEAD", path) }));
+}
+
+// The commit a proposal was generated against -- recorded alongside
+// it so that if HEAD has moved by the time it's actually committed,
+// the real base for a 3-way merge is known rather than assumed.
+function currentHeadSha(resolved: ResolvedRepo): string {
+  return execFileSync("git", ["-C", resolved.repoDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 }
 
 interface ParsedFileProposal {
@@ -169,6 +177,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     // across retries was the same bug class as currentRepoFiles
     // reading the working tree: feeding the model outdated context
     // instead of giving it a real chance to account for what changed.
+    const baseCommit = currentHeadSha(resolved);
     const files = currentRepoFiles(resolved);
     const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
     const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}`;
@@ -184,7 +193,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
         lane_id: laneId,
         kind: "submit_changeset",
         from: agent,
-        payload: { files: proposal.files, message: proposal.message, summary: proposal.summary },
+        payload: { files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit },
         depends_on: [theAsk.id],
       });
       await callTool("ask_answer", {
@@ -218,6 +227,7 @@ interface ChangesetPayload {
   files: { path: string; content: string }[];
   message: string;
   summary: string;
+  baseCommit: string;
 }
 
 const SUMMARIZE_SYSTEM_PROMPT = `You describe code for a project's changelog. You never call tools or write JSON -- only plain text in the exact format below.
@@ -247,25 +257,56 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   }
 
   const payload = theAsk.payload as ChangesetPayload;
+
+  // A real line-level 3-way merge first (git's own merge-file), not
+  // symbol-name comparison -- most "conflicts" aren't conflicts at
+  // all once you look at lines: a different file, or different lines
+  // of the same file, merge cleanly with zero model involvement.
+  // checkNoDroppedExports (inside commit_changeset) stays as a
+  // last-resort safety net below, but shouldn't normally fire anymore.
+  const merge = threeWayMerge(resolved.repoDir, payload.baseCommit, payload.files);
+  if (!merge.clean) {
+    const reason = `line-level conflict in: ${merge.conflicts.map((c) => c.path).join(", ")}`;
+    await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason } });
+    // The original "work" ask's own description (not just the
+    // rejected diff) -- lets the resolver treat this as a normal
+    // additive task for whatever wasn't already resolved by the merge.
+    const originLane = readLane(resolved.stateDir, laneId);
+    const originAskId = theAsk.depends_on?.[0];
+    const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
+    const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
+    await callTool("ask_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "resolve_conflict",
+      from: agent,
+      payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary },
+      depends_on: [],
+    });
+    onLog(`[scripted] ${reason} -- denied ${theAsk.id}, posted resolve_conflict`);
+    return;
+  }
+
   try {
-    onLog(`[scripted] committing ${payload.files.map((f) => f.path).join(", ")}`);
+    const files = merge.files; // the proposal's files, or the merged result if something landed in the meantime
+    onLog(`[scripted] committing ${files.map((f) => f.path).join(", ")}`);
     const commitResult = (await callTool("commit_changeset", {
       repo: resolved.slug,
-      files: payload.files,
+      files,
       message: payload.message,
       author_name: theAsk.from,
       author_email: `${theAsk.from}@local`,
     })) as { commitOid: string };
     const commitOid = commitResult.commitOid;
 
-    const prompt = `Repo: ${resolved.slug}\nCommit: ${commitOid}\nCommit message: ${payload.message}\nChange summary (from the contributor): ${payload.summary}\n\nFiles:\n${payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`;
+    const prompt = `Repo: ${resolved.slug}\nCommit: ${commitOid}\nCommit message: ${payload.message}\nChange summary (from the contributor): ${payload.summary}\n\nFiles:\n${files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`;
     const text = await generateText(backend, SUMMARIZE_SYSTEM_PROMPT, prompt);
     const { perFile, changeset } = parseSummaries(text);
 
     const now = new Date().toISOString();
     const source = [{ kind: "commit" as const, ref: commitOid, title: payload.message, author: theAsk.from, at: now }];
     const rungs = [
-      ...payload.files.map((f) => ({
+      ...files.map((f) => ({
         path: f.path,
         kind: "file" as const,
         summary: perFile.get(f.path) ?? payload.summary,
@@ -277,7 +318,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
         kind: "changeset" as const,
         summary: changeset || payload.summary,
         sources: source,
-        children: payload.files.map((f) => ({
+        children: files.map((f) => ({
           path: `changesets/${commitOid}/${f.path}`,
           kind: "filechange" as const,
           summary: perFile.get(f.path) ?? payload.summary,
@@ -299,67 +340,42 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: message } });
-    // A real race (another change landed first; this proposal was
-    // based on the now-stale snapshot), not a bug in the proposal
-    // itself -- post it as a visible, claimable ask rather than
-    // silently discarding or blindly retrying from scratch, so
-    // whoever resolves it can reconcile the two instead of just
-    // re-deriving the original task and re-dropping whatever landed.
-    const isConflict = err instanceof Error && (err as { conflict?: boolean }).conflict === true;
-    if (isConflict) {
-      // The original "work" ask's own description (not just the
-      // rejected diff) -- lets the resolver treat this as the same
-      // "add X to the current file" task that already works reliably,
-      // with the rejected proposal as a reference draft, rather than
-      // a much harder "merge these two file blobs together" task.
-      const originLane = readLane(resolved.stateDir, laneId);
-      const originAskId = theAsk.depends_on?.[0];
-      const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
-      const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
-      await callTool("ask_post", {
-        repo: resolved.slug,
-        lane_id: laneId,
-        kind: "resolve_conflict",
-        from: agent,
-        payload: { originalDescription, originalFiles: payload.files, originalMessage: payload.message, originalSummary: payload.summary, reason: message },
-        depends_on: [],
-      });
-      onLog(`[scripted] conflict (another change landed first) -- denied ${theAsk.id}, posted resolve_conflict`);
-    } else {
-      onLog(`[scripted] failed to commit/write the Ladder, denied ${theAsk.id}: ${message}`);
-    }
+    onLog(`[scripted] failed to commit/write the Ladder, denied ${theAsk.id}: ${message}`);
   }
 }
 
 interface ResolveConflictPayload {
   originalDescription: string;
-  originalFiles: { path: string; content: string }[];
-  originalMessage: string;
-  originalSummary: string;
-  reason: string;
+  /** Files the 3-way merge already resolved cleanly -- unchanged, just need to ride along in the eventual commit. */
+  cleanFiles: { path: string; content: string }[];
+  /** Files with a genuine line-level overlap -- markedContent has git's own <<<<<<</=======/>>>>>>> (and ||||||| base, via --diff3) markers. */
+  conflicts: { path: string; markedContent: string }[];
+  message: string;
+  summary: string;
 }
 
-// Framed as the SAME additive task PROPOSE_SYSTEM_PROMPT already
-// handles reliably ("here is the current file, add X to it"), not as
-// a "merge two file blobs together" task -- observed directly
-// (gpt-oss-120b): asked to reconcile two full file versions, it
-// anchored on its own rejected draft and dropped an unrelated export
-// from the current file identically on both attempts, even when told
-// exactly which name it had dropped. The current file is the one
-// source of truth being extended; the rejected draft is a reference
-// for what to add, not a second version to merge in.
-const RESOLVE_CONFLICT_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. Someone else's change landed in the repo first, so a colleague's draft for a different change (based on the old state) was rejected -- it would have dropped the other change. Your job is the same as any other task: add the colleague's change to the CURRENT file, which you must treat as the one source of truth and preserve in full. The colleague's draft below is a reference for WHAT to add, not a file version to merge in.
+// A narrow task -- resolve the few marked lines, not regenerate a
+// whole file from two divergent versions (which proved unreliable
+// even in the trivial additive case: a model asked to "reconcile" two
+// full blobs dropped an unrelated export identically on every retry).
+// threeWayMerge already did everything a real line-level merge can do
+// automatically; a model only ever sees this for a genuine overlap,
+// with git's own --diff3 markers showing base/ours/theirs inline.
+const RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. One or more files have a real git merge conflict -- two changes touched the exact same lines. You never call tools or write JSON here -- you only write plain text in the exact format below.
 
-You never call tools or write JSON here -- you only write plain text in the exact format below.
+Each conflicted file below has git's own conflict markers:
+<<<<<<< ours        -- what's currently in the repo
+||||||| base        -- what both sides started from
+=======
+>>>>>>> theirs      -- the other proposal
 
-Output format, exactly:
-SUMMARY: <one sentence describing the change>
-MESSAGE: <a short git commit message>
+Resolve each conflict by combining both sides' intent where possible -- don't just pick one side and discard the other unless they're truly incompatible. Remove all markers from your output; output the file's complete resolved content.
+
+Output format, exactly, one block per conflicted file:
 FILE: <path, relative to the repo root>
 \`\`\`
-<the file's FULL new content -- everything the CURRENT file already has, plus the addition>
+<the file's FULL resolved content, no conflict markers>
 \`\`\`
-(one FILE block per file that needs to end up changed)
 
 Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
 
@@ -370,39 +386,34 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
   }
 
   const payload = theAsk.payload as ResolveConflictPayload;
-  const originalBlob = payload.originalFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  const conflictBlob = payload.conflicts.map((c) => `--- ${c.path} (has conflict markers) ---\n${c.markedContent}`).join("\n\n");
+  const userPrompt = `Repo: ${resolved.slug}\nTask this change is part of: ${payload.originalDescription}\n\n${conflictBlob}`;
 
   let lastFailure = "";
-  const systemPrompt = RESOLVE_CONFLICT_SYSTEM_PROMPT;
   for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
-    // Re-read on every attempt -- see the matching comment in
-    // runContributorWorkAsk. Especially relevant here: this whole flow
-    // exists because HEAD moved once already; it can move again
-    // between retries.
-    const currentFiles = currentRepoFiles(resolved);
-    const currentBlob = currentFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-    const userPrompt = `Repo: ${resolved.slug}\n\nTask: ${payload.originalDescription}\n\nCURRENT files (the one source of truth -- preserve everything in these):\n${currentBlob}\n\nA colleague's rejected draft, for reference on what to add (do not copy its version of files that already exist above -- only reuse the new parts it added):\n${originalBlob}`;
-    const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous reconciled proposal's test run failed:\n${lastFailure}`;
-    onLog(`[scripted] generating reconciled files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
-    const text = await generateText(backend, systemPrompt, promptForAttempt);
-    const proposal = parseFileProposal(text);
-    onLog(`[scripted] reconciled ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
-    const result = await verifyProposal(resolved, proposal.files);
+    const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous resolution's test run failed:\n${lastFailure}`;
+    onLog(`[scripted] resolving ${payload.conflicts.length} conflict(s) (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
+    const text = await generateText(backend, RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT, promptForAttempt);
+    const resolvedConflicts = parseFileProposal(text);
+    const allFiles = [...payload.cleanFiles, ...resolvedConflicts.files];
+    onLog(`[scripted] resolved ${resolvedConflicts.files.map((f) => f.path).join(", ")} -- verifying full set`);
+    const result = await verifyProposal(resolved, allFiles);
     if (result.exitCode === 0) {
+      const baseCommit = currentHeadSha(resolved);
       await callTool("ask_post", {
         repo: resolved.slug,
         lane_id: laneId,
         kind: "submit_changeset",
         from: agent,
-        payload: { files: proposal.files, message: proposal.message, summary: proposal.summary },
+        payload: { files: allFiles, message: payload.message, summary: payload.summary, baseCommit },
         depends_on: [theAsk.id],
       });
-      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "complete", payload: { summary: proposal.summary } });
-      onLog(`[scripted] reconciled sandbox passed -- posted submit_changeset and answered ${theAsk.id} complete`);
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "complete", payload: { summary: payload.summary } });
+      onLog(`[scripted] conflict resolution passed -- posted submit_changeset and answered ${theAsk.id} complete`);
       return;
     }
     lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
-    onLog(`[scripted] reconciled sandbox failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
+    onLog(`[scripted] resolution failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
   }
 
   await callTool("ask_answer", {
@@ -411,7 +422,7 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
     ask_id: theAsk.id,
     actor: agent,
     action: "deny",
-    payload: { reason: `sandbox verification failed after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` },
+    payload: { reason: `conflict resolution failed verification after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` },
   });
-  onLog(`[scripted] gave up reconciling after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}`);
+  onLog(`[scripted] gave up resolving conflict after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}`);
 }
