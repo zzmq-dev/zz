@@ -11,9 +11,15 @@ import { DurableObject } from "cloudflare:workers";
 import { withBackend } from "../../engine/backend.js";
 import { ask, answer, proposeLane } from "../../engine/lane.js";
 import { createDoLaneBackend } from "./doLaneBackend.js";
+import { commitChangesetOnArtifacts, readFileAtCommit, type ArtifactsNamespace } from "./cloudflareGitBackend.js";
+import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import type { AskEntry, AskKind, Lane, LaneRef } from "../../engine/types.js";
 
-export class MaintainerDO extends DurableObject {
+interface Env {
+  ARTIFACTS: ArtifactsNamespace;
+}
+
+export class MaintainerDO extends DurableObject<Env> {
   private backend = createDoLaneBackend(this.ctx.storage);
   // This DO's own identity doubles as the "repo" key engine/lane.ts's
   // functions expect -- irrelevant to doLaneBackend (one DO instance
@@ -39,5 +45,30 @@ export class MaintainerDO extends DurableObject {
 
   async listLanes(): Promise<Lane[]> {
     return withBackend(this.backend, () => this.backend.listLanes(this.repo));
+  }
+
+  // Git content: not yet folded into `this.backend` as a full Backend
+  // (the Ladder/notes side isn't built yet -- see cloudflareGitBackend.ts's
+  // header), so these are called directly rather than through
+  // engine/lane.ts. `artifactsName`/`remote` are passed explicitly by
+  // the caller (it already has them from creating/looking up the
+  // repo) rather than this DO tracking its own Artifacts identity.
+  async commitChangeset(artifactsName: string, remote: string, input: { files: ChangesetFile[]; message: string; author: CommitAuthor }): Promise<string> {
+    const repo = await this.env.ARTIFACTS.get(artifactsName);
+    const token = await repo.createToken("write", 3600);
+    try {
+      return await commitChangesetOnArtifacts(artifactsName, remote, token, repo, input);
+    } finally {
+      repo[Symbol.dispose]?.();
+    }
+  }
+
+  async readFileAtCommit(artifactsName: string, commitHash: string, path: string): Promise<string> {
+    const repo = await this.env.ARTIFACTS.get(artifactsName);
+    try {
+      return await readFileAtCommit(repo, commitHash, path);
+    } finally {
+      repo[Symbol.dispose]?.();
+    }
   }
 }
