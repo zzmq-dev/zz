@@ -51,7 +51,15 @@ export type AskKind =
   // it (engine/changeset.ts's commitChangeset), the same pattern as
   // merge_request granting a Ladder write. No file ever needs to exist
   // on disk before this: the content lives entirely in the payload.
-  | "submit_changeset";
+  | "submit_changeset"
+  // Posted when a submit_changeset is denied specifically because
+  // another change landed first and the proposal, based on a now-stale
+  // snapshot, would have dropped it -- a real concurrency conflict
+  // between two agents' work, not a bug in either one. Payload carries
+  // the original proposal (files/message/summary) and the conflict
+  // reason, so whoever claims this reconciles the two instead of
+  // starting over from the task description alone.
+  | "resolve_conflict";
 
 export interface AskEntry {
   id: string;

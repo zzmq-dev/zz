@@ -20,12 +20,13 @@
 // verification, submit, commit, Ladder writes, answer) itself, in a
 // fixed order. The model supplies judgment (what the code should say,
 // how to describe it); the code supplies sequencing and structure.
-import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ChatBackend } from "./chatBackend.js";
-import { ALL_TOOLS } from "./tools.js";
+import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { AskEntry } from "../engine/types.js";
+import { readLane } from "../engine/store.js";
+import { fileContentAtCommit } from "../engine/ingest.js";
 
 function findTool(name: string) {
   const tool = ALL_TOOLS.find((t) => t.name === name);
@@ -52,17 +53,24 @@ async function generateText(backend: ChatBackend, systemPrompt: string, userProm
   return message.content;
 }
 
-// All real, small, tracked files -- not git-notes/Ladder paths (those
-// aren't real files to read via fs). Demo-repo sized, so dumping every
-// file's full content is cheap; a larger repo would need this to be
-// selective instead, which is a real limitation worth flagging if this
-// pattern grows beyond the demo repos.
+// Reads HEAD directly (`git ls-tree` + `git show`), never the working
+// tree or index -- commit_changeset commits via git plumbing and never
+// checks out a working copy (confirmed directly: the real on-disk
+// files stay stale after every commit, and the index itself can be
+// left in a half-updated state). Reading the working tree here was a
+// real bug: it fed the model stale "current file" content on every
+// call, which is the actual reason multiple concurrent proposals kept
+// colliding on the same file in the first place, not a model
+// limitation. Demo-repo sized, so dumping every file's full content is
+// cheap; a larger repo would need this to be selective instead, which
+// is a real limitation worth flagging if this pattern grows beyond the
+// demo repos.
 function currentRepoFiles(resolved: ResolvedRepo): { path: string; content: string }[] {
-  const listing = execFileSync("git", ["-C", resolved.repoDir, "ls-files"], { encoding: "utf8" });
+  const listing = execFileSync("git", ["-C", resolved.repoDir, "ls-tree", "-r", "HEAD", "--name-only"], { encoding: "utf8" });
   return listing
     .split("\n")
     .filter(Boolean)
-    .map((path) => ({ path, content: readFileSync(`${resolved.repoDir}/${path}`, "utf8") }));
+    .map((path) => ({ path, content: fileContentAtCommit(resolved.repoDir, "HEAD", path) }));
 }
 
 interface ParsedFileProposal {
@@ -93,6 +101,24 @@ function parseFileProposal(text: string): ParsedFileProposal {
     message: messageMatch?.[1]?.trim() ?? files.map((f) => f.path).join(", "),
     files,
   };
+}
+
+// Checked before the sandbox, not just left to whatever tests happen
+// to exist -- observed directly (gpt-oss-120b resolving a conflict):
+// told explicitly to preserve everything in the current files, it
+// still silently dropped an unrelated exported function from its
+// "merged" index.js. A test suite only catches that if something
+// happens to exercise the dropped export; this catches it either way,
+// and fails fast (no sandbox worktree needed) with a precise reason
+// the model can act on, the same check commit_changeset itself runs.
+async function verifyProposal(resolved: ResolvedRepo, files: { path: string; content: string }[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const dropProblem = checkNoDroppedExports(resolved.repoDir, files);
+  if (dropProblem) return { exitCode: 1, stdout: "", stderr: dropProblem };
+  return (await callTool("run_in_sandbox", {
+    repos: [{ repo: resolved.slug, files }],
+    command: "node --test",
+    cwd: resolved.slug,
+  })) as { exitCode: number; stdout: string; stderr: string };
 }
 
 const PROPOSE_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. You never call tools or write JSON here -- you only write plain text in the exact format below, and the surrounding system parses it and handles every protocol step (claiming, testing, submitting) itself.
@@ -131,25 +157,27 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
 
-  const files = currentRepoFiles(resolved);
-  const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
-  const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}`;
 
   let proposal: ParsedFileProposal;
   let systemPrompt = PROPOSE_SYSTEM_PROMPT;
-  let promptForAttempt = userPrompt;
   let lastFailure = "";
   for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
+    // Re-read on every attempt, not just once before the loop -- HEAD
+    // can genuinely move between attempts (another agent's commit
+    // landing while this one retries), and reusing a stale snapshot
+    // across retries was the same bug class as currentRepoFiles
+    // reading the working tree: feeding the model outdated context
+    // instead of giving it a real chance to account for what changed.
+    const files = currentRepoFiles(resolved);
+    const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+    const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}`;
+    const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}`;
     onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
     const text = await generateText(backend, systemPrompt, promptForAttempt);
     proposal = parseFileProposal(text);
-    onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying in sandbox`);
-    const result = (await callTool("run_in_sandbox", {
-      repos: [{ repo: resolved.slug, files: proposal.files }],
-      command: "node --test",
-      cwd: resolved.slug,
-    })) as { exitCode: number; stdout: string; stderr: string };
+    onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
+    const result = await verifyProposal(resolved, proposal.files);
     if (result.exitCode === 0) {
       await callTool("ask_post", {
         repo: resolved.slug,
@@ -173,7 +201,6 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
     onLog(`[scripted] sandbox failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
     systemPrompt = FIX_SYSTEM_PROMPT;
-    promptForAttempt = `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}`;
   }
 
   await callTool("ask_answer", {
@@ -272,6 +299,119 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: message } });
-    onLog(`[scripted] failed to commit/write the Ladder, denied ${theAsk.id}: ${message}`);
+    // A real race (another change landed first; this proposal was
+    // based on the now-stale snapshot), not a bug in the proposal
+    // itself -- post it as a visible, claimable ask rather than
+    // silently discarding or blindly retrying from scratch, so
+    // whoever resolves it can reconcile the two instead of just
+    // re-deriving the original task and re-dropping whatever landed.
+    const isConflict = err instanceof Error && (err as { conflict?: boolean }).conflict === true;
+    if (isConflict) {
+      // The original "work" ask's own description (not just the
+      // rejected diff) -- lets the resolver treat this as the same
+      // "add X to the current file" task that already works reliably,
+      // with the rejected proposal as a reference draft, rather than
+      // a much harder "merge these two file blobs together" task.
+      const originLane = readLane(resolved.stateDir, laneId);
+      const originAskId = theAsk.depends_on?.[0];
+      const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
+      const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
+      await callTool("ask_post", {
+        repo: resolved.slug,
+        lane_id: laneId,
+        kind: "resolve_conflict",
+        from: agent,
+        payload: { originalDescription, originalFiles: payload.files, originalMessage: payload.message, originalSummary: payload.summary, reason: message },
+        depends_on: [],
+      });
+      onLog(`[scripted] conflict (another change landed first) -- denied ${theAsk.id}, posted resolve_conflict`);
+    } else {
+      onLog(`[scripted] failed to commit/write the Ladder, denied ${theAsk.id}: ${message}`);
+    }
   }
+}
+
+interface ResolveConflictPayload {
+  originalDescription: string;
+  originalFiles: { path: string; content: string }[];
+  originalMessage: string;
+  originalSummary: string;
+  reason: string;
+}
+
+// Framed as the SAME additive task PROPOSE_SYSTEM_PROMPT already
+// handles reliably ("here is the current file, add X to it"), not as
+// a "merge two file blobs together" task -- observed directly
+// (gpt-oss-120b): asked to reconcile two full file versions, it
+// anchored on its own rejected draft and dropped an unrelated export
+// from the current file identically on both attempts, even when told
+// exactly which name it had dropped. The current file is the one
+// source of truth being extended; the rejected draft is a reference
+// for what to add, not a second version to merge in.
+const RESOLVE_CONFLICT_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. Someone else's change landed in the repo first, so a colleague's draft for a different change (based on the old state) was rejected -- it would have dropped the other change. Your job is the same as any other task: add the colleague's change to the CURRENT file, which you must treat as the one source of truth and preserve in full. The colleague's draft below is a reference for WHAT to add, not a file version to merge in.
+
+You never call tools or write JSON here -- you only write plain text in the exact format below.
+
+Output format, exactly:
+SUMMARY: <one sentence describing the change>
+MESSAGE: <a short git commit message>
+FILE: <path, relative to the repo root>
+\`\`\`
+<the file's FULL new content -- everything the CURRENT file already has, plus the addition>
+\`\`\`
+(one FILE block per file that needs to end up changed)
+
+Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
+
+export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<void> {
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  if (!alreadyClaimed) {
+    await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+  }
+
+  const payload = theAsk.payload as ResolveConflictPayload;
+  const originalBlob = payload.originalFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+
+  let lastFailure = "";
+  const systemPrompt = RESOLVE_CONFLICT_SYSTEM_PROMPT;
+  for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
+    // Re-read on every attempt -- see the matching comment in
+    // runContributorWorkAsk. Especially relevant here: this whole flow
+    // exists because HEAD moved once already; it can move again
+    // between retries.
+    const currentFiles = currentRepoFiles(resolved);
+    const currentBlob = currentFiles.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+    const userPrompt = `Repo: ${resolved.slug}\n\nTask: ${payload.originalDescription}\n\nCURRENT files (the one source of truth -- preserve everything in these):\n${currentBlob}\n\nA colleague's rejected draft, for reference on what to add (do not copy its version of files that already exist above -- only reuse the new parts it added):\n${originalBlob}`;
+    const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous reconciled proposal's test run failed:\n${lastFailure}`;
+    onLog(`[scripted] generating reconciled files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
+    const text = await generateText(backend, systemPrompt, promptForAttempt);
+    const proposal = parseFileProposal(text);
+    onLog(`[scripted] reconciled ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
+    const result = await verifyProposal(resolved, proposal.files);
+    if (result.exitCode === 0) {
+      await callTool("ask_post", {
+        repo: resolved.slug,
+        lane_id: laneId,
+        kind: "submit_changeset",
+        from: agent,
+        payload: { files: proposal.files, message: proposal.message, summary: proposal.summary },
+        depends_on: [theAsk.id],
+      });
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "complete", payload: { summary: proposal.summary } });
+      onLog(`[scripted] reconciled sandbox passed -- posted submit_changeset and answered ${theAsk.id} complete`);
+      return;
+    }
+    lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
+    onLog(`[scripted] reconciled sandbox failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
+  }
+
+  await callTool("ask_answer", {
+    repo: resolved.slug,
+    lane_id: laneId,
+    ask_id: theAsk.id,
+    actor: agent,
+    action: "deny",
+    payload: { reason: `sandbox verification failed after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` },
+  });
+  onLog(`[scripted] gave up reconciling after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}`);
 }

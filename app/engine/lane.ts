@@ -168,6 +168,7 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open"> = {
   summarize_changeset: "open",
   work: "open",
   submit_changeset: "coordinator",
+  resolve_conflict: "open",
 };
 
 /**

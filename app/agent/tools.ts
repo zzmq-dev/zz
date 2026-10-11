@@ -441,7 +441,7 @@ function extractExportedNames(content: string): Set<string> {
   return names;
 }
 
-function checkNoDroppedExports(repoDir: string, files: ChangesetFile[]): string | null {
+export function checkNoDroppedExports(repoDir: string, files: ChangesetFile[]): string | null {
   for (const f of files) {
     const before = fileContentAtCommit(repoDir, "HEAD", f.path);
     if (!before.trim()) continue; // new file, nothing to preserve
@@ -475,7 +475,12 @@ const commitChangesetTool: ToolDef = {
     if (problem) throw new Error(problem);
     const r = resolveRepo(repo as string);
     const dropProblem = checkNoDroppedExports(r.repoDir, files as ChangesetFile[]);
-    if (dropProblem) throw new Error(dropProblem);
+    // A structural signal (matching the `resolved: true` pattern on the
+    // duplicate-answer error below), not just phrasing -- lets a caller
+    // (agent/scriptedWork.ts) tell "this is a real race with another
+    // change that landed in the meantime" apart from any other failure,
+    // without parsing the message text.
+    if (dropProblem) throw Object.assign(new Error(dropProblem), { conflict: true });
     const commitOid = await commitChangeset(r.repoDir, {
       files: files as ChangesetFile[],
       message: message as string,
