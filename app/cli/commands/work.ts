@@ -31,7 +31,12 @@ import { enterFullscreen } from "../../tui/fullscreen.js";
 export type Provider = "ollama" | "gemini";
 
 export function resolveBackend(provider: Provider, model?: string): ChatBackend {
-  if (provider === "gemini") return createGeminiBackend(model ?? process.env.GEMINI_MODEL ?? "gemini-2.0-flash");
+  // gemini-2.0-flash and gemini-2.5-flash are both retired for new API
+  // keys as of this writing (confirmed directly: 404 "no longer
+  // available to new users") -- gemini-3.8-flash is what Google's own
+  // error message steers new keys toward, and the one actually
+  // verified working against a real key.
+  if (provider === "gemini") return createGeminiBackend(model ?? process.env.GEMINI_MODEL ?? "gemini-3.8-flash");
   const baseUrl = process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
   return createOllamaBackend(model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct", baseUrl);
 }

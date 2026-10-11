@@ -20,7 +20,7 @@ function toGeminiTools(tools: ToolDef[]) {
 
 interface GeminiPart {
   text?: string;
-  functionCall?: { name: string; args: Record<string, unknown> };
+  functionCall?: { name: string; args: Record<string, unknown>; thoughtSignature?: string };
   functionResponse?: { name: string; response: Record<string, unknown> };
 }
 
@@ -49,7 +49,12 @@ function toGeminiContents(messages: ChatMessage[]): { systemInstruction: { parts
     const parts: GeminiPart[] = [];
     if (m.content) parts.push({ text: m.content });
     for (const call of m.tool_calls ?? []) {
-      parts.push({ functionCall: { name: call.function.name, args: call.function.arguments } });
+      // Prefer replaying the exact functionCall part Gemini gave us
+      // (thoughtSignature and all) over reconstructing one -- a
+      // reconstructed call missing thoughtSignature is a real,
+      // confirmed 400 from the API, not just a quality nit.
+      const raw = call.raw as GeminiPart["functionCall"] | undefined;
+      parts.push({ functionCall: raw ?? { name: call.function.name, args: call.function.arguments } });
     }
     contents.push({ role: m.role === "assistant" ? "model" : "user", parts });
   }
@@ -62,7 +67,7 @@ function fromGeminiResponse(data: { candidates?: { content?: { parts?: GeminiPar
   const toolCalls: NonNullable<ChatMessage["tool_calls"]> = [];
   for (const p of parts) {
     if (p.text) content += p.text;
-    if (p.functionCall) toolCalls.push({ function: { name: p.functionCall.name, arguments: p.functionCall.args } });
+    if (p.functionCall) toolCalls.push({ function: { name: p.functionCall.name, arguments: p.functionCall.args }, raw: p.functionCall });
   }
   return { role: "assistant", content, tool_calls: toolCalls.length ? toolCalls : undefined };
 }

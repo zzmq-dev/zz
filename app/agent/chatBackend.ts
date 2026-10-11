@@ -8,7 +8,19 @@ import type { ToolDef } from "./tools.js";
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
-  tool_calls?: { function: { name: string; arguments: Record<string, unknown> } }[];
+  tool_calls?: {
+    function: { name: string; arguments: Record<string, unknown> };
+    /**
+     * A backend's own opaque per-call metadata, round-tripped back to
+     * that same backend unchanged on the next turn -- needed for
+     * Gemini specifically, whose API rejects a reconstructed
+     * functionCall that's missing the `thoughtSignature` it returned
+     * the first time (confirmed directly: a real 400 "Function call is
+     * missing a thought_signature" error). Other backends (Ollama)
+     * never set or read this.
+     */
+    raw?: unknown;
+  }[];
   /** Which tool this result is for, on a "tool"-role message -- Ollama doesn't need it (matches by array order), Gemini's functionResponse does (matches by name). */
   name?: string;
 }

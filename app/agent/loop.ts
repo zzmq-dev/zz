@@ -79,6 +79,36 @@ export interface RunAgentResult {
 }
 
 const MAX_GIVE_UP_NUDGES = 2;
+const MAX_BACKEND_RETRIES = 3;
+const BACKEND_RETRY_DELAYS_MS = [3000, 8000, 15000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A remote backend can fail transiently (rate limit, "high demand"
+// 503s -- observed directly against Gemini's free tier) in ways a
+// local one rarely does once it's loaded. An uncaught failure used to
+// crash the entire zz work process, not just this one attempt --
+// bounded retry with backoff first; null means give up on this
+// attempt (not the process) once that's exhausted.
+async function chatWithRetry(backend: ChatBackend, messages: ChatMessage[], tools: ToolDef[], onPartial: ((text: string) => void) | undefined, turn: number, log: (line: string) => void): Promise<ChatMessage | null> {
+  for (let attempt = 1; attempt <= MAX_BACKEND_RETRIES; attempt++) {
+    try {
+      return await backend.chat(messages, tools, onPartial);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt === MAX_BACKEND_RETRIES) {
+        log(`[turn ${turn}] ${backend.name} failed after ${MAX_BACKEND_RETRIES} attempts, giving up on this attempt: ${msg}`);
+        return null;
+      }
+      const delay = BACKEND_RETRY_DELAYS_MS[attempt - 1] ?? BACKEND_RETRY_DELAYS_MS[BACKEND_RETRY_DELAYS_MS.length - 1];
+      log(`[turn ${turn}] ${backend.name} failed (attempt ${attempt}/${MAX_BACKEND_RETRIES}), retrying in ${delay / 1000}s: ${msg}`);
+      await sleep(delay);
+    }
+  }
+  return null;
+}
 
 export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
   const maxTurns = opts.maxTurns ?? 40;
@@ -102,7 +132,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     // "is this stuck?" into a concrete, comparable number across turns.
     log(`[turn ${turn}] waiting for ${opts.backend.name}...`);
     const turnStart = Date.now();
-    const message = await opts.backend.chat(messages, opts.tools, opts.onPartial);
+    const message = await chatWithRetry(opts.backend, messages, opts.tools, opts.onPartial, turn, log);
+    if (!message) return { turns: turn, finished: false, finalMessage: "" };
     log(`[turn ${turn}] got a response in ${((Date.now() - turnStart) / 1000).toFixed(1)}s`);
     messages.push(message);
 
