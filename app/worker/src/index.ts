@@ -11,6 +11,7 @@ import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
 import { MaintainerDO } from "./MaintainerDO.js";
 import { commitChangesetOnArtifacts, readFileAtCommit } from "./cloudflareGitBackend.js";
+import { writeRung, readRung } from "./cloudflareLadderBackend.js";
 
 export { MaintainerDO };
 
@@ -31,6 +32,7 @@ interface ArtifactsCommit {
 }
 
 interface ArtifactsRepo extends Disposable {
+  info(): Promise<unknown>;
   createToken(scope?: "read" | "write", ttl?: number): Promise<{ plaintext: string; expiresAt?: string }>;
   readCommit(hash: string): Promise<ArtifactsCommit | null>;
   readTree(hash: string): Promise<{ name: string; hash: string; type: string; mode: string }[] | null>;
@@ -146,11 +148,121 @@ async function testDoChangeset(env: Env): Promise<Response> {
   }
 }
 
+async function testLadder(env: Env): Promise<Response> {
+  const repoName = "ladder-proof-" + Date.now();
+  const steps: Record<string, unknown> = {};
+  try {
+    const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
+    const fs = createMemFs();
+    const dir = "/seed";
+    await git.init({ fs, dir, defaultBranch: "main" });
+    const blobOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n") });
+    const treeOid = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "clamp.js", oid: blobOid, type: "blob" }] });
+    const person = { name: "seed", email: "seed@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+    const seedCommitOid = await git.writeCommit({ fs, dir, commit: { message: "seed", tree: treeOid, parent: [], author: person, committer: person } });
+    await git.writeRef({ fs, dir, ref: "refs/heads/main", value: seedCommitOid, force: true });
+    const seedToken = tokenString(created.token);
+    await git.push({ fs, http, dir, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: seedToken }), ref: "main", remoteRef: "main" });
+    steps.seeded = seedCommitOid;
+
+    using repo = await env.ARTIFACTS.get(repoName);
+    const writeToken = await repo.createToken("write", 3600);
+
+    // Write a "file" rung (anchored to clamp.js's blob at HEAD).
+    await writeRung(created.remote, writeToken, repo, {
+      path: "clamp.js",
+      kind: "file",
+      summary: "Exports clamp(value, min, max).",
+      sources: [{ kind: "commit", ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }],
+      children: [],
+    });
+    steps.wroteFileRung = true;
+
+    // Write a "changeset" rung (anchored to the commit itself) with an embedded filechange child.
+    await writeRung(created.remote, writeToken, repo, {
+      path: `changesets/${seedCommitOid}`,
+      kind: "changeset",
+      summary: "Initial seed commit.",
+      sources: [{ kind: "commit", ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }],
+      children: [
+        {
+          path: `changesets/${seedCommitOid}/clamp.js`,
+          kind: "filechange",
+          summary: "Added clamp.js.",
+          sources: [{ kind: "commit", ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }],
+          children: [],
+        },
+      ],
+    });
+    steps.wroteChangesetRung = true;
+
+    // A SECOND file rung on the SAME notes ref ("code") as clamp.js's,
+    // via a completely separate repo handle/token -- the real test of
+    // whether the scoped-fetch-before-write actually prevents data
+    // loss, not just that a single write works (which force:true
+    // could satisfy even while silently clobbering).
+    using repoForSecondWrite = await env.ARTIFACTS.get(repoName);
+    const secondToken = await repoForSecondWrite.createToken("write", 3600);
+    // Seed a second file on main so it has a real blob to anchor to.
+    const fs2 = createMemFs();
+    const dir2 = "/second";
+    await git.init({ fs: fs2, dir: dir2, defaultBranch: "main" });
+    await git.addRemote({ fs: fs2, dir: dir2, remote: "origin", url: created.remote });
+    const fetchMain = await git.fetch({ fs: fs2, http, dir: dir2, remote: "origin", onAuth: () => ({ username: "x-token-auth", password: tokenString(secondToken) }), ref: "main", singleBranch: true, depth: 1 });
+    await git.writeRef({ fs: fs2, dir: dir2, ref: "refs/heads/main", value: fetchMain.fetchHead!, force: true });
+    const clampBlob = (await git.readTree({ fs: fs2, dir: dir2, oid: fetchMain.fetchHead!, filepath: "" })).tree.find((e) => e.path === "clamp.js")!.oid;
+    const otherBlob = await git.writeBlob({ fs: fs2, dir: dir2, blob: new TextEncoder().encode("export function other(){}\n") });
+    const newTree = await git.writeTree({ fs: fs2, dir: dir2, tree: [{ mode: "100644", path: "clamp.js", oid: clampBlob, type: "blob" }, { mode: "100644", path: "other.js", oid: otherBlob, type: "blob" }] });
+    const personSecond = { name: "second", email: "second@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+    const secondCommitOid = await git.writeCommit({ fs: fs2, dir: dir2, commit: { message: "add other.js", tree: newTree, parent: [fetchMain.fetchHead!], author: personSecond, committer: personSecond } });
+    await git.writeRef({ fs: fs2, dir: dir2, ref: "refs/heads/main", value: secondCommitOid, force: true });
+    await git.push({ fs: fs2, http, dir: dir2, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: tokenString(secondToken) }), ref: "main", remoteRef: "main" });
+
+    using repoForSecondRung = await env.ARTIFACTS.get(repoName);
+    const thirdToken = await repoForSecondRung.createToken("write", 3600);
+    await writeRung(created.remote, thirdToken, repoForSecondRung, {
+      path: "other.js",
+      kind: "file",
+      summary: "Exports other().",
+      sources: [{ kind: "commit", ref: secondCommitOid, title: "add other.js", author: "second", at: new Date().toISOString() }],
+      children: [],
+    });
+    steps.wroteSecondFileRung = true;
+
+    // Read both back -- fresh repo handle, fresh scoped checkout, no shared state with the writes above.
+    using repo2 = await env.ARTIFACTS.get(repoName);
+    const readToken = await repo2.createToken("read", 3600);
+    steps.readFileRung = await readRung(created.remote, readToken, repo2, "file", "clamp.js");
+    steps.readSecondFileRung = await readRung(created.remote, readToken, repo2, "file", "other.js");
+    steps.readChangesetRung = await readRung(created.remote, readToken, repo2, "changeset", `changesets/${seedCommitOid}`, seedCommitOid);
+
+    await env.ARTIFACTS.delete(repoName);
+    steps.cleanedUp = true;
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+  }
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     if (new URL(req.url).pathname === "/do-test") return testMaintainerDo(env);
+    if (new URL(req.url).pathname === "/ladder-test") return testLadder(env);
     if (new URL(req.url).pathname === "/changeset-test") return testChangesetCommit(env);
     if (new URL(req.url).pathname === "/do-changeset-test") return testDoChangeset(env);
+    if (new URL(req.url).pathname === "/notes-native-test") {
+      try {
+        using repo = await env.ARTIFACTS.get("notes-test2");
+        const info = await repo.info();
+        const logMain = await repo.log({ ref: "main", limit: 5 });
+        const logNotes1 = await repo.log({ ref: "notes/zz/ladder/code", limit: 5 });
+        const logNotes2 = await repo.log({ ref: "refs/notes/zz/ladder/code", limit: 5 });
+        return Response.json({ ok: true, info, logMain, logNotes1, logNotes2 });
+      } catch (err) {
+        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      }
+    }
     if (new URL(req.url).pathname === "/do-read") {
       const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName("zz-demo/do-test"));
       return Response.json({ lane: await stub.readLane("_repo") });
