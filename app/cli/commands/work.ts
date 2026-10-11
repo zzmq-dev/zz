@@ -14,9 +14,7 @@ import { ensureCloned, resolveRepo, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
 import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
-import { readLane } from "../../engine/store.js";
-import { readAnchor } from "../../engine/ladderNotes.js";
-import { listCommitsChronological } from "../../engine/ingest.js";
+import { resolveBackend as resolveStorageBackend } from "../../engine/backend.js";
 import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js";
 import type { AskEntry } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
@@ -74,18 +72,19 @@ function sleep(ms: number): Promise<void> {
 // root has no note yet", which previously cost several wasted
 // claim/retry turns before an agent worked around it by hand.
 async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
-  let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
+  const storage = resolveStorageBackend();
+  let repoLane = storage.readLane(repo.slug, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
-    const review = ask(repo.stateDir, repoLane.id, { kind: "review_request", from: agent });
-    answer(repo.stateDir, repoLane.id, review, { from: agent, action: "grant" });
+    repoLane = proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
+    const review = ask(repo.slug, repoLane.id, { kind: "review_request", from: agent });
+    answer(repo.slug, repoLane.id, review, { from: agent, action: "grant" });
   }
-  const rootRung = await readAnchor(repo.repoDir, repo.stateDir, REPO_RUNG_PATH);
+  const rootRung = await storage.readAnchor(repo.slug, REPO_RUNG_PATH);
   if (!rootRung) {
-    const commits = listCommitsChronological(repo.repoDir);
+    const commits = storage.listCommits(repo.slug);
     const root = commits[0];
     if (root) {
-      await mergeLaneLadder(repo.repoDir, repo.stateDir, {
+      await mergeLaneLadder(repo.slug, {
         path: REPO_RUNG_PATH,
         kind: "repo",
         summary: `${repo.name}, bootstrapped by "${agent}" via \`zz work\`.`,
@@ -202,7 +201,7 @@ async function runClaimedAsk(
     // model that only describes a plan in prose and then stops has not
     // answered this ask, no matter how confident it sounds.
     isActuallyDone: () => {
-      const lane = readLane(resolved.stateDir, laneId);
+      const lane = resolveStorageBackend().readLane(resolved.slug, laneId);
       return lane?.history.some((e) => e.type === "ANSWER" && e.ask === theAsk.id) ?? false;
     },
   });
@@ -248,7 +247,7 @@ export async function work(options: WorkOptions): Promise<void> {
   let lastIdleLogged: string | null = null;
 
   for (;;) {
-    const claimable = claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug, stateDir: r.stateDir })), config.agent, scope);
+    const claimable = claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
     if (claimable.length === 0) {
       const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
       statusRef.current = msg;

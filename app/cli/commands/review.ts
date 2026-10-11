@@ -10,7 +10,7 @@ import { readConfig } from "../lib/config.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../lib/repo.js";
 import { claimableAcrossRepos } from "../../engine/workqueue.js";
 import { ask, answer } from "../../engine/lane.js";
-import { readLane } from "../../engine/store.js";
+import { resolveBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
 
 export interface ReviewOptions {
@@ -57,7 +57,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   try {
     for (;;) {
       const claimable = claimableAcrossRepos(
-        resolvedRepos.map((r) => ({ repo: r.slug, stateDir: r.stateDir })),
+        resolvedRepos.map((r) => ({ repo: r.slug })),
         config.agent,
       ).filter((c) => c.ask.kind === "changeset_review");
 
@@ -74,17 +74,17 @@ export async function review(options: ReviewOptions): Promise<void> {
       if (choice === "s") continue;
 
       if (!next.alreadyClaimed) {
-        const claim = ask(resolved.stateDir, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
-        const lane = readLane(resolved.stateDir, next.laneId);
-        answer(resolved.stateDir, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+        const claim = ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
+        const lane = resolveBackend().readLane(resolved.slug, next.laneId);
+        answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
       }
 
       if (choice === "a") {
-        answer(resolved.stateDir, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+        answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
         console.log(`approved ${next.ask.id}`);
       } else {
         const reason = await rl.question("reason: ");
-        answer(resolved.stateDir, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
+        answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
         console.log(`requested changes on ${next.ask.id}: ${reason}`);
       }
     }

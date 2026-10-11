@@ -24,6 +24,6 @@ export async function askPost(repoSlug: string, laneId: string, options: AskPost
   } else if (options.description) {
     payload = { description: options.description };
   }
-  const posted = ask(repo.stateDir, laneId, { kind, from, payload, priority: options.priority });
+  const posted = ask(repo.slug, laneId, { kind, from, payload, priority: options.priority });
   console.log(`posted ${posted.id} (kind "${kind}", from "${from}") into ${repoSlug}/${laneId}`);
 }

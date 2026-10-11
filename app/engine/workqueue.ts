@@ -4,7 +4,7 @@
 // concurrent actors) changes where claimableAsks reads from, not the
 // shape of the loop itself.
 import { ask, answer, ASK_SCOPE } from "./lane.js";
-import { listLanes, readLane } from "./store.js";
+import { resolveBackend } from "./backend.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane } from "./types.js";
 
 function isAnswer(entry: Lane["history"][number]): entry is AnswerEntry {
@@ -86,10 +86,10 @@ export interface ClaimableEntry {
  * can ask for only coordinator-scope work without also being handed every
  * open-scope ask it's merely *permitted* to pick up).
  */
-export function claimableAcrossRepos(repos: { repo: string; stateDir: string }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
+export function claimableAcrossRepos(repos: { repo: string }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
   const out: ClaimableEntry[] = [];
-  for (const { repo, stateDir } of repos) {
-    for (const lane of listLanes(stateDir)) {
+  for (const { repo } of repos) {
+    for (const lane of resolveBackend().listLanes(repo)) {
       for (const a of claimableAsks(lane, actor)) {
         const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
         if (scope === "coordinator" && !isCoordScope) continue;
@@ -110,14 +110,14 @@ export function claimableAcrossRepos(repos: { repo: string; stateDir: string }[]
  * payload -- completing work doesn't need coordinator authority, only
  * granting the claim does.
  */
-export async function claimAndAnswer(stateDir: string, laneId: string, theAsk: AskEntry, actor: string, doWork: (theAsk: AskEntry) => Promise<unknown>): Promise<AnswerPayloadResult> {
-  const lane = readLane(stateDir, laneId);
+export async function claimAndAnswer(repo: string, laneId: string, theAsk: AskEntry, actor: string, doWork: (theAsk: AskEntry) => Promise<unknown>): Promise<AnswerPayloadResult> {
+  const lane = resolveBackend().readLane(repo, laneId);
   if (!lane) throw new Error(`no such lane: ${laneId}`);
   const grantedBy = lane.coordinators[0] ?? actor;
-  const claim = ask(stateDir, laneId, { kind: "claim_request", from: actor, payload: { target: theAsk.id } });
-  answer(stateDir, laneId, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
+  const claim = ask(repo, laneId, { kind: "claim_request", from: actor, payload: { target: theAsk.id } });
+  answer(repo, laneId, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
   const payload = await doWork(theAsk);
-  answer(stateDir, laneId, theAsk, { from: actor, action: "complete", payload });
+  answer(repo, laneId, theAsk, { from: actor, action: "complete", payload });
   return { ask: theAsk, payload };
 }
 
@@ -132,20 +132,20 @@ interface AnswerPayloadResult {
  * queue is drained, or everything left is blocked on a dependency that
  * will never resolve (reported, not silently swallowed).
  */
-export async function runWorkerLoop(stateDir: string, laneId: string, actor: string, handlers: Partial<Record<AskKind, (theAsk: AskEntry) => Promise<unknown>>>): Promise<void> {
+export async function runWorkerLoop(repo: string, laneId: string, actor: string, handlers: Partial<Record<AskKind, (theAsk: AskEntry) => Promise<unknown>>>): Promise<void> {
   for (;;) {
-    const lane = readLane(stateDir, laneId);
+    const lane = resolveBackend().readLane(repo, laneId);
     if (!lane) throw new Error(`no such lane: ${laneId}`);
     const [next] = claimableAsks(lane, actor);
     if (!next) {
-      const unanswered = lane.history.filter(isAsk).filter((a) => !lane.history.some((e) => isAnswer(e) && e.ask === a.id));
+      const unanswered = lane.history.filter(isAsk).filter((a: AskEntry) => !lane.history.some((e) => isAnswer(e) && e.ask === a.id));
       if (unanswered.length) {
-        console.error(`worker loop on ${laneId} stopped with ${unanswered.length} ask(s) still unanswered (blocked on an unmet dependency, or out of scope for ${actor}): ${unanswered.map((a) => a.id).join(", ")}`);
+        console.error(`worker loop on ${laneId} stopped with ${unanswered.length} ask(s) still unanswered (blocked on an unmet dependency, or out of scope for ${actor}): ${unanswered.map((a: AskEntry) => a.id).join(", ")}`);
       }
       return;
     }
     const handler = handlers[next.kind];
     if (!handler) throw new Error(`no handler registered for ask kind "${next.kind}" (${next.id})`);
-    await claimAndAnswer(stateDir, laneId, next, actor, handler);
+    await claimAndAnswer(repo, laneId, next, actor, handler);
   }
 }

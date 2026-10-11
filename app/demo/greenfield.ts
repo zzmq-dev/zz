@@ -24,9 +24,9 @@ export async function ensureRepoLane(slug: string) {
   ensureCloned(repo);
   let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.stateDir, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
-    const review = ask(repo.stateDir, repoLane.id, { kind: "review_request", from: COORDINATOR });
-    answer(repo.stateDir, repoLane.id, review, { from: COORDINATOR, action: "grant" });
+    repoLane = proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    const review = ask(repo.slug, repoLane.id, { kind: "review_request", from: COORDINATOR });
+    answer(repo.slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
   }
   return { repo, repoLane };
 }
@@ -48,7 +48,7 @@ export async function submitIncrement(slug: string, input: IncrementInput): Prom
   const { repo, repoLane } = await ensureRepoLane(slug);
   const origin: LaneRef = input.origin ?? { repo: slug, lane: repoLane.id };
 
-  const lane = proposeLane(repo.stateDir, {
+  const lane = proposeLane(repo.slug, {
     id: input.laneId,
     repo: slug,
     name: input.name,
@@ -59,15 +59,15 @@ export async function submitIncrement(slug: string, input: IncrementInput): Prom
     coordinators: [AUTHOR.name],
   });
 
-  const claim = ask(repo.stateDir, lane.id, { kind: "claim_request", from: AUTHOR.name });
-  answer(repo.stateDir, lane.id, claim, { from: AUTHOR.name, action: "grant" });
+  const claim = ask(repo.slug, lane.id, { kind: "claim_request", from: AUTHOR.name });
+  answer(repo.slug, lane.id, claim, { from: AUTHOR.name, action: "grant" });
 
-  const submit = ask(repo.stateDir, lane.id, { kind: "submit_changeset", from: AUTHOR.name, payload: { files: input.files, message: input.message } });
+  const submit = ask(repo.slug, lane.id, { kind: "submit_changeset", from: AUTHOR.name, payload: { files: input.files, message: input.message } });
   const commitOid = await commitChangeset(repo.repoDir, { files: input.files, message: input.message, author: AUTHOR });
-  answer(repo.stateDir, lane.id, submit, { from: AUTHOR.name, action: "grant", payload: { commit: commitOid } });
+  answer(repo.slug, lane.id, submit, { from: AUTHOR.name, action: "grant", payload: { commit: commitOid } });
 
   const rungs = input.buildLadderRungs(commitOid);
-  const mergeRequest = ask(repo.stateDir, lane.id, { kind: "merge_request", from: AUTHOR.name, payload: { ladder: rungs.map((r) => ({ path: r.path, kind: r.kind })) } });
+  const mergeRequest = ask(repo.slug, lane.id, { kind: "merge_request", from: AUTHOR.name, payload: { ladder: rungs.map((r) => ({ path: r.path, kind: r.kind })) } });
 
   // _repo's own note doesn't exist until after the repo's first real
   // commit (it anchors to the root tree); writing it for the first
@@ -79,9 +79,9 @@ export async function submitIncrement(slug: string, input: IncrementInput): Prom
     const root: Rung = { path: REPO_RUNG_PATH, kind: "repo", summary: `${slug}, built from scratch through the zz protocol.`, sources: [], children: rungs };
     await writeLadder(repo.repoDir, repo.stateDir, root);
   } else {
-    await mergeLaneLadder(repo.repoDir, repo.stateDir, rungs);
+    await mergeLaneLadder(repo.slug, rungs);
   }
-  answer(repo.stateDir, lane.id, mergeRequest, { from: AUTHOR.name, action: "grant" });
+  answer(repo.slug, lane.id, mergeRequest, { from: AUTHOR.name, action: "grant" });
 
   return { commitOid };
 }

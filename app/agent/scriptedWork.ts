@@ -25,7 +25,7 @@ import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { AskEntry } from "../engine/types.js";
-import { readLane } from "../engine/store.js";
+import { resolveBackend } from "../engine/backend.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
 import { threeWayMerge } from "./threeWayMerge.js";
 
@@ -120,7 +120,7 @@ function parseFileProposal(text: string): ParsedFileProposal {
 // and fails fast (no sandbox worktree needed) with a precise reason
 // the model can act on, the same check commit_changeset itself runs.
 async function verifyProposal(resolved: ResolvedRepo, files: { path: string; content: string }[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const dropProblem = checkNoDroppedExports(resolved.repoDir, files);
+  const dropProblem = checkNoDroppedExports(resolved.slug, files);
   if (dropProblem) return { exitCode: 1, stdout: "", stderr: dropProblem };
   return (await callTool("run_in_sandbox", {
     repos: [{ repo: resolved.slug, files }],
@@ -300,7 +300,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
     // The original "work" ask's own description (not just the
     // rejected diff) -- lets the resolver treat this as a normal
     // additive task for whatever wasn't already resolved by the merge.
-    const originLane = readLane(resolved.stateDir, laneId);
+    const originLane = resolveBackend().readLane(resolved.slug, laneId);
     const originAskId = theAsk.depends_on?.[0];
     const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
     const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;

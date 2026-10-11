@@ -4,29 +4,19 @@
 // material, how to decompose a task, when work is done) stays in the
 // calling agent's own reasoning, never inside a tool.
 import { randomBytes } from "node:crypto";
-import { ensureCloned, resolveRepo } from "../cli/lib/repo.js";
-import {
-  commitFileChanges,
-  fetchContributors,
-  fetchIssues,
-  fetchPullRequests,
-  fetchReleases,
-  fetchThreadComments,
-  fileContentAtCommit,
-  listCommitsChronological,
-} from "../engine/ingest.js";
+import { resolveRepo } from "../cli/lib/repo.js";
+import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
 import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
 import { claimableAsks, isResolved } from "../engine/workqueue.js";
-import { readAnchor } from "../engine/ladderNotes.js";
-import { readLane } from "../engine/store.js";
+import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
-import { commitChangeset, type ChangesetFile } from "../engine/changeset.js";
+import { type ChangesetFile } from "../engine/changeset.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Rung } from "../engine/ladder.js";
-import type { AskEntry, AskKind, LaneRef } from "../engine/types.js";
+import type { AskEntry, AskKind, Lane, LaneRef } from "../engine/types.js";
 
 export interface ToolDef {
   name: string;
@@ -39,7 +29,7 @@ function shortId(prefix: string): string {
   return `${prefix}-${randomBytes(4).toString("hex")}`;
 }
 
-function requireAsk(lane: ReturnType<typeof readLane>, askId: string): AskEntry {
+function requireAsk(lane: Lane | null, askId: string): AskEntry {
   if (!lane) throw new Error("no such lane");
   const found = lane.history.find((e) => e.type === "ASK" && e.id === askId);
   if (!found) throw new Error(`no such ask: ${askId}`);
@@ -53,9 +43,9 @@ const gitLog: ToolDef = {
   description: "List every commit on the repo's default branch, oldest first (first-parent only).",
   parameters: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] },
   async execute({ repo }) {
-    const r = resolveRepo(repo as string);
-    ensureCloned(r);
-    return listCommitsChronological(r.repoDir);
+    const backend = resolveBackend();
+    backend.ensureCloned(repo as string);
+    return backend.listCommits(repo as string);
   },
 };
 
@@ -64,11 +54,11 @@ const gitDiff: ToolDef = {
   description: "What changed in one commit: which files, how (added/modified/deleted), and the diff hunks for modified files.",
   parameters: { type: "object", properties: { repo: { type: "string" }, sha: { type: "string" } }, required: ["repo", "sha"] },
   async execute({ repo, sha }) {
-    const r = resolveRepo(repo as string);
-    const commits = listCommitsChronological(r.repoDir);
+    const backend = resolveBackend();
+    const commits = backend.listCommits(repo as string);
     const commit = commits.find((c) => c.sha === sha);
     if (!commit) throw new Error(`no such commit: ${sha}`);
-    return commitFileChanges(r.repoDir, commit);
+    return backend.diffCommit(repo as string, commit);
   },
 };
 
@@ -77,8 +67,7 @@ const gitShowFile: ToolDef = {
   description: "A file's full content as of a specific commit.",
   parameters: { type: "object", properties: { repo: { type: "string" }, sha: { type: "string" }, path: { type: "string" } }, required: ["repo", "sha", "path"] },
   async execute({ repo, sha, path }) {
-    const r = resolveRepo(repo as string);
-    return fileContentAtCommit(r.repoDir, sha as string, path as string);
+    return resolveBackend().readFileAtCommit(repo as string, sha as string, path as string);
   },
 };
 
@@ -134,8 +123,7 @@ const ladderRead: ToolDef = {
   description: "Read one rung from the repo's Ladder by path (e.g. \"_repo\", \"index.js\", \"asks/42\"). Returns null if it doesn't exist yet.",
   parameters: { type: "object", properties: { repo: { type: "string" }, path: { type: "string" } }, required: ["repo", "path"] },
   async execute({ repo, path }) {
-    const r = resolveRepo(repo as string);
-    return readAnchor(r.repoDir, r.stateDir, path as string);
+    return resolveBackend().readAnchor(repo as string, path as string);
   },
 };
 
@@ -270,7 +258,7 @@ const ladderWriteRung: ToolDef = {
     required: ["repo", "rung"],
   },
   async execute({ repo, rung }) {
-    const r = resolveRepo(repo as string);
+    const backend = resolveBackend();
     const rungs = (Array.isArray(rung) ? rung : [rung]).map(normalizeRung);
     for (const one of rungs) {
       const problem = validateTopLevelKind(one) ?? validateAnchorSources(one) ?? validateHasSummary(one);
@@ -278,12 +266,12 @@ const ladderWriteRung: ToolDef = {
     }
     for (const one of rungs) {
       if (!CUMULATIVE_SUMMARY_KINDS.has(one.kind)) continue;
-      const existing = await readAnchor(r.repoDir, r.stateDir, one.path);
+      const existing = await backend.readAnchor(repo as string, one.path);
       if (existing?.summary && existing.summary !== one.summary) {
         one.summary = await foldInSummary(existing.summary, one.summary);
       }
     }
-    await mergeLaneLadder(r.repoDir, r.stateDir, rungs);
+    await mergeLaneLadder(repo as string, rungs);
     return { ok: true, wrote: rungs.map((x) => x.path) };
   },
 };
@@ -305,11 +293,10 @@ const laneProposeTool: ToolDef = {
     required: ["repo", "name", "objective", "scope", "actor"],
   },
   async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor }) {
-    const r = resolveRepo(repo as string);
-    const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? r.slug, lane: origin_lane as string } : undefined;
-    return proposeLane(r.stateDir, {
+    const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? (repo as string), lane: origin_lane as string } : undefined;
+    return proposeLane(repo as string, {
       id: shortId("lane"),
-      repo: r.slug,
+      repo: repo as string,
       name: name as string,
       objective: objective as string,
       scope: scope as string[],
@@ -325,8 +312,7 @@ const laneGet: ToolDef = {
   description: "Read a Lane's full record: status, scope, coordinators, and its complete Ask/Answer history.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" } }, required: ["repo", "lane_id"] },
   async execute({ repo, lane_id }) {
-    const r = resolveRepo(repo as string);
-    return readLane(r.stateDir, lane_id as string);
+    return resolveBackend().readLane(repo as string, lane_id as string);
   },
 };
 
@@ -348,8 +334,7 @@ const askPostTool: ToolDef = {
     required: ["repo", "lane_id", "kind", "from"],
   },
   async execute({ repo, lane_id, kind, from, payload, depends_on, priority }) {
-    const r = resolveRepo(repo as string);
-    return ask(r.stateDir, lane_id as string, { kind: kind as AskKind, from: from as string, payload, depends_on: depends_on as string[] | undefined, priority: priority as number | undefined });
+    return ask(repo as string, lane_id as string, { kind: kind as AskKind, from: from as string, payload, depends_on: depends_on as string[] | undefined, priority: priority as number | undefined });
   },
 };
 
@@ -358,8 +343,7 @@ const askQueryClaimable: ToolDef = {
   description: "List every Ask in a Lane's queue that's unanswered, has all its dependencies met, and you're permitted to act on.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "actor"] },
   async execute({ repo, lane_id, actor }) {
-    const r = resolveRepo(repo as string);
-    const lane = readLane(r.stateDir, lane_id as string);
+    const lane = resolveBackend().readLane(repo as string, lane_id as string);
     if (!lane) throw new Error(`no such lane: ${lane_id}`);
     return claimableAsks(lane, actor as string);
   },
@@ -370,8 +354,7 @@ const askClaim: ToolDef = {
   description: "Claim an Ask: posts a claim_request and (self-)grants it. Returns the claimed Ask's full content so you can act on it.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, ask_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "ask_id", "actor"] },
   async execute({ repo, lane_id, ask_id, actor }) {
-    const r = resolveRepo(repo as string);
-    const lane = readLane(r.stateDir, lane_id as string);
+    const lane = resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
     // depends_on was previously only advisory (claimableAsks' query
     // filtered it out, but a direct ask_claim call bypassed that
@@ -382,8 +365,8 @@ const askClaim: ToolDef = {
       throw new Error(`ask ${ask_id} depends on ${unresolvedDeps.join(", ")}, which ${unresolvedDeps.length === 1 ? "isn't" : "aren't"} resolved yet -- that needs to be granted/completed first.`);
     }
     const grantedBy = lane!.coordinators[0] ?? actor;
-    const claim = ask(r.stateDir, lane_id as string, { kind: "claim_request", from: actor as string, payload: { target: target.id } });
-    answer(r.stateDir, lane_id as string, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
+    const claim = ask(repo as string, lane_id as string, { kind: "claim_request", from: actor as string, payload: { target: target.id } });
+    answer(repo as string, lane_id as string, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
     return target;
   },
 };
@@ -404,10 +387,9 @@ const askAnswerTool: ToolDef = {
     required: ["repo", "lane_id", "ask_id", "actor", "action"],
   },
   async execute({ repo, lane_id, ask_id, actor, action, payload }) {
-    const r = resolveRepo(repo as string);
-    const lane = readLane(r.stateDir, lane_id as string);
+    const lane = resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
-    return answer(r.stateDir, lane_id as string, target, { from: actor as string, action: action as "complete" | "deny", payload });
+    return answer(repo as string, lane_id as string, target, { from: actor as string, action: action as "complete" | "deny", payload });
   },
 };
 
@@ -449,9 +431,9 @@ function extractExportedNames(content: string): Set<string> {
   return names;
 }
 
-export function checkNoDroppedExports(repoDir: string, files: ChangesetFile[]): string | null {
+export function checkNoDroppedExports(repo: string, files: ChangesetFile[]): string | null {
   for (const f of files) {
-    const before = fileContentAtCommit(repoDir, "HEAD", f.path);
+    const before = resolveBackend().readFileAtCommit(repo, "HEAD", f.path);
     if (!before.trim()) continue; // new file, nothing to preserve
     const beforeNames = extractExportedNames(before);
     const afterNames = extractExportedNames(f.content);
@@ -481,15 +463,14 @@ const commitChangesetTool: ToolDef = {
   async execute({ repo, files, message, author_name, author_email }) {
     const problem = validateChangesetFiles(files);
     if (problem) throw new Error(problem);
-    const r = resolveRepo(repo as string);
-    const dropProblem = checkNoDroppedExports(r.repoDir, files as ChangesetFile[]);
+    const dropProblem = checkNoDroppedExports(repo as string, files as ChangesetFile[]);
     // A structural signal (matching the `resolved: true` pattern on the
     // duplicate-answer error below), not just phrasing -- lets a caller
     // (agent/scriptedWork.ts) tell "this is a real race with another
     // change that landed in the meantime" apart from any other failure,
     // without parsing the message text.
     if (dropProblem) throw Object.assign(new Error(dropProblem), { conflict: true });
-    const commitOid = await commitChangeset(r.repoDir, {
+    const commitOid = await resolveBackend().commitChangeset(repo as string, {
       files: files as ChangesetFile[],
       message: message as string,
       author: { name: author_name as string, email: author_email as string },

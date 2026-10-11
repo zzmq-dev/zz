@@ -1,14 +1,14 @@
-// The Lane lifecycle: ASK/ANSWER/claim/merge-grant as real functions over
-// the existing .zz/ persistence (engine/store.ts) and Ladder storage
-// (engine/ladderNotes.ts), not just data types. Role-checking is deferred
-// to a later step (see the plan) -- this step is about getting the
-// protocol functions themselves working end to end. The actual work
-// queue (claiming, dependencies, the worker loop) lives in
-// engine/workqueue.ts, built on top of the ask()/answer() primitives
-// here.
+// The Lane lifecycle: ASK/ANSWER/claim/merge-grant as real functions,
+// backend-agnostic (engine/backend.ts) -- a local clone and flat/SQLite
+// files today, Cloudflare Artifacts and a Durable Object once that
+// side exists (site/content/remote-backend/index.md). Every function
+// here takes a repo slug, never a resolved local path; `resolveBackend()`
+// is the only thing that knows where a given slug's data actually
+// lives. The actual work queue (claiming, dependencies, the worker
+// loop) lives in engine/workqueue.ts, built on top of the
+// ask()/answer() primitives here.
 import { randomBytes } from "node:crypto";
-import { writeLane, withLane } from "./store.js";
-import { appendRepoChildren, writeLadder } from "./ladderNotes.js";
+import { resolveBackend } from "./backend.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, Trigger } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import { REPO_RUNG_PATH } from "./ladder.js";
@@ -26,7 +26,7 @@ function randomId(prefix: string): string {
 }
 
 export function proposeLane(
-  stateDir: string,
+  repo: string,
   input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; maintainers?: string[] },
 ): Lane {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
@@ -49,11 +49,11 @@ export function proposeLane(
     history: [],
     related_lanes: [],
   };
-  writeLane(stateDir, lane);
+  resolveBackend().writeLane(repo, lane);
   return lane;
 }
 
-export function ask(stateDir: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): AskEntry {
+export function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): AskEntry {
   const entry: AskEntry = {
     id: randomId("ask"),
     type: "ASK",
@@ -66,8 +66,8 @@ export function ask(stateDir: string, laneId: string, input: { kind: AskKind; fr
   };
   // Atomic: two processes posting into the same Lane at once must not
   // let one's history.push silently overwrite the other's (see
-  // engine/store.ts's withLane).
-  withLane(stateDir, laneId, (lane) => {
+  // Backend.withLane).
+  resolveBackend().withLane(repo, laneId, (lane) => {
     lane.history.push(entry);
   });
   return entry;
@@ -93,16 +93,16 @@ function payloadEmbedsFiles(payload: unknown): boolean {
   return files.every((f) => typeof f === "object" && f !== null && typeof (f as { path?: unknown }).path === "string" && typeof (f as { content?: unknown }).content === "string");
 }
 
-export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
+export function answer(repo: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   // Atomic: the duplicate-answer check, the RBAC check, and the write
-  // all happen inside one transaction (engine/store.ts's withLane), so
-  // two processes racing to answer the same Ask can't both pass the
+  // all happen inside one transaction (Backend.withLane), so two
+  // processes racing to answer the same Ask can't both pass the
   // "not yet answered" check before either one writes -- the second to
   // reach this lane blocks until the first commits, then sees its
   // answer and correctly reports "already answered" instead of
   // clobbering it.
-  withLane(stateDir, laneId, (lane) => {
+  resolveBackend().withLane(repo, laneId, (lane) => {
     const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
     if (existing) {
       // `resolved: true` is a structural signal (see agent/loop.ts), not
@@ -212,13 +212,11 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer"> =
  * in the queue model, access is controlled by who's allowed to claim a
  * `merge_request` ask (ASK_SCOPE above), not by this function.
  */
-export async function mergeLaneLadder(repoDir: string, stateDir: string, laneLadder: Rung | Rung[]): Promise<void> {
+export async function mergeLaneLadder(repo: string, laneLadder: Rung | Rung[]): Promise<void> {
   const rungs = Array.isArray(laneLadder) ? laneLadder : [laneLadder];
-  for (const rung of rungs) {
-    await writeLadder(repoDir, stateDir, rung);
-  }
+  await resolveBackend().writeLadder(repo, rungs);
   const asChildren = rungs.filter((r) => r.path !== REPO_RUNG_PATH);
   if (asChildren.length) {
-    await appendRepoChildren(repoDir, stateDir, asChildren.map((r) => ({ path: r.path, kind: r.kind as RungKind })));
+    await resolveBackend().appendRepoChildren(repo, asChildren.map((r) => ({ path: r.path, kind: r.kind as RungKind })));
   }
 }
