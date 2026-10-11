@@ -7,6 +7,8 @@ try {
   // no .env file -- fine, env vars can still be set the normal way
 }
 import { Command } from "commander";
+import { registerLocalBackendFactory } from "../engine/backend.js";
+import { createLocalBackend } from "../engine/localBackend.js";
 import { ladderBuild } from "./commands/ladder-build.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
 import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
@@ -15,6 +17,8 @@ import { work } from "./commands/work.js";
 import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
+
+registerLocalBackendFactory(createLocalBackend);
 
 const program = new Command();
 program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");

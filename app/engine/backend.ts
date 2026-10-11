@@ -13,7 +13,7 @@ import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import type { CommitRow, FileChangeRow } from "./ingest.js";
 import type { ChangesetFile, CommitAuthor } from "./changeset.js";
-import { createLocalBackend } from "./localBackend.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface Backend {
   readonly name: string;
@@ -40,15 +40,46 @@ export interface Backend {
   withLane(repo: string, laneId: string, mutate: (lane: Lane) => void): Lane;
 }
 
-let cached: Backend | null = null;
+let cachedLocal: Backend | null = null;
+let localBackendFactory: (() => Backend) | null = null;
+
+// Deliberately NOT a static import of localBackend.ts -- that file
+// touches import.meta.url and node:fs at module scope, which crashes
+// immediately on load inside workerd (confirmed directly: "Uncaught
+// TypeError: ... Received undefined, at fileURLToPath") even though
+// the Worker never actually calls into it. cli/zz.ts registers the
+// real factory at startup; the Worker/DO never imports that file, so
+// localBackend.ts's module body never loads into that bundle at all.
+export function registerLocalBackendFactory(factory: () => Backend): void {
+  localBackendFactory = factory;
+}
+
+// Scopes a Backend to one call stack -- the Worker/Durable Object case
+// needs this, not a module-level singleton: a single isolate can host
+// multiple DO instances (different repos, different Backend instances
+// wrapping different storage), and a plain global would let one
+// request's backend leak into another's concurrently-running call.
+// Verified directly that AsyncLocalStorage works correctly inside
+// workerd for exactly this (two concurrent `als.run` calls, each saw
+// only its own value). CLI/local use never touches this -- it falls
+// through to the plain lazy singleton below, unchanged.
+const backendContext = new AsyncLocalStorage<Backend>();
+
+/** Runs `fn` with `backend` as what resolveBackend() returns for the duration of the call (and anything it awaits) -- how a Worker/DO points engine/lane.ts's calls at its own storage without engine/lane.ts needing to know Cloudflare exists at all. */
+export function withBackend<T>(backend: Backend, fn: () => T | Promise<T>): T | Promise<T> {
+  return backendContext.run(backend, fn);
+}
 
 /** `ZZ_BACKEND=local` (default) or `cloudflare` -- the same pattern as agent/*Backend.ts's model-provider switch, one level down the stack. */
 export function resolveBackend(): Backend {
-  if (cached) return cached;
+  const scoped = backendContext.getStore();
+  if (scoped) return scoped;
+  if (cachedLocal) return cachedLocal;
   const which = process.env.ZZ_BACKEND ?? "local";
   if (which === "local") {
-    cached = createLocalBackend();
-    return cached;
+    if (!localBackendFactory) throw new Error("resolveBackend(): no local backend registered -- call registerLocalBackendFactory() at startup (cli/zz.ts does this), or use withBackend() to scope a different one.");
+    cachedLocal = localBackendFactory();
+    return cachedLocal;
   }
-  throw new Error(`unknown ZZ_BACKEND "${which}" -- only "local" exists so far (site/content/remote-backend/index.md's CloudflareBackend is the next step).`);
+  throw new Error(`unknown ZZ_BACKEND "${which}" -- only "local" exists outside of withBackend() so far.`);
 }

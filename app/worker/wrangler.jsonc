@@ -8,5 +8,19 @@
       "binding": "ARTIFACTS",
       "namespace": "zz"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MAINTAINER_DO",
+        "class_name": "MaintainerDO"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["MaintainerDO"]
+    }
   ]
 }

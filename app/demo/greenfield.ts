@@ -8,7 +8,11 @@
 // and ladder-replay-commits.ts already use, just authoring new content
 // instead of describing history.
 import { ensureCloned, resolveRepo } from "../cli/lib/repo.js";
+import { registerLocalBackendFactory } from "../engine/backend.js";
+import { createLocalBackend } from "../engine/localBackend.js";
 import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
+
+registerLocalBackendFactory(createLocalBackend);
 import { commitChangeset, type ChangesetFile } from "../engine/changeset.js";
 import { readAnchor, writeLadder } from "../engine/ladderNotes.js";
 import { readLane } from "../engine/store.js";

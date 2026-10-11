@@ -9,6 +9,9 @@
 import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
+import { MaintainerDO } from "./MaintainerDO.js";
+
+export { MaintainerDO };
 
 interface Env {
   ARTIFACTS: {
@@ -16,6 +19,7 @@ interface Env {
     get(name: string): Promise<ArtifactsRepo>;
     delete(name: string): Promise<boolean>;
   };
+  MAINTAINER_DO: DurableObjectNamespace<MaintainerDO>;
 }
 
 interface ArtifactsCommit {
@@ -37,8 +41,41 @@ function tokenString(token: { plaintext: string } | string): string {
   return typeof token === "string" ? token.split("?")[0] : token.plaintext;
 }
 
+async function testMaintainerDo(env: Env): Promise<Response> {
+  const steps: Record<string, unknown> = {};
+  try {
+    const id = env.MAINTAINER_DO.idFromName("zz-demo/do-test");
+    const stub = env.MAINTAINER_DO.get(id);
+
+    const lane = await stub.proposeLane({ id: "_repo", repo: "zz-demo/do-test", name: "do-test", objective: "prove Lane storage on a real DO", scope: ["**"], proposedBy: "zz-worker-test" });
+    steps.proposedLane = lane;
+
+    const workAsk = await stub.ask(lane.id, { kind: "work", from: "human", payload: { description: "prove the round trip" } });
+    steps.postedAsk = workAsk;
+
+    const claim = await stub.ask(lane.id, { kind: "claim_request", from: "zz-worker-test", payload: { target: workAsk.id } });
+    await stub.answer(lane.id, claim, { from: "zz-worker-test", action: "grant" });
+    steps.claimed = true;
+
+    const finalAnswer = await stub.answer(lane.id, workAsk, { from: "zz-worker-test", action: "complete", payload: { result: "done, for real, on a Durable Object" } });
+    steps.answered = finalAnswer;
+
+    const readBack = await stub.readLane(lane.id);
+    steps.readBack = readBack;
+
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+  }
+}
+
 export default {
-  async fetch(_req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env): Promise<Response> {
+    if (new URL(req.url).pathname === "/do-test") return testMaintainerDo(env);
+    if (new URL(req.url).pathname === "/do-read") {
+      const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName("zz-demo/do-test"));
+      return Response.json({ lane: await stub.readLane("_repo") });
+    }
     const repoName = "proof-" + Date.now();
     const steps: Record<string, unknown> = {};
     try {
