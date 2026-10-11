@@ -24,11 +24,13 @@ import { runAgent } from "../../agent/loop.js";
 import type { ChatBackend } from "../../agent/chatBackend.js";
 import { createOllamaBackend } from "../../agent/ollamaBackend.js";
 import { createGeminiBackend } from "../../agent/geminiBackend.js";
+import { createGroqBackend } from "../../agent/groqBackend.js";
+import { createCloudflareBackend } from "../../agent/cloudflareBackend.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 
-export type Provider = "ollama" | "gemini";
+export type Provider = "ollama" | "gemini" | "groq" | "cloudflare";
 
 export function resolveBackend(provider: Provider, model?: string): ChatBackend {
   // gemini-2.0-flash and gemini-2.5-flash are both retired for new API
@@ -37,6 +39,8 @@ export function resolveBackend(provider: Provider, model?: string): ChatBackend 
   // error message steers new keys toward, and the one actually
   // verified working against a real key.
   if (provider === "gemini") return createGeminiBackend(model ?? process.env.GEMINI_MODEL ?? "gemini-3.8-flash");
+  if (provider === "groq") return createGroqBackend(model ?? process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile");
+  if (provider === "cloudflare") return createCloudflareBackend(model ?? process.env.CLOUDFLARE_MODEL ?? "@cf/meta/llama-3.3-70b-instruct-fp8-fast");
   const baseUrl = process.env.ZZ_OLLAMA_HOST ?? "http://localhost:11434";
   return createOllamaBackend(model ?? process.env.ZZ_OLLAMA_MODEL ?? "qwen2.5:14b-instruct", baseUrl);
 }
