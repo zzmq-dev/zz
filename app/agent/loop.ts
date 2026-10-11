@@ -69,7 +69,7 @@ export interface RunAgentOptions {
    * check; callers that do (e.g. "is the ask I was handed actually
    * answered yet") should supply a real one.
    */
-  isActuallyDone?: () => boolean;
+  isActuallyDone?: () => boolean | Promise<boolean>;
 }
 
 export interface RunAgentResult {
@@ -151,7 +151,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
       // test it") and then simply stopping without ever calling a tool
       // to do it. Nudge either way, up to a small bounded number of
       // times so a genuinely stuck agent still ends.
-      if (!isActuallyDone() && nudgesUsed < MAX_GIVE_UP_NUDGES) {
+      if (!(await isActuallyDone()) && nudgesUsed < MAX_GIVE_UP_NUDGES) {
         nudgesUsed += 1;
         // Naming the specific failing tool and its exact error combats
         // a real observed failure mode: the model blaming a *different*,

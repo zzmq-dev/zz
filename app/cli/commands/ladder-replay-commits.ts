@@ -130,7 +130,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
 
   let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    repoLane = await proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
   }
   const repoOrigin: LaneRef = { repo: slug, lane: repoLane.id };
 
@@ -150,7 +150,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
     ingest_repo: async () => {
       const commits = listCommitsChronological(repo.repoDir);
       const limit = options.limit ?? commits.length;
-      const sessionLane = proposeLane(repo.slug, {
+      const sessionLane = await proposeLane(repo.slug, {
         id: shortId("replay"),
         repo: slug,
         name: `replay session (${new Date().toISOString()})`,
@@ -169,7 +169,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
           skipped += 1;
           continue;
         }
-        ask(repo.slug, sessionLane.id, { kind: "analyze_changeset", from: AGENT, payload: { commit } });
+        await ask(repo.slug, sessionLane.id, { kind: "analyze_changeset", from: AGENT, payload: { commit } });
         posted += 1;
       }
       console.error(`posted ${posted} analyze_changeset ask(s), ${skipped} commit(s) already onboarded`);
@@ -181,7 +181,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
           const large = changes.length > maxFiles;
           console.error(`${commit.sha.slice(0, 7)} "${commit.message}" -- ${changes.length} file(s)${large ? " (large commit: mechanical only)" : ""}`);
 
-          const changesetLane = proposeLane(repo.slug, {
+          const changesetLane = await proposeLane(repo.slug, {
             id: `commit-${commit.sha.slice(0, 10)}`,
             repo: slug,
             name: `analyze commit ${commit.sha.slice(0, 7)}`,
@@ -195,11 +195,11 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
           const fileAskIds: string[] = [];
           for (const change of changes) {
             const payload: AddFileChangePayload = { commit, change, large, fileCount: changes.length };
-            const fileAsk = ask(repo.slug, changesetLane.id, { kind: "add_filechange", from: AGENT, payload });
+            const fileAsk = await ask(repo.slug, changesetLane.id, { kind: "add_filechange", from: AGENT, payload });
             fileAskIds.push(fileAsk.id);
           }
           const summarizePayload: SummarizeChangesetPayload = { commit, large, fileCount: changes.length };
-          ask(repo.slug, changesetLane.id, { kind: "summarize_changeset", from: AGENT, payload: summarizePayload, depends_on: fileAskIds });
+          await ask(repo.slug, changesetLane.id, { kind: "summarize_changeset", from: AGENT, payload: summarizePayload, depends_on: fileAskIds });
 
           await runWorkerLoop(repo.slug, changesetLane.id, AGENT, {
             add_filechange: async (fcAsk) => {
@@ -209,7 +209,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
               // awaited here. The repo Lane's own loop (resumed once
               // this whole ingest_repo handler returns) will get to it.
               if (!isLarge) {
-                ask(repo.slug, repoLane!.id, { kind: "rung_update_request", from: AGENT, payload: { path: change.path, commit: c, changeSummary: rung.summary } });
+                await ask(repo.slug, repoLane!.id, { kind: "rung_update_request", from: AGENT, payload: { path: change.path, commit: c, changeSummary: rung.summary } });
               }
               return rung;
             },
@@ -229,7 +229,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
               };
               // Also non-blocking: fire the merge ask at the repo Lane's
               // queue and move on, same as the per-file rung updates.
-              ask(repo.slug, repoLane!.id, { kind: "merge_request", from: AGENT, payload: { ladder: changesetRung } });
+              await ask(repo.slug, repoLane!.id, { kind: "merge_request", from: AGENT, payload: { ladder: changesetRung } });
               return changesetRung;
             },
           });
@@ -240,7 +240,7 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
     },
   };
 
-  ask(repo.slug, repoLane.id, { kind: "ingest_repo", from: COORDINATOR });
+  await ask(repo.slug, repoLane.id, { kind: "ingest_repo", from: COORDINATOR });
   await runWorkerLoop(repo.slug, repoLane.id, COORDINATOR, repoHandlers);
 
   console.error("done.");

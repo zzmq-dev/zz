@@ -44,7 +44,7 @@ const gitLog: ToolDef = {
   parameters: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] },
   async execute({ repo }) {
     const backend = resolveBackend();
-    backend.ensureCloned(repo as string);
+    await backend.ensureCloned(repo as string);
     return backend.listCommits(repo as string);
   },
 };
@@ -55,7 +55,7 @@ const gitDiff: ToolDef = {
   parameters: { type: "object", properties: { repo: { type: "string" }, sha: { type: "string" } }, required: ["repo", "sha"] },
   async execute({ repo, sha }) {
     const backend = resolveBackend();
-    const commits = backend.listCommits(repo as string);
+    const commits = await backend.listCommits(repo as string);
     const commit = commits.find((c) => c.sha === sha);
     if (!commit) throw new Error(`no such commit: ${sha}`);
     return backend.diffCommit(repo as string, commit);
@@ -343,7 +343,7 @@ const askQueryClaimable: ToolDef = {
   description: "List every Ask in a Lane's queue that's unanswered, has all its dependencies met, and you're permitted to act on.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "actor"] },
   async execute({ repo, lane_id, actor }) {
-    const lane = resolveBackend().readLane(repo as string, lane_id as string);
+    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
     if (!lane) throw new Error(`no such lane: ${lane_id}`);
     return claimableAsks(lane, actor as string);
   },
@@ -354,7 +354,7 @@ const askClaim: ToolDef = {
   description: "Claim an Ask: posts a claim_request and (self-)grants it. Returns the claimed Ask's full content so you can act on it.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, ask_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "ask_id", "actor"] },
   async execute({ repo, lane_id, ask_id, actor }) {
-    const lane = resolveBackend().readLane(repo as string, lane_id as string);
+    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
     // depends_on was previously only advisory (claimableAsks' query
     // filtered it out, but a direct ask_claim call bypassed that
@@ -365,8 +365,8 @@ const askClaim: ToolDef = {
       throw new Error(`ask ${ask_id} depends on ${unresolvedDeps.join(", ")}, which ${unresolvedDeps.length === 1 ? "isn't" : "aren't"} resolved yet -- that needs to be granted/completed first.`);
     }
     const grantedBy = lane!.coordinators[0] ?? actor;
-    const claim = ask(repo as string, lane_id as string, { kind: "claim_request", from: actor as string, payload: { target: target.id } });
-    answer(repo as string, lane_id as string, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
+    const claim = await ask(repo as string, lane_id as string, { kind: "claim_request", from: actor as string, payload: { target: target.id } });
+    await answer(repo as string, lane_id as string, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
     return target;
   },
 };
@@ -387,7 +387,7 @@ const askAnswerTool: ToolDef = {
     required: ["repo", "lane_id", "ask_id", "actor", "action"],
   },
   async execute({ repo, lane_id, ask_id, actor, action, payload }) {
-    const lane = resolveBackend().readLane(repo as string, lane_id as string);
+    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
     return answer(repo as string, lane_id as string, target, { from: actor as string, action: action as "complete" | "deny", payload });
   },
@@ -431,9 +431,9 @@ function extractExportedNames(content: string): Set<string> {
   return names;
 }
 
-export function checkNoDroppedExports(repo: string, files: ChangesetFile[]): string | null {
+export async function checkNoDroppedExports(repo: string, files: ChangesetFile[]): Promise<string | null> {
   for (const f of files) {
-    const before = resolveBackend().readFileAtCommit(repo, "HEAD", f.path);
+    const before = await resolveBackend().readFileAtCommit(repo, "HEAD", f.path);
     if (!before.trim()) continue; // new file, nothing to preserve
     const beforeNames = extractExportedNames(before);
     const afterNames = extractExportedNames(f.content);
@@ -463,7 +463,7 @@ const commitChangesetTool: ToolDef = {
   async execute({ repo, files, message, author_name, author_email }) {
     const problem = validateChangesetFiles(files);
     if (problem) throw new Error(problem);
-    const dropProblem = checkNoDroppedExports(repo as string, files as ChangesetFile[]);
+    const dropProblem = await checkNoDroppedExports(repo as string, files as ChangesetFile[]);
     // A structural signal (matching the `resolved: true` pattern on the
     // duplicate-answer error below), not just phrasing -- lets a caller
     // (agent/scriptedWork.ts) tell "this is a real race with another

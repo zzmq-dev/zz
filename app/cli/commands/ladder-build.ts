@@ -54,14 +54,14 @@ async function runItemLane(
   input: { id: string; repo: string; name: string; objective: string; scope: string[]; origin: LaneRef },
   doWork: () => Promise<Rung | Rung[]>,
 ): Promise<void> {
-  const lane = proposeLane(input.repo, { ...input, proposedBy: AGENT });
-  const claim = ask(input.repo, lane.id, { kind: "claim_request", from: AGENT });
-  answer(input.repo, lane.id, claim, { from: AGENT, action: "grant" });
+  const lane = await proposeLane(input.repo, { ...input, proposedBy: AGENT });
+  const claim = await ask(input.repo, lane.id, { kind: "claim_request", from: AGENT });
+  await answer(input.repo, lane.id, claim, { from: AGENT, action: "grant" });
 
   const laneLadder = await doWork();
 
-  const mergeRequest = ask(input.repo, lane.id, { kind: "merge_request", from: AGENT });
-  answer(input.repo, lane.id, mergeRequest, { from: AGENT, action: "grant" });
+  const mergeRequest = await ask(input.repo, lane.id, { kind: "merge_request", from: AGENT });
+  await answer(input.repo, lane.id, mergeRequest, { from: AGENT, action: "grant" });
   await mergeLaneLadder(input.repo, laneLadder);
 }
 
@@ -149,9 +149,9 @@ export async function ladderBuild(slug: string, options: BuildOptions): Promise<
   // as origin.
   let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
-    const review = ask(slug, repoLane.id, { kind: "review_request", from: AGENT });
-    answer(slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
+    repoLane = await proposeLane(slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    const review = await ask(slug, repoLane.id, { kind: "review_request", from: AGENT });
+    await answer(slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
   }
   const origin: LaneRef = { repo: slug, lane: repoLane.id };
 

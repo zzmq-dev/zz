@@ -25,10 +25,10 @@ function randomId(prefix: string): string {
   return `${prefix}-${randomBytes(5).toString("hex")}`;
 }
 
-export function proposeLane(
+export async function proposeLane(
   repo: string,
   input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; maintainers?: string[] },
-): Lane {
+): Promise<Lane> {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
   const coordinators = input.coordinators ?? [input.proposedBy];
   const lane: Lane = {
@@ -49,11 +49,11 @@ export function proposeLane(
     history: [],
     related_lanes: [],
   };
-  resolveBackend().writeLane(repo, lane);
+  await resolveBackend().writeLane(repo, lane);
   return lane;
 }
 
-export function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): AskEntry {
+export async function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): Promise<AskEntry> {
   const entry: AskEntry = {
     id: randomId("ask"),
     type: "ASK",
@@ -67,7 +67,7 @@ export function ask(repo: string, laneId: string, input: { kind: AskKind; from: 
   // Atomic: two processes posting into the same Lane at once must not
   // let one's history.push silently overwrite the other's (see
   // Backend.withLane).
-  resolveBackend().withLane(repo, laneId, (lane) => {
+  await resolveBackend().withLane(repo, laneId, (lane) => {
     lane.history.push(entry);
   });
   return entry;
@@ -93,7 +93,7 @@ function payloadEmbedsFiles(payload: unknown): boolean {
   return files.every((f) => typeof f === "object" && f !== null && typeof (f as { path?: unknown }).path === "string" && typeof (f as { content?: unknown }).content === "string");
 }
 
-export function answer(repo: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
+export async function answer(repo: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): Promise<AnswerEntry> {
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   // Atomic: the duplicate-answer check, the RBAC check, and the write
   // all happen inside one transaction (Backend.withLane), so two
@@ -102,7 +102,7 @@ export function answer(repo: string, laneId: string, theAsk: AskEntry, input: { 
   // reach this lane blocks until the first commits, then sees its
   // answer and correctly reports "already answered" instead of
   // clobbering it.
-  resolveBackend().withLane(repo, laneId, (lane) => {
+  await resolveBackend().withLane(repo, laneId, (lane) => {
     const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
     if (existing) {
       // `resolved: true` is a structural signal (see agent/loop.ts), not

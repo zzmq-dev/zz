@@ -1,74 +1,52 @@
-// One Durable Object instance per repo -- the Lane/Ask/Answer side of
-// the Maintainer DO (site/content/remote-backend/index.md). Deliberately
-// thin: it reuses engine/lane.ts's real ask()/answer()/proposeLane()
-// verbatim, scoped to this instance's own storage via
-// engine/backend.ts's withBackend() (AsyncLocalStorage), rather than
-// reimplementing any protocol logic here. That's the whole point of
-// step 1's refactor -- the RBAC checks, the changeset_review gate, the
-// embedded-files guard, all of engine/lane.ts's real behavior runs
-// unchanged, just against a different storage underneath.
+// One Durable Object instance per repo -- the Maintainer DO
+// (site/content/remote-backend/index.md), now backed by the real,
+// unified CloudflareBackend (cloudflareBackend.ts) rather than three
+// separate pieces. Deliberately thin itself: it reuses
+// agent/tools.ts's real ToolDef.execute() functions verbatim via
+// callTool, scoped to this instance's own storage/Artifacts repo via
+// engine/backend.ts's withBackend() (AsyncLocalStorage) -- the same
+// reason step 3's design note gave, now extended to the whole tool
+// surface, not just ask()/answer()/proposeLane(). Every RBAC check,
+// the changeset_review gate, the embedded-files guard, run unchanged;
+// this file has no protocol logic of its own.
 import { DurableObject } from "cloudflare:workers";
 import { withBackend } from "../../engine/backend.js";
-import { ask, answer, proposeLane } from "../../engine/lane.js";
-import { createDoLaneBackend } from "./doLaneBackend.js";
-import { commitChangesetOnArtifacts, readFileAtCommit, type ArtifactsNamespace } from "./cloudflareGitBackend.js";
-import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
-import type { AskEntry, AskKind, Lane, LaneRef } from "../../engine/types.js";
+import { ALL_TOOLS } from "../../agent/tools.js";
+import { createCloudflareBackend } from "./cloudflareBackend.js";
+import type { ArtifactsNamespace } from "./cloudflareGitBackend.js";
 
 interface Env {
   ARTIFACTS: ArtifactsNamespace;
 }
 
+// Tools that fundamentally can't run in a Worker -- no child_process,
+// no real git worktrees, no `gh` CLI -- never dispatched here even by
+// name. Listed explicitly so calling one by name fails with a clear
+// reason instead of a confusing downstream crash.
+const WORKER_INCOMPATIBLE_TOOLS = new Set(["run_in_sandbox", "gh_fetch_issues", "gh_fetch_pull_requests", "gh_fetch_releases", "gh_fetch_contributors", "gh_fetch_thread_comments"]);
+
 export class MaintainerDO extends DurableObject<Env> {
-  private backend = createDoLaneBackend(this.ctx.storage);
-  // This DO's own identity doubles as the "repo" key engine/lane.ts's
-  // functions expect -- irrelevant to doLaneBackend (one DO instance
-  // already is one repo's storage) but kept consistent with the real
-  // Backend interface shape.
-  private repo = "do";
+  // This DO's identity doubles as the Backend's "repo" key -- one DO
+  // instance already is one repo's storage, so every tool call below
+  // is scoped to it regardless of whatever `repo` string a caller
+  // passes in its args (kept for shape-compatibility with
+  // agent/tools.ts's parameters, not actually branched on).
+  private artifactsName = "do";
+  private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName);
 
-  async proposeLane(input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; coordinators?: string[]; maintainers?: string[] }): Promise<Lane> {
-    return withBackend(this.backend, () => proposeLane(this.repo, input));
+  /** Which Artifacts repo this DO instance actually operates on -- set once, before any tool call, since the DO's own id (from idFromName) doesn't reverse back to the name that created it. */
+  async configure(artifactsName: string): Promise<void> {
+    this.artifactsName = artifactsName;
+    this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName);
   }
 
-  async ask(laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): Promise<AskEntry> {
-    return withBackend(this.backend, () => ask(this.repo, laneId, input));
-  }
-
-  async answer(laneId: string, theAsk: AskEntry, input: { from: string; action: "grant" | "deny" | "complete"; payload?: unknown }) {
-    return withBackend(this.backend, () => answer(this.repo, laneId, theAsk, input));
-  }
-
-  async readLane(laneId: string): Promise<Lane | null> {
-    return withBackend(this.backend, () => this.backend.readLane(this.repo, laneId));
-  }
-
-  async listLanes(): Promise<Lane[]> {
-    return withBackend(this.backend, () => this.backend.listLanes(this.repo));
-  }
-
-  // Git content: not yet folded into `this.backend` as a full Backend
-  // (the Ladder/notes side isn't built yet -- see cloudflareGitBackend.ts's
-  // header), so these are called directly rather than through
-  // engine/lane.ts. `artifactsName`/`remote` are passed explicitly by
-  // the caller (it already has them from creating/looking up the
-  // repo) rather than this DO tracking its own Artifacts identity.
-  async commitChangeset(artifactsName: string, remote: string, input: { files: ChangesetFile[]; message: string; author: CommitAuthor }): Promise<string> {
-    const repo = await this.env.ARTIFACTS.get(artifactsName);
-    const token = await repo.createToken("write", 3600);
-    try {
-      return await commitChangesetOnArtifacts(artifactsName, remote, token, repo, input);
-    } finally {
-      repo[Symbol.dispose]?.();
+  /** The tool surface, by name -- the same ToolDef.execute() contract agent/tools.ts already defines, just reached over RPC instead of an in-process call. */
+  async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    if (WORKER_INCOMPATIBLE_TOOLS.has(name)) {
+      throw new Error(`"${name}" can't run on a Worker (no child_process, no real git worktrees, no \`gh\` CLI there) -- it's a local-only tool.`);
     }
-  }
-
-  async readFileAtCommit(artifactsName: string, commitHash: string, path: string): Promise<string> {
-    const repo = await this.env.ARTIFACTS.get(artifactsName);
-    try {
-      return await readFileAtCommit(repo, commitHash, path);
-    } finally {
-      repo[Symbol.dispose]?.();
-    }
+    const tool = ALL_TOOLS.find((t) => t.name === name);
+    if (!tool) throw new Error(`no such tool: ${name}`);
+    return withBackend(this.backend, () => tool.execute(args));
   }
 }

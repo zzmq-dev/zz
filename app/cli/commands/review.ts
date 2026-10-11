@@ -56,9 +56,11 @@ export async function review(options: ReviewOptions): Promise<void> {
 
   try {
     for (;;) {
-      const claimable = claimableAcrossRepos(
-        resolvedRepos.map((r) => ({ repo: r.slug })),
-        config.agent,
+      const claimable = (
+        await claimableAcrossRepos(
+          resolvedRepos.map((r) => ({ repo: r.slug })),
+          config.agent,
+        )
       ).filter((c) => c.ask.kind === "changeset_review");
 
       if (claimable.length === 0) {
@@ -74,17 +76,17 @@ export async function review(options: ReviewOptions): Promise<void> {
       if (choice === "s") continue;
 
       if (!next.alreadyClaimed) {
-        const claim = ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
-        const lane = resolveBackend().readLane(resolved.slug, next.laneId);
-        answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+        const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
+        const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
+        await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
       }
 
       if (choice === "a") {
-        answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+        await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
         console.log(`approved ${next.ask.id}`);
       } else {
         const reason = await rl.question("reason: ");
-        answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
+        await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
         console.log(`requested changes on ${next.ask.id}: ${reason}`);
       }
     }

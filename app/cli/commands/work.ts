@@ -73,15 +73,15 @@ function sleep(ms: number): Promise<void> {
 // claim/retry turns before an agent worked around it by hand.
 async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
   const storage = resolveStorageBackend();
-  let repoLane = storage.readLane(repo.slug, REPO_RUNG_PATH);
+  let repoLane = await storage.readLane(repo.slug, REPO_RUNG_PATH);
   if (!repoLane) {
-    repoLane = proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
-    const review = ask(repo.slug, repoLane.id, { kind: "review_request", from: agent });
-    answer(repo.slug, repoLane.id, review, { from: agent, action: "grant" });
+    repoLane = await proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
+    const review = await ask(repo.slug, repoLane.id, { kind: "review_request", from: agent });
+    await answer(repo.slug, repoLane.id, review, { from: agent, action: "grant" });
   }
   const rootRung = await storage.readAnchor(repo.slug, REPO_RUNG_PATH);
   if (!rootRung) {
-    const commits = storage.listCommits(repo.slug);
+    const commits = await storage.listCommits(repo.slug);
     const root = commits[0];
     if (root) {
       await mergeLaneLadder(repo.slug, {
@@ -200,8 +200,8 @@ async function runClaimedAsk(
     // The real check, not "did the model stop calling tools" -- a
     // model that only describes a plan in prose and then stops has not
     // answered this ask, no matter how confident it sounds.
-    isActuallyDone: () => {
-      const lane = resolveStorageBackend().readLane(resolved.slug, laneId);
+    isActuallyDone: async () => {
+      const lane = await resolveStorageBackend().readLane(resolved.slug, laneId);
       return lane?.history.some((e) => e.type === "ANSWER" && e.ask === theAsk.id) ?? false;
     },
   });
@@ -247,7 +247,7 @@ export async function work(options: WorkOptions): Promise<void> {
   let lastIdleLogged: string | null = null;
 
   for (;;) {
-    const claimable = claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
+    const claimable = await claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
     if (claimable.length === 0) {
       const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
       statusRef.current = msg;

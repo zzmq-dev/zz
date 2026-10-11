@@ -8,8 +8,23 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const appRoot = join(here, "..", "..");
+// Lazy, not module-scope: import.meta.url doesn't exist in workerd
+// (confirmed directly building the Worker side -- a module-scope
+// fileURLToPath(import.meta.url) crashes a Worker immediately on
+// load, "Received undefined", even in a module nothing there ever
+// calls). agent/tools.ts imports this file for run_in_sandbox, which
+// can't run in a Worker anyway (no child_process there either) --
+// deferring this until resolveRepo/ensureCloned actually run means
+// the Worker bundle can include this file without crashing on load,
+// since neither of those genuinely executes there.
+let appRootCache: string | null = null;
+function appRoot(): string {
+  if (!appRootCache) {
+    const here = dirname(fileURLToPath(import.meta.url));
+    appRootCache = join(here, "..", "..");
+  }
+  return appRootCache;
+}
 
 export interface ResolvedRepo {
   slug: string; // "owner/repo"
@@ -34,8 +49,8 @@ export function resolveRepo(slug: string): ResolvedRepo {
   return {
     slug,
     name,
-    repoDir: join(appRoot, "demo-repos", name),
-    stateDir: join(appRoot, "state", name),
+    repoDir: join(appRoot(), "demo-repos", name),
+    stateDir: join(appRoot(), "state", name),
   };
 }
 

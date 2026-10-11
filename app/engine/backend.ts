@@ -18,11 +18,16 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface Backend {
   readonly name: string;
 
-  // git content
-  ensureCloned(repo: string): void;
-  listCommits(repo: string): CommitRow[];
-  diffCommit(repo: string, commit: CommitRow): FileChangeRow[];
-  readFileAtCommit(repo: string, sha: string, path: string): string;
+  // git content -- async on every method, not just the ones that
+  // obviously need it: a CloudflareBackend's "read" is a real network
+  // call (Artifacts), not a filesystem read, even where LocalBackend's
+  // equivalent happens to be synchronous. Matching the interface to
+  // the easier (local, sync) case first was a real mistake found only
+  // once a genuinely async backend had to implement it for real.
+  ensureCloned(repo: string): Promise<void>;
+  listCommits(repo: string): Promise<CommitRow[]>;
+  diffCommit(repo: string, commit: CommitRow): Promise<FileChangeRow[]>;
+  readFileAtCommit(repo: string, sha: string, path: string): Promise<string>;
   /** The only thing that writes code -- a real commit, via isomorphic-git (already Workers-compatible on the local path too). Returns the new commit's oid. */
   commitChangeset(repo: string, input: { files: ChangesetFile[]; message: string; author: CommitAuthor }): Promise<string>;
 
@@ -33,11 +38,11 @@ export interface Backend {
   appendRepoChildren(repo: string, children: { path: string; kind: RungKind }[]): Promise<void>;
 
   // Lane/Ask/Answer
-  readLane(repo: string, laneId: string): Lane | null;
-  writeLane(repo: string, lane: Lane): void;
-  listLanes(repo: string): Lane[];
-  /** Atomic read-modify-write -- the race-free primitive every ask()/answer() mutation goes through. */
-  withLane(repo: string, laneId: string, mutate: (lane: Lane) => void): Lane;
+  readLane(repo: string, laneId: string): Promise<Lane | null>;
+  writeLane(repo: string, lane: Lane): Promise<void>;
+  listLanes(repo: string): Promise<Lane[]>;
+  /** Atomic read-modify-write -- the race-free primitive every ask()/answer() mutation goes through. `mutate` itself stays synchronous (it's pure in-memory logic -- RBAC checks, pushing onto history) even though the surrounding read/write now genuinely isn't. */
+  withLane(repo: string, laneId: string, mutate: (lane: Lane) => void): Promise<Lane>;
 }
 
 let cachedLocal: Backend | null = null;

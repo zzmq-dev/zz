@@ -43,21 +43,21 @@ export function createLocalBackend(): Backend {
   return {
     name: "local",
 
-    ensureCloned(repo) {
+    async ensureCloned(repo) {
       const repoDir = repoDirOf(repo);
       if (existsSync(repoDir)) return;
       execFileSync("git", ["clone", "--quiet", `https://github.com/${repo}.git`, repoDir], { stdio: "inherit" });
     },
 
-    listCommits(repo): CommitRow[] {
+    async listCommits(repo): Promise<CommitRow[]> {
       return listCommitsChronological(repoDirOf(repo));
     },
 
-    diffCommit(repo, commit): FileChangeRow[] {
+    async diffCommit(repo, commit): Promise<FileChangeRow[]> {
       return commitFileChanges(repoDirOf(repo), commit);
     },
 
-    readFileAtCommit(repo, sha, path): string {
+    async readFileAtCommit(repo, sha, path): Promise<string> {
       return fileContentAtCommit(repoDirOf(repo), sha, path);
     },
 
@@ -78,19 +78,19 @@ export function createLocalBackend(): Backend {
       await appendRepoChildrenImpl(repoDirOf(repo), stateDirOf(repo), children);
     },
 
-    readLane(repo, laneId): Lane | null {
+    async readLane(repo, laneId): Promise<Lane | null> {
       return readLaneImpl(stateDirOf(repo), laneId);
     },
 
-    writeLane(repo, lane: Lane): void {
+    async writeLane(repo, lane: Lane): Promise<void> {
       writeLaneImpl(stateDirOf(repo), lane);
     },
 
-    listLanes(repo): Lane[] {
+    async listLanes(repo): Promise<Lane[]> {
       return listLanesImpl(stateDirOf(repo));
     },
 
-    withLane(repo, laneId, mutate): Lane {
+    async withLane(repo, laneId, mutate): Promise<Lane> {
       return withLaneImpl(stateDirOf(repo), laneId, mutate);
     },
   };

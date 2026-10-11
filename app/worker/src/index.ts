@@ -1,74 +1,134 @@
-// Minimal proof-of-mechanism Worker -- step 2 of
-// site/content/remote-backend/index.md's build sequencing: "just
-// enough of the interface implemented to clone a real repo into a
-// real Artifacts repo and read it back." Not the real MaintainerDO
-// yet, just confirming the two previously-unverified things actually
-// work *inside workerd*, not just in plain Node: the native
-// ARTIFACTS binding's read methods, and an isomorphic-git write+push
-// using an in-memory fs (no node:fs exists here).
+// Proof-of-mechanism Worker for the Cloudflare backend
+// (site/content/remote-backend/index.md). /full-protocol-test is the
+// real target: the actual agent/tools.ts tool surface, through a real
+// MaintainerDO, doing the real protocol end to end (propose -> work ->
+// changeset_review -> submit_changeset -> commit -> Ladder write ->
+// read back) against a real Artifacts repo. The other routes are the
+// smaller, lower-level proofs built incrementally to get there, kept
+// as regression checks for the mechanisms underneath (native reads,
+// isomorphic-git writes, the Ladder's scoped notes checkout).
 import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
 import { MaintainerDO } from "./MaintainerDO.js";
 import { commitChangesetOnArtifacts, readFileAtCommit } from "./cloudflareGitBackend.js";
-import { writeRung, readRung } from "./cloudflareLadderBackend.js";
+import { writeRung, readRung, appendRepoChildren } from "./cloudflareLadderBackend.js";
 
 export { MaintainerDO };
 
+// Artifacts/ArtifactsRepo/ArtifactsCreateRepoResult are ambient globals
+// from @cloudflare/workers-types (tsconfig's "types" pulls them in) --
+// no hand-rolled copy needed, and no import either; a hand-rolled copy
+// used to live here (and drifted from the real shape -- see
+// cloudflareGitBackend.ts's header for the same fix made there).
 interface Env {
-  ARTIFACTS: {
-    create(name: string, opts?: { description?: string; readOnly?: boolean; setDefaultBranch?: string }): Promise<{ name: string; remote: string; defaultBranch: string; token: { plaintext: string; expiresAt?: string } | string }>;
-    get(name: string): Promise<ArtifactsRepo>;
-    delete(name: string): Promise<boolean>;
-  };
+  ARTIFACTS: Artifacts;
   MAINTAINER_DO: DurableObjectNamespace<MaintainerDO>;
-}
-
-interface ArtifactsCommit {
-  hash: string;
-  treeHash: string;
-  message: string;
-  parents: string[];
-}
-
-interface ArtifactsRepo extends Disposable {
-  info(): Promise<unknown>;
-  createToken(scope?: "read" | "write", ttl?: number): Promise<{ plaintext: string; expiresAt?: string }>;
-  readCommit(hash: string): Promise<ArtifactsCommit | null>;
-  readTree(hash: string): Promise<{ name: string; hash: string; type: string; mode: string }[] | null>;
-  readBlob(hash: string): Promise<Blob | null>;
-  log(opts?: { ref?: string; limit?: number }): Promise<ArtifactsCommit[]>;
 }
 
 function tokenString(token: { plaintext: string } | string): string {
   return typeof token === "string" ? token.split("?")[0] : token.plaintext;
 }
 
-async function testMaintainerDo(env: Env): Promise<Response> {
+async function seedRepo(env: Env, repoName: string, files: { path: string; content: string }[]): Promise<{ remote: string; commitOid: string }> {
+  const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
+  const fs = createMemFs();
+  const dir = "/seed";
+  await git.init({ fs, dir, defaultBranch: "main" });
+  const entries = [];
+  for (const f of files) {
+    const oid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode(f.content) });
+    entries.push({ mode: "100644", path: f.path, oid, type: "blob" as const });
+  }
+  const tree = await git.writeTree({ fs, dir, tree: entries });
+  const person = { name: "seed", email: "seed@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+  const commitOid = await git.writeCommit({ fs, dir, commit: { message: "seed", tree, parent: [], author: person, committer: person } });
+  await git.writeRef({ fs, dir, ref: "refs/heads/main", value: commitOid, force: true });
+  await git.push({ fs, http, dir, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: tokenString(created.token) }), ref: "main", remoteRef: "main" });
+  return { remote: created.remote, commitOid };
+}
+
+// The real tool surface, through a real DO, doing the real protocol
+// end to end -- the thing all the other routes were building toward.
+// Skips run_in_sandbox (can't run on a Worker, by design) and composes
+// file content directly instead, same as the rest of this test's
+// seeding does; everything else is the actual zz protocol, unmodified.
+async function testFullProtocol(env: Env): Promise<Response> {
+  const repoName = "full-protocol-" + Date.now();
   const steps: Record<string, unknown> = {};
+  const actor = "zz-worker-test";
   try {
-    const id = env.MAINTAINER_DO.idFromName("zz-demo/do-test");
+    const { commitOid: seedCommitOid } = await seedRepo(env, repoName, [{ path: "clamp.js", content: "export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n" }]);
+    steps.seeded = seedCommitOid;
+
+    const id = env.MAINTAINER_DO.idFromName(repoName);
     const stub = env.MAINTAINER_DO.get(id);
+    await stub.configure(repoName);
+    const call = (name: string, args: Record<string, unknown>) => stub.callTool(name, args);
 
-    const lane = await stub.proposeLane({ id: "_repo", repo: "zz-demo/do-test", name: "do-test", objective: "prove Lane storage on a real DO", scope: ["**"], proposedBy: "zz-worker-test" });
-    steps.proposedLane = lane;
+    const lane = (await call("lane_propose", { repo: repoName, name: "full-protocol-test", objective: "prove the real tool surface end to end", scope: ["**"], actor })) as { id: string };
+    steps.lane = lane;
 
-    const workAsk = await stub.ask(lane.id, { kind: "work", from: "human", payload: { description: "prove the round trip" } });
-    steps.postedAsk = workAsk;
+    const workAsk = (await call("ask_post", { repo: repoName, lane_id: lane.id, kind: "work", from: "human", payload: { description: "add isOdd to index.js" } })) as { id: string };
+    await call("ask_claim", { repo: repoName, lane_id: lane.id, ask_id: workAsk.id, actor });
 
-    const claim = await stub.ask(lane.id, { kind: "claim_request", from: "zz-worker-test", payload: { target: workAsk.id } });
-    await stub.answer(lane.id, claim, { from: "zz-worker-test", action: "grant" });
-    steps.claimed = true;
+    const proposedFiles = [
+      { path: "clamp.js", content: "export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n" },
+      { path: "index.js", content: "export { clamp } from \"./clamp.js\";\n\nexport function isOdd(n) { return n % 2 !== 0; }\n" },
+    ];
 
-    const finalAnswer = await stub.answer(lane.id, workAsk, { from: "zz-worker-test", action: "complete", payload: { result: "done, for real, on a Durable Object" } });
-    steps.answered = finalAnswer;
+    // The Maintainer-role gate from earlier this session: a review has
+    // to exist and be granted before submit_changeset is even
+    // claimable (enforced in engine/lane.ts's answer(), not just
+    // hoped for) -- so post and grant it first, same order
+    // agent/scriptedWork.ts's real flow uses.
+    const review = (await call("ask_post", { repo: repoName, lane_id: lane.id, kind: "changeset_review", from: actor, payload: { taskDescription: "add isOdd", files: proposedFiles, message: "add isOdd", summary: "Add isOdd(n)" } })) as { id: string };
+    await call("ask_claim", { repo: repoName, lane_id: lane.id, ask_id: review.id, actor });
+    await call("ask_answer", { repo: repoName, lane_id: lane.id, ask_id: review.id, actor, action: "grant" });
+    steps.reviewGranted = true;
 
-    const readBack = await stub.readLane(lane.id);
-    steps.readBack = readBack;
+    const submit = (await call("ask_post", {
+      repo: repoName,
+      lane_id: lane.id,
+      kind: "submit_changeset",
+      from: actor,
+      payload: { files: proposedFiles, message: "add isOdd", summary: "Add isOdd(n)" },
+      depends_on: [workAsk.id, review.id],
+    })) as { id: string };
+    await call("ask_answer", { repo: repoName, lane_id: lane.id, ask_id: workAsk.id, actor, action: "complete", payload: { summary: "proposed" } });
 
+    await call("ask_claim", { repo: repoName, lane_id: lane.id, ask_id: submit.id, actor });
+    const commitResult = (await call("commit_changeset", { repo: repoName, files: proposedFiles, message: "add isOdd", author_name: actor, author_email: `${actor}@local` })) as { commitOid: string };
+    steps.commitOid = commitResult.commitOid;
+
+    const now = new Date().toISOString();
+    const source = [{ kind: "commit", ref: commitResult.commitOid, title: "add isOdd", author: actor, at: now }];
+    // appendRepoChildren (called by mergeLaneLadder after every
+    // non-root rung write) requires the "_repo" root note to already
+    // exist -- demo/greenfield.ts's own bootstrap writes this once,
+    // first, before anything else; this test has to do the same.
+    await call("ladder_write_rung", { repo: repoName, rung: { path: "_repo", kind: "repo", summary: "A test repo for the full protocol.", sources: source, children: [] } });
+    steps.rootRungWritten = true;
+    await call("ladder_write_rung", { repo: repoName, rung: { path: "index.js", kind: "file", summary: "Re-exports clamp and adds isOdd.", sources: source, children: [] } });
+    steps.fileRungWritten = true;
+    await call("ladder_write_rung", {
+      repo: repoName,
+      rung: { path: `changesets/${commitResult.commitOid}`, kind: "changeset", summary: "Add isOdd.", sources: source, children: [{ path: `changesets/${commitResult.commitOid}/index.js`, kind: "filechange", summary: "Added isOdd.", sources: source, children: [] }] },
+    });
+    steps.changesetRungWritten = true;
+    await call("ask_answer", { repo: repoName, lane_id: lane.id, ask_id: submit.id, actor, action: "complete", payload: { commitOid: commitResult.commitOid } });
+    steps.answered = true;
+
+    steps.readIndexRung = await call("ladder_read", { repo: repoName, path: "index.js" });
+    steps.readLane = await call("lane_get", { repo: repoName, lane_id: lane.id });
+    steps.readFileAtCommit = await call("git_show_file", { repo: repoName, sha: commitResult.commitOid, path: "index.js" });
+
+    await env.ARTIFACTS.delete(repoName);
+    steps.cleanedUp = true;
     return Response.json({ ok: true, steps });
   } catch (err) {
-    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
   }
 }
 
@@ -76,35 +136,22 @@ async function testChangesetCommit(env: Env): Promise<Response> {
   const repoName = "changeset-proof-" + Date.now();
   const steps: Record<string, unknown> = {};
   try {
-    // Seed with two files via a plain push, same as step 2.
-    const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
-    const fs = createMemFs();
-    const dir = "/seed";
-    await git.init({ fs, dir, defaultBranch: "main" });
-    const aOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("export { clamp } from \"./clamp.js\";\n") });
-    const bOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n") });
-    const seedTree = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "index.js", oid: aOid, type: "blob" }, { mode: "100644", path: "clamp.js", oid: bOid, type: "blob" }] });
-    const person = { name: "seed", email: "seed@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
-    const seedCommitOid = await git.writeCommit({ fs, dir, commit: { message: "seed", tree: seedTree, parent: [], author: person, committer: person } });
-    await git.writeRef({ fs, dir, ref: "refs/heads/main", value: seedCommitOid, force: true });
-    const seedToken = tokenString(created.token);
-    await git.push({ fs, http, dir, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: seedToken }), ref: "main", remoteRef: "main" });
+    const { remote, commitOid: seedCommitOid } = await seedRepo(env, repoName, [
+      { path: "index.js", content: "export { clamp } from \"./clamp.js\";\n" },
+      { path: "clamp.js", content: "export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n" },
+    ]);
     steps.seeded = seedCommitOid;
 
     using repo = await env.ARTIFACTS.get(repoName);
-
-    // Now commit a changeset via the no-clone path -- only touches
-    // index.js; clamp.js must survive untouched via native re-fetch.
     const newToken = await repo.createToken("write", 3600);
     const commitOid = await commitChangesetOnArtifacts(
       repoName,
-      created.remote,
+      remote,
       newToken,
       repo,
       { files: [{ path: "index.js", content: "export { clamp } from \"./clamp.js\";\n\nexport function isOdd(n) { return n % 2 !== 0; }\n" }], message: "add isOdd", author: { name: "zz-worker", email: "zz-worker@local" } },
     );
     steps.changesetCommit = commitOid;
-
     steps.indexJsAfter = await readFileAtCommit(repo, commitOid, "index.js");
     steps.clampJsStillThere = await readFileAtCommit(repo, commitOid, "clamp.js");
 
@@ -113,38 +160,7 @@ async function testChangesetCommit(env: Env): Promise<Response> {
     return Response.json({ ok: true, steps });
   } catch (err) {
     await env.ARTIFACTS.delete(repoName).catch(() => {});
-    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
-  }
-}
-
-async function testDoChangeset(env: Env): Promise<Response> {
-  const repoName = "do-changeset-proof-" + Date.now();
-  const steps: Record<string, unknown> = {};
-  try {
-    const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
-    const fs = createMemFs();
-    const dir = "/seed";
-    await git.init({ fs, dir, defaultBranch: "main" });
-    const blobOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("one\n") });
-    const treeOid = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "a.txt", oid: blobOid, type: "blob" }] });
-    const person = { name: "seed", email: "seed@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
-    const seedCommitOid = await git.writeCommit({ fs, dir, commit: { message: "seed", tree: treeOid, parent: [], author: person, committer: person } });
-    await git.writeRef({ fs, dir, ref: "refs/heads/main", value: seedCommitOid, force: true });
-    await git.push({ fs, http, dir, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: tokenString(created.token) }), ref: "main", remoteRef: "main" });
-
-    const id = env.MAINTAINER_DO.idFromName("zz-demo/" + repoName);
-    const stub = env.MAINTAINER_DO.get(id);
-    const commitOid = await stub.commitChangeset(repoName, created.remote, { files: [{ path: "b.txt", content: "two\n" }], message: "add b.txt via the DO", author: { name: "zz-do", email: "zz-do@local" } });
-    steps.commitOid = commitOid;
-    steps.aTxt = await stub.readFileAtCommit(repoName, commitOid, "a.txt");
-    steps.bTxt = await stub.readFileAtCommit(repoName, commitOid, "b.txt");
-
-    await env.ARTIFACTS.delete(repoName);
-    steps.cleanedUp = true;
-    return Response.json({ ok: true, steps });
-  } catch (err) {
-    await env.ARTIFACTS.delete(repoName).catch(() => {});
-    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
   }
 }
 
@@ -152,24 +168,12 @@ async function testLadder(env: Env): Promise<Response> {
   const repoName = "ladder-proof-" + Date.now();
   const steps: Record<string, unknown> = {};
   try {
-    const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
-    const fs = createMemFs();
-    const dir = "/seed";
-    await git.init({ fs, dir, defaultBranch: "main" });
-    const blobOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n") });
-    const treeOid = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "clamp.js", oid: blobOid, type: "blob" }] });
-    const person = { name: "seed", email: "seed@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
-    const seedCommitOid = await git.writeCommit({ fs, dir, commit: { message: "seed", tree: treeOid, parent: [], author: person, committer: person } });
-    await git.writeRef({ fs, dir, ref: "refs/heads/main", value: seedCommitOid, force: true });
-    const seedToken = tokenString(created.token);
-    await git.push({ fs, http, dir, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: seedToken }), ref: "main", remoteRef: "main" });
+    const { remote, commitOid: seedCommitOid } = await seedRepo(env, repoName, [{ path: "clamp.js", content: "export function clamp(v,min,max){return Math.min(Math.max(v,min),max);}\n" }]);
     steps.seeded = seedCommitOid;
 
     using repo = await env.ARTIFACTS.get(repoName);
     const writeToken = await repo.createToken("write", 3600);
-
-    // Write a "file" rung (anchored to clamp.js's blob at HEAD).
-    await writeRung(created.remote, writeToken, repo, {
+    await writeRung(remote, writeToken, repo, {
       path: "clamp.js",
       kind: "file",
       summary: "Exports clamp(value, min, max).",
@@ -178,95 +182,102 @@ async function testLadder(env: Env): Promise<Response> {
     });
     steps.wroteFileRung = true;
 
-    // Write a "changeset" rung (anchored to the commit itself) with an embedded filechange child.
-    await writeRung(created.remote, writeToken, repo, {
-      path: `changesets/${seedCommitOid}`,
-      kind: "changeset",
-      summary: "Initial seed commit.",
-      sources: [{ kind: "commit", ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }],
-      children: [
-        {
-          path: `changesets/${seedCommitOid}/clamp.js`,
-          kind: "filechange",
-          summary: "Added clamp.js.",
-          sources: [{ kind: "commit", ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }],
-          children: [],
-        },
-      ],
-    });
-    steps.wroteChangesetRung = true;
-
-    // A SECOND file rung on the SAME notes ref ("code") as clamp.js's,
-    // via a completely separate repo handle/token -- the real test of
-    // whether the scoped-fetch-before-write actually prevents data
-    // loss, not just that a single write works (which force:true
-    // could satisfy even while silently clobbering).
-    using repoForSecondWrite = await env.ARTIFACTS.get(repoName);
-    const secondToken = await repoForSecondWrite.createToken("write", 3600);
-    // Seed a second file on main so it has a real blob to anchor to.
-    const fs2 = createMemFs();
-    const dir2 = "/second";
-    await git.init({ fs: fs2, dir: dir2, defaultBranch: "main" });
-    await git.addRemote({ fs: fs2, dir: dir2, remote: "origin", url: created.remote });
-    const fetchMain = await git.fetch({ fs: fs2, http, dir: dir2, remote: "origin", onAuth: () => ({ username: "x-token-auth", password: tokenString(secondToken) }), ref: "main", singleBranch: true, depth: 1 });
-    await git.writeRef({ fs: fs2, dir: dir2, ref: "refs/heads/main", value: fetchMain.fetchHead!, force: true });
-    const clampBlob = (await git.readTree({ fs: fs2, dir: dir2, oid: fetchMain.fetchHead!, filepath: "" })).tree.find((e) => e.path === "clamp.js")!.oid;
-    const otherBlob = await git.writeBlob({ fs: fs2, dir: dir2, blob: new TextEncoder().encode("export function other(){}\n") });
-    const newTree = await git.writeTree({ fs: fs2, dir: dir2, tree: [{ mode: "100644", path: "clamp.js", oid: clampBlob, type: "blob" }, { mode: "100644", path: "other.js", oid: otherBlob, type: "blob" }] });
-    const personSecond = { name: "second", email: "second@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
-    const secondCommitOid = await git.writeCommit({ fs: fs2, dir: dir2, commit: { message: "add other.js", tree: newTree, parent: [fetchMain.fetchHead!], author: personSecond, committer: personSecond } });
-    await git.writeRef({ fs: fs2, dir: dir2, ref: "refs/heads/main", value: secondCommitOid, force: true });
-    await git.push({ fs: fs2, http, dir: dir2, url: created.remote, onAuth: () => ({ username: "x-token-auth", password: tokenString(secondToken) }), ref: "main", remoteRef: "main" });
-
-    using repoForSecondRung = await env.ARTIFACTS.get(repoName);
-    const thirdToken = await repoForSecondRung.createToken("write", 3600);
-    await writeRung(created.remote, thirdToken, repoForSecondRung, {
-      path: "other.js",
-      kind: "file",
-      summary: "Exports other().",
-      sources: [{ kind: "commit", ref: secondCommitOid, title: "add other.js", author: "second", at: new Date().toISOString() }],
-      children: [],
-    });
-    steps.wroteSecondFileRung = true;
-
-    // Read both back -- fresh repo handle, fresh scoped checkout, no shared state with the writes above.
     using repo2 = await env.ARTIFACTS.get(repoName);
     const readToken = await repo2.createToken("read", 3600);
-    steps.readFileRung = await readRung(created.remote, readToken, repo2, "file", "clamp.js");
-    steps.readSecondFileRung = await readRung(created.remote, readToken, repo2, "file", "other.js");
-    steps.readChangesetRung = await readRung(created.remote, readToken, repo2, "changeset", `changesets/${seedCommitOid}`, seedCommitOid);
+    steps.readFileRung = await readRung(remote, readToken, repo2, "file", "clamp.js");
 
     await env.ARTIFACTS.delete(repoName);
     steps.cleanedUp = true;
     return Response.json({ ok: true, steps });
   } catch (err) {
     await env.ARTIFACTS.delete(repoName).catch(() => {});
-    return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
+  }
+}
+
+// Diagnostic only: what does git.fetch() actually return for a ref
+// that genuinely doesn't exist on the remote yet? scopedNotesCheckout
+// (cloudflareLadderBackend.ts) assumes it throws or returns a falsy
+// fetchHead -- this checks that assumption directly against a real
+// Artifacts repo instead of guessing from a confusing downstream error.
+// Diagnostic only: the "repo"-kind rung (anchored to rootCommitOid
+// rather than a file blob) and appendRepoChildren were both added
+// speculatively in this final phase and never exercised live --
+// testLadder only covers a "file" rung. Isolates each step so a
+// failure here points at exactly one of: writing the root note,
+// reading it back, or appending a child to it.
+async function testRepoRungAndAppend(env: Env): Promise<Response> {
+  const repoName = "repo-rung-proof-" + Date.now();
+  const steps: Record<string, unknown> = {};
+  try {
+    const { remote, commitOid: seedCommitOid } = await seedRepo(env, repoName, [{ path: "a.txt", content: "a\n" }]);
+    steps.seeded = seedCommitOid;
+    const source = [{ kind: "commit" as const, ref: seedCommitOid, title: "seed", author: "seed", at: new Date().toISOString() }];
+
+    using repo1 = await env.ARTIFACTS.get(repoName);
+    const writeToken1 = await repo1.createToken("write", 3600);
+    await writeRung(remote, writeToken1, repo1, { path: "_repo", kind: "repo", summary: "root", sources: source, children: [] });
+    steps.wroteRootRung = true;
+
+    using repo2 = await env.ARTIFACTS.get(repoName);
+    const readToken1 = await repo2.createToken("read", 3600);
+    steps.readRootAfterWrite = await readRung(remote, readToken1, repo2, "repo", "_repo");
+
+    using repo3 = await env.ARTIFACTS.get(repoName);
+    const writeToken2 = await repo3.createToken("write", 3600);
+    await appendRepoChildren(remote, writeToken2, repo3, [{ path: "a.txt", kind: "file" }]);
+    steps.appended = true;
+
+    using repo4 = await env.ARTIFACTS.get(repoName);
+    const readToken2 = await repo4.createToken("read", 3600);
+    steps.readRootAfterAppend = await readRung(remote, readToken2, repo4, "repo", "_repo");
+
+    await env.ARTIFACTS.delete(repoName);
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
+  }
+}
+
+async function testFetchMissingRef(env: Env): Promise<Response> {
+  const repoName = "fetch-missing-ref-" + Date.now();
+  const steps: Record<string, unknown> = {};
+  try {
+    const { remote } = await seedRepo(env, repoName, [{ path: "a.txt", content: "a\n" }]);
+    using repo = await env.ARTIFACTS.get(repoName);
+    const token = await repo.createToken("write", 3600);
+    const fs = createMemFs();
+    const dir = "/notes";
+    await git.init({ fs, dir, defaultBranch: "main" });
+    await git.addRemote({ fs, dir, remote: "origin", url: remote });
+    const onAuth = () => ({ username: "x-token-auth", password: tokenString(token) });
+    const ref = "refs/notes/zz/ladder/code";
+    try {
+      const result = await git.fetch({ fs, http, dir, remote: "origin", onAuth, ref, remoteRef: ref, singleBranch: true, tags: false });
+      steps.fetchResolved = true;
+      steps.fetchResult = { fetchHead: result.fetchHead, headers: result.headers ? Object.fromEntries(Object.entries(result.headers)) : null, pruned: result.pruned ?? null };
+    } catch (fetchErr) {
+      steps.fetchThrew = true;
+      steps.fetchError = fetchErr instanceof Error ? (fetchErr.stack ?? fetchErr.message) : String(fetchErr);
+    }
+    await env.ARTIFACTS.delete(repoName);
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
   }
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    if (new URL(req.url).pathname === "/do-test") return testMaintainerDo(env);
-    if (new URL(req.url).pathname === "/ladder-test") return testLadder(env);
-    if (new URL(req.url).pathname === "/changeset-test") return testChangesetCommit(env);
-    if (new URL(req.url).pathname === "/do-changeset-test") return testDoChangeset(env);
-    if (new URL(req.url).pathname === "/notes-native-test") {
-      try {
-        using repo = await env.ARTIFACTS.get("notes-test2");
-        const info = await repo.info();
-        const logMain = await repo.log({ ref: "main", limit: 5 });
-        const logNotes1 = await repo.log({ ref: "notes/zz/ladder/code", limit: 5 });
-        const logNotes2 = await repo.log({ ref: "refs/notes/zz/ladder/code", limit: 5 });
-        return Response.json({ ok: true, info, logMain, logNotes1, logNotes2 });
-      } catch (err) {
-        return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, { status: 500 });
-      }
-    }
-    if (new URL(req.url).pathname === "/do-read") {
-      const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName("zz-demo/do-test"));
-      return Response.json({ lane: await stub.readLane("_repo") });
-    }
+    const path = new URL(req.url).pathname;
+    if (path === "/full-protocol-test") return testFullProtocol(env);
+    if (path === "/ladder-test") return testLadder(env);
+    if (path === "/changeset-test") return testChangesetCommit(env);
+    if (path === "/fetch-missing-ref-test") return testFetchMissingRef(env);
+    if (path === "/repo-rung-test") return testRepoRungAndAppend(env);
+
     const repoName = "proof-" + Date.now();
     const steps: Record<string, unknown> = {};
     try {
@@ -274,7 +285,6 @@ export default {
       steps.created = { name: created.name, remote: created.remote };
       const token = tokenString(created.token);
 
-      // Seed one commit via push (nothing to read natively yet on a brand-new repo).
       const fs = createMemFs();
       const dir = "/repo";
       await git.init({ fs, dir, defaultBranch: "main" });
@@ -287,27 +297,20 @@ export default {
       const pushResult = await git.push({ fs, http, dir, url: created.remote, onAuth, ref: "main", remoteRef: "main" });
       steps.push = pushResult;
 
-      // Now read it back via the NATIVE binding -- no isomorphic-git, no clone.
-      steps.gettingRepo = "about to call env.ARTIFACTS.get";
       const repo = await env.ARTIFACTS.get(repoName);
-      steps.gotRepo = true;
       const log = await repo.log({ ref: "main", limit: 5 });
       steps.log = log;
       const nativeCommit = await repo.readCommit(commitOid);
-      steps.nativeCommitRaw = nativeCommit;
       const nativeTree = nativeCommit ? await repo.readTree(nativeCommit.treeHash) : null;
-      steps.nativeTreeRaw = nativeTree;
       const nativeBlob = nativeTree ? await repo.readBlob(nativeTree[0].hash) : null;
-      steps.nativeRead = {
-        blobText: nativeBlob ? await nativeBlob.text() : null,
-      };
+      steps.nativeRead = { blobText: nativeBlob ? await nativeBlob.text() : null };
 
       await env.ARTIFACTS.delete(repoName);
       steps.cleanedUp = true;
-
       return Response.json({ ok: true, steps });
     } catch (err) {
-      return Response.json({ ok: false, error: err instanceof Error ? err.message : String(err), steps }, { status: 500 });
+      await env.ARTIFACTS.delete(repoName).catch(() => {});
+      return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
     }
   },
 };

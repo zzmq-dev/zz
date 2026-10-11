@@ -86,10 +86,10 @@ export interface ClaimableEntry {
  * can ask for only coordinator-scope work without also being handed every
  * open-scope ask it's merely *permitted* to pick up).
  */
-export function claimableAcrossRepos(repos: { repo: string }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
+export async function claimableAcrossRepos(repos: { repo: string }[], actor: string, scope: WorkScope = "all"): Promise<ClaimableEntry[]> {
   const out: ClaimableEntry[] = [];
   for (const { repo } of repos) {
-    for (const lane of resolveBackend().listLanes(repo)) {
+    for (const lane of await resolveBackend().listLanes(repo)) {
       for (const a of claimableAsks(lane, actor)) {
         const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
         if (scope === "coordinator" && !isCoordScope) continue;
@@ -111,13 +111,13 @@ export function claimableAcrossRepos(repos: { repo: string }[], actor: string, s
  * granting the claim does.
  */
 export async function claimAndAnswer(repo: string, laneId: string, theAsk: AskEntry, actor: string, doWork: (theAsk: AskEntry) => Promise<unknown>): Promise<AnswerPayloadResult> {
-  const lane = resolveBackend().readLane(repo, laneId);
+  const lane = await resolveBackend().readLane(repo, laneId);
   if (!lane) throw new Error(`no such lane: ${laneId}`);
   const grantedBy = lane.coordinators[0] ?? actor;
-  const claim = ask(repo, laneId, { kind: "claim_request", from: actor, payload: { target: theAsk.id } });
-  answer(repo, laneId, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
+  const claim = await ask(repo, laneId, { kind: "claim_request", from: actor, payload: { target: theAsk.id } });
+  await answer(repo, laneId, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });
   const payload = await doWork(theAsk);
-  answer(repo, laneId, theAsk, { from: actor, action: "complete", payload });
+  await answer(repo, laneId, theAsk, { from: actor, action: "complete", payload });
   return { ask: theAsk, payload };
 }
 
@@ -134,7 +134,7 @@ interface AnswerPayloadResult {
  */
 export async function runWorkerLoop(repo: string, laneId: string, actor: string, handlers: Partial<Record<AskKind, (theAsk: AskEntry) => Promise<unknown>>>): Promise<void> {
   for (;;) {
-    const lane = resolveBackend().readLane(repo, laneId);
+    const lane = await resolveBackend().readLane(repo, laneId);
     if (!lane) throw new Error(`no such lane: ${laneId}`);
     const [next] = claimableAsks(lane, actor);
     if (!next) {

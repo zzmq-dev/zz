@@ -14,32 +14,18 @@ import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
 import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 
-export interface ArtifactsCommit {
-  hash: string;
-  treeHash: string;
-  message: string;
-  parents: string[];
-  author?: { name: string; email: string };
-}
-
-export interface ArtifactsTreeEntry {
-  name: string;
-  hash: string;
-  type: string;
-  mode: string;
-}
-
-export interface ArtifactsRepoHandle extends Disposable {
-  createToken(scope?: "read" | "write", ttl?: number): Promise<{ plaintext: string; expiresAt?: string }>;
-  readCommit(hash: string): Promise<ArtifactsCommit | null>;
-  readTree(hash: string): Promise<ArtifactsTreeEntry[] | null>;
-  readBlob(hash: string): Promise<Blob | null>;
-  log(opts?: { ref?: string; limit?: number }): Promise<ArtifactsCommit[]>;
-}
-
-export interface ArtifactsNamespace {
-  get(name: string): Promise<ArtifactsRepoHandle>;
-}
+// Aliases, not reimplementations: @cloudflare/workers-types ambiently
+// declares the real Artifacts/ArtifactsRepo/ArtifactsCommitMetadata
+// shapes (confirmed directly against node_modules -- info() does
+// exist and does carry `remote`; commit metadata does carry
+// authoredAt/committedAt/committer). A hand-rolled copy of these
+// interfaces lived here before and drifted from the real ones
+// (missing info(), missing authoredAt) -- caught by tsc once
+// cloudflareBackend.ts actually exercised those fields. Aliasing
+// keeps these names stable for every file that imports them.
+export type ArtifactsCommit = ArtifactsCommitMetadata;
+export type ArtifactsRepoHandle = ArtifactsRepo;
+export type ArtifactsNamespace = Artifacts;
 
 function tokenString(token: { plaintext: string } | string): string {
   return typeof token === "string" ? token.split("?")[0] : token.plaintext;
