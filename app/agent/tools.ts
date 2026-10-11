@@ -514,10 +514,23 @@ const runInSandbox: ToolDef = {
     required: ["repos", "command", "cwd"],
   },
   async execute({ repos, command, cwd }) {
+    // A model has been observed listing the same repo twice (the one
+    // it's changing, plus -- misreading "pass any repo it depends on"
+    // -- itself again as if it were its own dependency). Nothing
+    // deduped that, so a second `git worktree add` at the identical
+    // path crashed with a raw "fatal: already exists" instead of a
+    // clear, self-correctable tool error. Dedupe by slug first,
+    // keeping whichever entry has `files` (the one actually being
+    // tested) over a plain current-state entry.
+    const dedupedBySlug = new Map<string, SandboxRepoSpec>();
+    for (const spec of repos as SandboxRepoSpec[]) {
+      const existing = dedupedBySlug.get(spec.repo);
+      if (!existing || (!existing.files && spec.files)) dedupedBySlug.set(spec.repo, spec);
+    }
     const sandboxRoot = mkdtempSync(join(tmpdir(), "zz-sandbox-"));
     const worktrees: { repoDir: string; worktreePath: string; shortName: string }[] = [];
     try {
-      for (const spec of repos as SandboxRepoSpec[]) {
+      for (const spec of dedupedBySlug.values()) {
         const r = resolveRepo(spec.repo);
         const worktreePath = join(sandboxRoot, r.name);
         execFileSync("git", ["-C", r.repoDir, "worktree", "add", "--detach", worktreePath, "HEAD"], { encoding: "utf8" });
