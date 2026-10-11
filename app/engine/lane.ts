@@ -76,6 +76,17 @@ const STATUS_ON_GRANT: Partial<Record<AskKind, LaneStatus>> = {
   review_request: "active",
 };
 
+// Matches the actual shape observed in the wild (payload.files as an
+// array of {path, content}) -- the same shape a real submit_changeset
+// payload uses, which is exactly what makes this a shortcut rather
+// than a different, legitimate structure.
+function payloadEmbedsFiles(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const files = (payload as { files?: unknown }).files;
+  if (!Array.isArray(files) || files.length === 0) return false;
+  return files.every((f) => typeof f === "object" && f !== null && typeof (f as { path?: unknown }).path === "string" && typeof (f as { content?: unknown }).content === "string");
+}
+
 export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): AnswerEntry {
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   // Atomic: the duplicate-answer check, the RBAC check, and the write
@@ -104,6 +115,20 @@ export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input
     if (ASK_SCOPE[theAsk.kind] === "coordinator" && !lane.coordinators.includes(input.from)) {
       throw new Error(
         `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's coordinator-scope and "${input.from}" is not one of lane "${laneId}"'s coordinators (${lane.coordinators.join(", ")}).`,
+      );
+    }
+    // Observed directly (qwen3.8-27b on Groq): a contributor completing
+    // a "work" ask sometimes shortcuts the protocol by embedding its
+    // proposed file changes straight in the completion payload instead
+    // of posting a "submit_changeset" ask -- which reports success
+    // (ask_answer returns fine, the TUI shows "complete") while nothing
+    // is ever committed, since no coordinator-scope ask exists for
+    // anyone to pick up. A model reliably self-reports "done" here even
+    // though it isn't; this blocks the shortcut structurally instead of
+    // trusting that report.
+    if (theAsk.kind === "work" && input.action === "complete" && payloadEmbedsFiles(input.payload)) {
+      throw new Error(
+        `ask ${theAsk.id} ("work") can't be completed with file changes embedded in the payload -- that never gets committed. Post a "submit_changeset" ask (ask_post, kind "submit_changeset", payload { files, message, summary }) into this lane first, then answer this ask complete once that's posted.`,
       );
     }
     lane.history.push(entry);
