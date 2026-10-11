@@ -52,6 +52,15 @@ export type AskKind =
   // merge_request granting a Ladder write. No file ever needs to exist
   // on disk before this: the content lives entirely in the payload.
   | "submit_changeset"
+  // A Maintainer's review of a proposed changeset, before it may be
+  // merged -- is this what was actually asked for, does it stay in
+  // scope, does it do anything that wasn't requested. Separate from
+  // submit_changeset's own (coordinator-scope) grant, which is purely
+  // mechanical: 3-way merge, commit, Ladder writes. submit_changeset
+  // depends_on this, so it can't even be claimed before a Maintainer
+  // has granted it (see engine/lane.ts's ASK_SCOPE and the backstop
+  // check in answer()).
+  | "changeset_review"
   // Posted when a submit_changeset is denied specifically because
   // another change landed first and the proposal, based on a now-stale
   // snapshot, would have dropped it -- a real concurrency conflict
@@ -117,6 +126,15 @@ export interface Lane {
   scope: string[];
   trigger: Trigger;
   coordinators: string[];
+  // Who may grant a changeset_review -- the Maintainer role from
+  // site/content/governance/index.md ("Reviews and decides;
+  // accountable for what merges"), distinct from coordinators (which
+  // governs the mechanical merge step: commit_changeset,
+  // ladder_write_rung). Defaults to coordinators when not set
+  // explicitly, so existing fully-autonomous flows keep working;
+  // narrow it (e.g. to a single human actor id) to require real human
+  // sign-off.
+  maintainers: string[];
   budget?: { cap_usd: number; spent_usd: number };
   history: HistoryEntry[];
   related_lanes: RelatedLaneEntry[];

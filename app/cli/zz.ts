@@ -14,6 +14,7 @@ import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
 import { work } from "./commands/work.js";
 import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
+import { review } from "./commands/review.js";
 
 const program = new Command();
 program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");
@@ -145,6 +146,15 @@ program
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .action(async (opts: { repos?: string[] }) => {
     await top({ repos: opts.repos });
+  });
+
+program
+  .command("review")
+  .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge')
+  .option("--agent <id>", "your agent identity (default: from ~/.zz/config.json) -- must be listed as a maintainer on the lane to see anything")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .action(async (opts: { agent?: string; repos?: string[] }) => {
+    await review({ agent: opts.agent, repos: opts.repos });
   });
 
 program.parseAsync(process.argv);

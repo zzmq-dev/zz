@@ -16,7 +16,7 @@ import {
   listCommitsChronological,
 } from "../engine/ingest.js";
 import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
-import { claimableAsks } from "../engine/workqueue.js";
+import { claimableAsks, isResolved } from "../engine/workqueue.js";
 import { readAnchor } from "../engine/ladderNotes.js";
 import { readLane } from "../engine/store.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -373,6 +373,14 @@ const askClaim: ToolDef = {
     const r = resolveRepo(repo as string);
     const lane = readLane(r.stateDir, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
+    // depends_on was previously only advisory (claimableAsks' query
+    // filtered it out, but a direct ask_claim call bypassed that
+    // entirely) -- the real enforcement a submit_changeset's required
+    // changeset_review relies on.
+    const unresolvedDeps = (target.depends_on ?? []).filter((depId) => !isResolved(lane!, depId, ["grant", "complete"]));
+    if (unresolvedDeps.length > 0) {
+      throw new Error(`ask ${ask_id} depends on ${unresolvedDeps.join(", ")}, which ${unresolvedDeps.length === 1 ? "isn't" : "aren't"} resolved yet -- that needs to be granted/completed first.`);
+    }
     const grantedBy = lane!.coordinators[0] ?? actor;
     const claim = ask(r.stateDir, lane_id as string, { kind: "claim_request", from: actor as string, payload: { target: target.id } });
     answer(r.stateDir, lane_id as string, claim, { from: grantedBy, action: "grant", payload: { grant: `grant-${claim.id}` } });

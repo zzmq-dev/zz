@@ -20,7 +20,7 @@ function kindOf(e: FlatEvent): string | null {
   return e.entry.type === "ASK" ? e.entry.kind : null;
 }
 
-function scopeOf(e: FlatEvent): "coordinator" | "open" | null {
+function scopeOf(e: FlatEvent): "coordinator" | "open" | "maintainer" | null {
   if (e.entry.type !== "ASK") return null;
   return ASK_SCOPE[e.entry.kind] ?? null;
 }
@@ -38,7 +38,7 @@ export function LiveLog({ events, maxRows, scrollOffset }: { events: FlatEvent[]
   const [repoFilter, setRepoFilter] = useState("all");
   const [laneFilter, setLaneFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("all");
-  const [scope, setScope] = useState<"all" | "coordinator" | "open">("all");
+  const [scope, setScope] = useState<"all" | "coordinator" | "open" | "maintainer">("all");
   const { isRawModeSupported } = useStdin();
 
   useInput(
@@ -46,7 +46,7 @@ export function LiveLog({ events, maxRows, scrollOffset }: { events: FlatEvent[]
       if (input === "r") setRepoFilter((v) => cycle(repos, repos.includes(v) ? v : "all"));
       if (input === "L") setLaneFilter((v) => cycle(lanes, lanes.includes(v) ? v : "all"));
       if (input === "t") setKindFilter((v) => cycle(kinds, kinds.includes(v) ? v : "all"));
-      if (input === "s") setScope((v) => (v === "all" ? "coordinator" : v === "coordinator" ? "open" : "all"));
+      if (input === "s") setScope((v) => (v === "all" ? "coordinator" : v === "coordinator" ? "maintainer" : v === "maintainer" ? "open" : "all"));
     },
     { isActive: isRawModeSupported },
   );

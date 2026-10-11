@@ -27,9 +27,10 @@ function randomId(prefix: string): string {
 
 export function proposeLane(
   stateDir: string,
-  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[] },
+  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; maintainers?: string[] },
 ): Lane {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
+  const coordinators = input.coordinators ?? [input.proposedBy];
   const lane: Lane = {
     id: input.id,
     repo: input.repo,
@@ -39,7 +40,12 @@ export function proposeLane(
     status: "proposed",
     scope: input.scope,
     trigger,
-    coordinators: input.coordinators ?? [input.proposedBy],
+    coordinators,
+    // Defaults to the same set as coordinators, so a Lane proposed
+    // without explicit maintainers still works fully autonomously --
+    // narrow this explicitly (e.g. to a single human actor id) to
+    // require real sign-off on every changeset.
+    maintainers: input.maintainers ?? coordinators,
     history: [],
     related_lanes: [],
   };
@@ -117,6 +123,30 @@ export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input
         `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's coordinator-scope and "${input.from}" is not one of lane "${laneId}"'s coordinators (${lane.coordinators.join(", ")}).`,
       );
     }
+    // Same enforcement for the Maintainer role (site/content/governance)
+    // -- a changeset_review may only be granted/denied by someone this
+    // Lane actually lists as a maintainer, which can be a strict
+    // subset of coordinators (e.g. a single human actor id), not just
+    // "any coordinator."
+    if (ASK_SCOPE[theAsk.kind] === "maintainer" && !lane.maintainers.includes(input.from)) {
+      throw new Error(
+        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that requires being one of lane "${laneId}"'s maintainers (${lane.maintainers.join(", ")}).`,
+      );
+    }
+    // The mechanical merge backstop: a submit_changeset may not be
+    // completed without a changeset_review it depends_on actually
+    // having been granted. depends_on is already enforced at claim
+    // time (agent/tools.ts's ask_claim); this covers a direct
+    // ask_answer call that skipped claiming entirely.
+    if (theAsk.kind === "submit_changeset" && input.action === "complete") {
+      const reviewId = (theAsk.depends_on ?? []).find((id) => lane.history.some((e) => e.type === "ASK" && e.id === id && e.kind === "changeset_review"));
+      const approved = reviewId !== undefined && lane.history.some((e) => e.type === "ANSWER" && e.ask === reviewId && e.action === "grant");
+      if (!approved) {
+        throw new Error(
+          `ask ${theAsk.id} ("submit_changeset") can't be completed without an approved changeset_review in its depends_on -- post one (ask_post, kind "changeset_review") and get it granted by one of this lane's maintainers first.`,
+        );
+      }
+    }
     // Observed directly (qwen3.8-27b on Groq): a contributor completing
     // a "work" ask sometimes shortcuts the protocol by embedding its
     // proposed file changes straight in the completion payload instead
@@ -151,11 +181,13 @@ export function answer(stateDir: string, laneId: string, theAsk: AskEntry, input
 
 // Which actor may act on (claim, or grant/deny/complete) an ask of a
 // given kind: "coordinator" means only someone in that lane's
-// `coordinators` list; "open" means anyone. A property of the kind, not
-// a central lock -- the query that reads this (engine/workqueue.ts's
-// claimableAsks) is what a real concurrent actor would run against a
-// shared queue.
-export const ASK_SCOPE: Record<AskKind, "coordinator" | "open"> = {
+// `coordinators` list, "maintainer" only someone in its `maintainers`
+// list (the Maintainer role, site/content/governance -- can be a
+// strict subset of coordinators), "open" means anyone. A property of
+// the kind, not a central lock -- the query that reads this
+// (engine/workqueue.ts's claimableAsks) is what a real concurrent
+// actor would run against a shared queue.
+export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer"> = {
   claim_request: "coordinator",
   merge_request: "coordinator",
   review_request: "coordinator",
@@ -169,6 +201,7 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open"> = {
   work: "open",
   submit_changeset: "coordinator",
   resolve_conflict: "open",
+  changeset_review: "maintainer",
 };
 
 /**

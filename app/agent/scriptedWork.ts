@@ -129,6 +129,42 @@ async function verifyProposal(resolved: ResolvedRepo, files: { path: string; con
   })) as { exitCode: number; stdout: string; stderr: string };
 }
 
+// Posts the changeset_review first, then a submit_changeset that
+// depends_on it -- submit_changeset literally cannot be claimed until
+// a Maintainer grants the review (enforced in both agent/tools.ts's
+// ask_claim and engine/lane.ts's answer()), so "mechanically merge
+// it" and "is this actually what was asked for" are two separate,
+// separately-gated steps, not one agent's unilateral judgment call.
+async function postForReview(opts: {
+  resolved: ResolvedRepo;
+  laneId: string;
+  agent: string;
+  taskAskId: string;
+  taskDescription: string;
+  files: { path: string; content: string }[];
+  message: string;
+  summary: string;
+  baseCommit: string;
+}): Promise<void> {
+  const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit } = opts;
+  const review = (await callTool("ask_post", {
+    repo: resolved.slug,
+    lane_id: laneId,
+    kind: "changeset_review",
+    from: agent,
+    payload: { taskDescription, files, message, summary },
+    depends_on: [],
+  })) as AskEntry;
+  await callTool("ask_post", {
+    repo: resolved.slug,
+    lane_id: laneId,
+    kind: "submit_changeset",
+    from: agent,
+    payload: { files, message, summary, baseCommit },
+    depends_on: [taskAskId, review.id],
+  });
+}
+
 const PROPOSE_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. You never call tools or write JSON here -- you only write plain text in the exact format below, and the surrounding system parses it and handles every protocol step (claiming, testing, submitting) itself.
 
 Output format, exactly:
@@ -188,14 +224,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
     const result = await verifyProposal(resolved, proposal.files);
     if (result.exitCode === 0) {
-      await callTool("ask_post", {
-        repo: resolved.slug,
-        lane_id: laneId,
-        kind: "submit_changeset",
-        from: agent,
-        payload: { files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit },
-        depends_on: [theAsk.id],
-      });
+      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: description, files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit });
       await callTool("ask_answer", {
         repo: resolved.slug,
         lane_id: laneId,
@@ -204,7 +233,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
         action: "complete",
         payload: { summary: proposal.summary },
       });
-      onLog(`[scripted] sandbox passed -- posted submit_changeset and answered ${theAsk.id} complete`);
+      onLog(`[scripted] sandbox passed -- posted for review and answered ${theAsk.id} complete`);
       return;
     }
     lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
@@ -400,16 +429,9 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
     const result = await verifyProposal(resolved, allFiles);
     if (result.exitCode === 0) {
       const baseCommit = currentHeadSha(resolved);
-      await callTool("ask_post", {
-        repo: resolved.slug,
-        lane_id: laneId,
-        kind: "submit_changeset",
-        from: agent,
-        payload: { files: allFiles, message: payload.message, summary: payload.summary, baseCommit },
-        depends_on: [theAsk.id],
-      });
+      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: payload.originalDescription, files: allFiles, message: payload.message, summary: payload.summary, baseCommit });
       await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "complete", payload: { summary: payload.summary } });
-      onLog(`[scripted] conflict resolution passed -- posted submit_changeset and answered ${theAsk.id} complete`);
+      onLog(`[scripted] conflict resolution passed -- posted for review and answered ${theAsk.id} complete`);
       return;
     }
     lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
@@ -425,4 +447,70 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
     payload: { reason: `conflict resolution failed verification after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` },
   });
   onLog(`[scripted] gave up resolving conflict after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}`);
+}
+
+interface ChangesetReviewPayload {
+  taskDescription: string;
+  files: { path: string; content: string }[];
+  message: string;
+  summary: string;
+}
+
+// The policy this judges against is site/content/governance/index.md's
+// own definition of the Maintainer role -- "Reviews and decides;
+// accountable for what merges" -- and its security principle "never
+// trust self-declared scope": a Maintainer independently checks what a
+// change actually touches against what it claims to, rather than
+// trusting the contributor's own summary. This step exists
+// specifically so that check is never skipped, not folded silently
+// into the mechanical merge.
+const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a Maintainer (site/content/governance/index.md: "Reviews and decides; accountable for what merges"). You are reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your only job: does this change actually match what was asked, does it stay in scope, does it do anything that wasn't requested. Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
+
+You never call tools or write JSON here -- you only write plain text in the exact format below.
+
+Output format, exactly:
+DECISION: approve
+REASON: <one sentence>
+
+or:
+
+DECISION: request_changes
+REASON: <what's wrong -- out of scope, does something unrequested, doesn't actually address the task, etc.>
+
+Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
+
+function parseReviewDecision(text: string): { decision: "approve" | "request_changes"; reason: string } {
+  const decisionMatch = text.match(/^DECISION:\s*(approve|request_changes)/m);
+  const reasonMatch = text.match(/^REASON:\s*(.+)$/m);
+  if (!decisionMatch) throw new Error(`could not parse a DECISION: approve|request_changes line from the model's response -- got:\n${text.slice(0, 1000)}`);
+  return { decision: decisionMatch[1] as "approve" | "request_changes", reason: reasonMatch?.[1]?.trim() ?? "" };
+}
+
+export async function runChangesetReview(opts: ScriptedFlowOptions): Promise<void> {
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  if (!alreadyClaimed) {
+    await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+  }
+
+  const payload = theAsk.payload as ChangesetReviewPayload;
+  const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
+  const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt);
+  const { decision, reason } = parseReviewDecision(text);
+
+  if (decision === "approve") {
+    await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "grant", payload: { reason } });
+    onLog(`[scripted] approved changeset_review ${theAsk.id}: ${reason}`);
+    return;
+  }
+
+  await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason } });
+  // The gated submit_changeset is now permanently unclaimable (its
+  // depends_on will never resolve) -- a real, visible terminal state
+  // in the lane log, not denied outright here: denying it is a
+  // coordinator-scope action, and a Maintainer doing the reviewing is
+  // deliberately not required to also be a coordinator (that's the
+  // whole point of narrowing maintainers to e.g. a single human actor
+  // who approves but never merges).
+  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${reason} -- its submit_changeset stays permanently blocked`);
 }

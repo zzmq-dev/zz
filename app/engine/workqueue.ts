@@ -15,7 +15,7 @@ function isAsk(entry: Lane["history"][number]): entry is AskEntry {
   return entry.type === "ASK";
 }
 
-function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "complete">): boolean {
+export function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "complete">): boolean {
   return lane.history.some((e) => isAnswer(e) && e.ask === askId && actions.includes(e.action as "grant" | "complete"));
 }
 
@@ -55,7 +55,10 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .filter(isAsk)
     .filter((a) => !answeredAskIds.has(a.id))
     .filter((a) => (a.depends_on ?? []).every((depId) => isResolved(lane, depId, ["grant", "complete"])))
-    .filter((a) => ASK_SCOPE[a.kind] === "open" || lane.coordinators.includes(actor))
+    .filter((a) => {
+      const scope = ASK_SCOPE[a.kind];
+      return scope === "open" || (scope === "coordinator" && lane.coordinators.includes(actor)) || (scope === "maintainer" && lane.maintainers.includes(actor));
+    })
     .filter((a) => {
       const holder = claimHolder(lane, a.id);
       return holder === null || holder === actor;

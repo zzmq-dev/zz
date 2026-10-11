@@ -21,7 +21,7 @@ import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js"
 import type { AskEntry } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
-import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict } from "../../agent/scriptedWork.js";
+import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, runChangesetReview } from "../../agent/scriptedWork.js";
 import type { ChatBackend } from "../../agent/chatBackend.js";
 import { createOllamaBackend } from "../../agent/ollamaBackend.js";
 import { createGeminiBackend } from "../../agent/geminiBackend.js";
@@ -162,6 +162,11 @@ async function runClaimedAsk(
   }
   if (theAsk.kind === "resolve_conflict") {
     await runResolveConflict({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    statusRef.current = baseStatus;
+    return;
+  }
+  if (theAsk.kind === "changeset_review") {
+    await runChangesetReview({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
     statusRef.current = baseStatus;
     return;
   }
