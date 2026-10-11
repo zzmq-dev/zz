@@ -9,3 +9,4 @@ demo-repos/mathkit-cli/
 .env
 *.db-shm
 *.db-wal
+worker/.wrangler
