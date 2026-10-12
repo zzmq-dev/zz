@@ -15,6 +15,7 @@ import { commitChangesetOnArtifacts, readFileAtCommit } from "./cloudflareGitBac
 import { writeRung, readRung, appendRepoChildren } from "./cloudflareLadderBackend.js";
 import { ensureMeta, readRepoMeta, readRepoRoles, writeRepoRoles } from "./repoMeta.js";
 import { handleWebRequest } from "./webApp.js";
+import { decryptSecret, type OAuthEnv } from "./auth.js";
 
 export { MaintainerDO };
 
@@ -23,7 +24,7 @@ export { MaintainerDO };
 // no hand-rolled copy needed, and no import either; a hand-rolled copy
 // used to live here (and drifted from the real shape -- see
 // cloudflareGitBackend.ts's header for the same fix made there).
-interface Env {
+interface Env extends OAuthEnv {
   ARTIFACTS: Artifacts;
   MAINTAINER_DO: DurableObjectNamespace<MaintainerDO>;
   DB: D1Database;
@@ -332,6 +333,21 @@ export default {
         author_email: "dev-seed@local",
       });
       return Response.json(commitResult);
+    }
+
+    if (path === "/dev-cf-userinfo-raw") {
+      // One-off diagnostic: parseCloudflareUserInfo's field-name guess
+      // (auth.ts's header flagged this as unverified) turned out wrong
+      // -- a real login landed display_name on the raw `sub` hex
+      // instead of an email/name, so neither was found. Decrypts the
+      // most recently stored Cloudflare access token and re-fetches
+      // userinfo directly to see its real shape.
+      const row = await env.DB.prepare("SELECT access_token_enc FROM account_identities WHERE provider = 'cloudflare' ORDER BY created_at DESC LIMIT 1").first<{ access_token_enc: string }>();
+      if (!row) return new Response("no cloudflare identity stored yet", { status: 404 });
+      const accessToken = await decryptSecret(env, row.access_token_enc);
+      const resp = await fetch("https://dash.cloudflare.com/oauth2/userinfo", { headers: { authorization: `Bearer ${accessToken}` } });
+      const text = await resp.text();
+      return new Response(`status ${resp.status}\n\n${text}`, { headers: { "content-type": "text/plain" } });
     }
 
     const webResponse = await handleWebRequest(req, env);

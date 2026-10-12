@@ -8,13 +8,11 @@
 // Cloudflare endpoints confirmed against developers.cloudflare.com's
 // own OAuth docs (fundamentals/oauth/integrate-with-cloudflare);
 // "User Details Read" is scope id "user-details.read", confirmed via
-// GET https://api.cloudflare.com/client/v4/oauth/scopes. The
-// userinfo RESPONSE SHAPE below is a best-effort guess (OIDC-style
-// flat claims, since the endpoint is literally named
-// "/oauth2/userinfo") -- not yet verified against a live response,
-// since that needs the Dashboard-side client to exist first. Treat
-// parseCloudflareUserInfo as the one thing to re-check once a real
-// client is wired up and logging in actually works end to end.
+// GET https://api.cloudflare.com/client/v4/oauth/scopes. The full
+// login flow (authorize -> consent -> token exchange -> userinfo ->
+// account/session creation) is verified live end to end as of
+// 2026-10-12; userinfo's real shape is just {sub, iss, aud, ...} with
+// no email or name, see the cloudflare provider's parseUserInfo.
 import { createHash, randomBytes } from "node:crypto";
 import type { Account } from "./accountsDb.js";
 
@@ -61,13 +59,15 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     clientSecret: (env) => required(env.CF_OAUTH_CLIENT_SECRET, "CF_OAUTH_CLIENT_SECRET"),
     redirectUri: (env) => required(env.CF_OAUTH_REDIRECT_URI, "CF_OAUTH_REDIRECT_URI"),
     parseUserInfo: (json) => {
-      const j = json as Record<string, unknown>;
-      // Best-effort across plausible shapes -- see header note.
-      const sub = (j.sub ?? j.id ?? (j.user as Record<string, unknown> | undefined)?.id) as string | undefined;
-      const email = (j.email ?? (j.user as Record<string, unknown> | undefined)?.email) as string | undefined;
-      const name = (j.name ?? j.username ?? (j.user as Record<string, unknown> | undefined)?.username) as string | undefined;
-      if (!sub) throw new Error(`Cloudflare userinfo response had no recognizable subject field: ${JSON.stringify(json)}`);
-      return { subject: sub, email: email ?? null, displayName: name ?? email ?? sub };
+      // Confirmed live (2026-10-12) against a real "user-details.read"
+      // grant: {aud, auth_time, iat, iss, rat, sub} -- no email, no
+      // name, despite the scope's name. Cloudflare's OAuth identity is
+      // just an opaque per-user `sub`; there is no profile data to ask
+      // for here. displayName falls back to a short, readable form of
+      // it rather than the raw 32-char hash.
+      const j = json as { sub?: string };
+      if (!j.sub) throw new Error(`Cloudflare userinfo response had no "sub": ${JSON.stringify(json)}`);
+      return { subject: j.sub, email: null, displayName: `cf-${j.sub.slice(0, 8)}` };
     },
   },
   google: {
