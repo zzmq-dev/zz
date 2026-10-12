@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveUserPath } from "./paths.js";
 
 export interface ZzConfig {
   agent: string;
@@ -12,7 +13,7 @@ export interface ZzConfig {
 }
 
 function configPath(): string {
-  return process.env.ZZ_CONFIG ?? join(homedir(), ".zz", "config.json");
+  return process.env.ZZ_CONFIG ? resolveUserPath(process.env.ZZ_CONFIG) : join(homedir(), ".zz", "config.json");
 }
 
 export function readConfig(overrides: { agent?: string; repos?: string[] } = {}): ZzConfig {

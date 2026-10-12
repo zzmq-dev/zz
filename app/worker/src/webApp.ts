@@ -525,7 +525,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       agent,
       `<div class="card stack">
          <p>Logged in as <b class="mono">${esc(agent.username)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
-         <pre>${esc(plaintext)}</pre>
+         <div class="clone-row"><pre>${esc(plaintext)}</pre><button class="secondary icon-btn" data-copy="${esc(plaintext)}" title="Copy">⧉</button></div>
          <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
        </div>`,
       { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
@@ -667,6 +667,96 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   await stub.configure(artifactsName);
   await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
 
+  return row;
+}
+
+// Stopwords stripped so the character budget buys meaningful words, not
+// filler -- "add the sum function" and "add sum function" should slugify
+// to the same thing.
+const TASK_SLUG_STOPWORDS = new Set(["a", "an", "the", "to", "for", "and", "or", "of", "in", "on", "with", "is", "are", "this", "that"]);
+const TASK_SLUG_MAX_CHARS = 40;
+const SHARD_SLUG_MAX_CHARS = 100;
+
+/** Turns a task's free-text description into a short, meaningful bracket segment ("add the sum function" -> "add-sum-function"). Not a blind character truncation: stopwords are dropped first so the ~40-char budget is spent on words that actually distinguish the task, and whole words are kept (never cut mid-word). */
+function slugifyTask(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]+/g, " ")
+    .split(/[\s-]+/)
+    .filter((w) => w && !TASK_SLUG_STOPWORDS.has(w));
+  const kept: string[] = [];
+  let len = 0;
+  for (const w of words) {
+    const next = len + (kept.length > 0 ? 1 : 0) + w.length;
+    if (next > TASK_SLUG_MAX_CHARS) break;
+    kept.push(w);
+    len = next;
+  }
+  return kept.join("-") || "task";
+}
+
+/** A short, stable stand-in for a slug segment that's too long to keep verbatim -- deterministic (same input always collapses the same way) so re-deriving a shard's slug twice still agrees. */
+function shortHash(input: string): string {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) h = (Math.imul(h, 31) + input.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36).slice(0, 8);
+}
+
+/** Computes a shard's slug from its parent's, appending `[taskSlug]` to the parent's repo-name segment and re-prefixing with the acting agent's own username -- the bracket-array-accessor convention the user chose for agent identities, extended to task decomposition. Recursive by construction: `parentSlug` may itself already be a shard's slug (it already carries its own bracket chain), so sharding a shard needs no special-casing here. If the result would exceed the overall length budget, the parent's chain prefix collapses into a short deterministic hash first, rather than growing the segment itself shorter (see slugifyTask's own comment for why). */
+function shardSlug(parentSlug: string, actorUsername: string, taskSlug: string): string {
+  const slashIdx = parentSlug.indexOf("/");
+  const parentName = slashIdx === -1 ? parentSlug : parentSlug.slice(slashIdx + 1);
+  let name = `${parentName}[${taskSlug}]`;
+  if (actorUsername.length + 1 + name.length > SHARD_SLUG_MAX_CHARS) {
+    name = `${shortHash(parentName)}[${taskSlug}]`;
+  }
+  return `${actorUsername}/${name}`;
+}
+
+/** Create-or-reuse a task shard: a real forked repo (ArtifactsRepo.fork, full default-branch history) scoped to one task, owned by the acting agent. `parentSlug` is whatever repo the task's own Lane currently lives in -- the true origin on a first-level shard, or an existing shard's slug when a sub-agent is being delegated a piece of an already-sharded task, which is what makes this recursive without extra code (see the user's "foo[task-a][task-b]" naming request). Idempotent: the slug is fully deterministic from (actorUsername, parentSlug, taskText), so a repeated call for the same task reuses the same shard rather than creating a new one each time. */
+async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskText: string): Promise<RepoRow> {
+  const parentRow = await getRepoBySlug(env.DB, parentSlug);
+  if (!parentRow) throw new ApiError(404, `no such repo "${parentSlug}"`);
+
+  const taskSlug = slugifyTask(taskText);
+  let slug = shardSlug(parentSlug, actor.username, taskSlug);
+
+  const existing = await getRepoBySlug(env.DB, slug);
+  if (existing) {
+    if (existing.shard_of_slug === parentSlug) return existing;
+    // Same (actor, parent, taskSlug) collided with an unrelated repo --
+    // the numeric-suffix convention already used elsewhere in this
+    // account's own repo list (e.g. "khkjhkh"/"khkjhkh2").
+    let n = 2;
+    while (await getRepoBySlug(env.DB, `${slug}-${n}`)) n++;
+    slug = `${slug}-${n}`;
+  }
+
+  const artifactsName = shortId("shard");
+  using parentRepo = await env.ARTIFACTS.get(parentRow.artifacts_name);
+  const created = await parentRepo.fork(artifactsName, { description: `${taskText} -- shard of ${parentSlug}` });
+  using shardRepo = await env.ARTIFACTS.get(artifactsName);
+  const token = await shardRepo.createToken("write", 3600);
+
+  // Unconditional writes, not ensureMeta's "only if missing" check --
+  // confirmed live that ArtifactsRepo.fork carries the zz-meta branch
+  // over from the parent regardless of defaultBranchOnly, so
+  // ensureMeta's existing-content check would see the PARENT's
+  // meta.json/roles.json (wrong owner/description/no shard_of) and
+  // silently no-op, leaving them stale. A freshly created shard always
+  // needs its own values written, never inherited ones.
+  const now = new Date().toISOString();
+  await writeRepoMeta(created.remote, token, {
+    description: taskText,
+    policy: { require_changeset_review: false, visibility: "public" },
+    owner: actor.username,
+    shard_of: parentSlug,
+    created_at: now,
+  });
+  await writeRepoRoles(created.remote, token, { grants: [{ principal: actor.username, role: "owner", granted_by: "system", at: now }] });
+
+  const row = await upsertRepo(env.DB, { slug, artifactsName, description: taskText, ownerUsername: actor.username, shardOfSlug: parentSlug });
+  await syncRepoRoleCache(env.DB, row.slug, [{ principal: actor.username, role: "owner", granted_by: "system", at: row.created_at }]);
   return row;
 }
 
@@ -887,8 +977,20 @@ async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> 
   return layout(
     "Work",
     me,
-    `<p class="hint">Every open Ask across every repo you can see that you're permitted to act on -- the same query \`zz work\` runs, just for a human clicking instead of an agent looping.</p>
-     <ul class="list">${rows || '<li class="empty">Nothing claimable right now.</li>'}</ul>`,
+    `${card(
+      "Claimable",
+      `<p class="hint">Every open Ask across every repo you can see that you're permitted to act on -- the same query \`zz work\` runs, just for a human clicking instead of an agent looping.</p>
+       <ul class="list">${rows || '<li class="empty">Nothing claimable right now.</li>'}</ul>`,
+    )}
+
+     ${card(
+       "Post an ask to a repo's root lane",
+       `<form method="post" action="/work/ask" class="stack">
+          <input name="repo_slug" placeholder="owner/repo-name" required>
+          <textarea name="description" placeholder="what do you need done?" required></textarea>
+          <button type="submit">Post ASK</button>
+        </form>`,
+     )}`,
   );
 }
 
@@ -1029,22 +1131,13 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
        { addModal: "modal-create-repo" },
      )}
 
-     ${card(
-       "Post an ask to a repo's root lane",
-       `<form method="post" action="/profile/ask" class="stack">
-          <input name="repo_slug" placeholder="owner/repo-name" required>
-          <textarea name="description" placeholder="what do you need done?" required></textarea>
-          <button type="submit">Post ASK</button>
-        </form>`,
-     )}
-
      <dialog id="modal-add-token" class="modal"><div class="modal-body">
        <h3>Add a token</h3>
        <form method="post" action="/profile/tokens" class="stack">
          <p class="hint" style="margin:0">Pick an agent you manage, or type a new name to create one (and mint its first token in the same step).</p>
          ${agentAutocompleteField("agent", "agent name or existing agent", "add-token")}
          <div class="modal-actions">
-           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Add</button>
          </div>
        </form>
@@ -1060,7 +1153,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
            ${LICENSE_ORDER.map((k) => `<option value="${esc(k)}">${esc(LICENSES[k].name)}</option>`).join("")}
          </select>
          <div class="modal-actions">
-           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Create</button>
          </div>
        </form>
@@ -1083,7 +1176,7 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
       me,
       `<div class="card stack">
          <p>Token for <b class="mono">${esc(agent.username)}</b> -- copy it now, it won't be shown again:</p>
-         <pre>${esc(token)}</pre>
+         <div class="clone-row"><pre>${esc(token)}</pre><button class="secondary icon-btn" data-copy="${esc(token)}" title="Copy">⧉</button></div>
          <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
        </div>
        ${card(
@@ -1158,7 +1251,7 @@ async function handleAskForm(request: Request, env: WebEnv): Promise<Response> {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
   }
-  return redirect(`/${me.username}`);
+  return redirect("/work");
 }
 
 async function handleVisibilityForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
@@ -1351,6 +1444,16 @@ async function handleApiRbacGrant(slug: string, request: Request, env: WebEnv): 
     if (!body.principal || !body.role) throw new ApiError(400, "principal and role are required");
     await doRbacGrant(env, me, slug, body.principal, body.role);
     return json({ ok: true });
+  });
+}
+
+async function handleApiShard(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { task?: string };
+    if (!body.task?.trim()) throw new ApiError(400, "task is required");
+    const row = await ensureShard(env, slug, me, body.task.trim());
+    return json(row, 201);
   });
 }
 
@@ -1688,7 +1791,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
          ${agentAutocompleteField("principal", "agent name or id", "add-role")}
          <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
          <div class="modal-actions">
-           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Grant</button>
          </div>
        </form>
@@ -1829,7 +1932,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     return me ? redirect(`/${me.username}`) : redirect("/login");
   }
   if (path === "/profile/tokens" && request.method === "POST") return handleTokenAddForm(request, env);
-  if (path === "/profile/ask" && request.method === "POST") return handleAskForm(request, env);
+  if (path === "/work/ask" && request.method === "POST") return handleAskForm(request, env);
   if (path === "/profile/repos" && request.method === "POST") return handleCreateRepoForm(request, env);
   {
     const m = path.match(/^\/profile\/tokens\/([^/]+)\/revoke$/);
@@ -1857,6 +1960,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/roles$/);
     if (m && request.method === "POST") return handleApiRbacGrant(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/shard$/);
+    if (m && request.method === "POST") return handleApiShard(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/ask$/);

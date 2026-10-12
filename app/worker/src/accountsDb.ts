@@ -50,6 +50,7 @@ export interface RepoRow {
   description: string | null;
   owner_username: string;
   visibility: "public" | "private";
+  shard_of_slug: string | null; // immediate-parent repo this was forked from as a task shard, or null for an ordinary repo -- see webApp.ts's ensureShard
   created_at: string;
   updated_at: string;
 }
@@ -196,17 +197,17 @@ export async function getAgentToken(db: D1Database, tokenId: string): Promise<Ag
   return db.prepare("SELECT * FROM agent_tokens WHERE id = ?").bind(tokenId).first<AgentToken>();
 }
 
-export async function upsertRepo(db: D1Database, row: { slug: string; artifactsName: string; description: string | null; ownerUsername: string }): Promise<RepoRow> {
+export async function upsertRepo(db: D1Database, row: { slug: string; artifactsName: string; description: string | null; ownerUsername: string; shardOfSlug?: string | null }): Promise<RepoRow> {
   const existing = await db.prepare("SELECT * FROM repos WHERE slug = ?").bind(row.slug).first<RepoRow>();
   const now = new Date().toISOString();
   if (existing) {
     await db.prepare("UPDATE repos SET description = ?, updated_at = ? WHERE slug = ?").bind(row.description, now, existing.slug).run();
     return { ...existing, description: row.description, updated_at: now };
   }
-  const repo: RepoRow = { slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_username: row.ownerUsername, visibility: "public", created_at: now, updated_at: now };
+  const repo: RepoRow = { slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_username: row.ownerUsername, visibility: "public", shard_of_slug: row.shardOfSlug ?? null, created_at: now, updated_at: now };
   await db
-    .prepare("INSERT INTO repos (slug, artifacts_name, description, owner_username, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(repo.slug, repo.artifacts_name, repo.description, repo.owner_username, repo.visibility, repo.created_at, repo.updated_at)
+    .prepare("INSERT INTO repos (slug, artifacts_name, description, owner_username, visibility, shard_of_slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(repo.slug, repo.artifacts_name, repo.description, repo.owner_username, repo.visibility, repo.shard_of_slug, repo.created_at, repo.updated_at)
     .run();
   return repo;
 }

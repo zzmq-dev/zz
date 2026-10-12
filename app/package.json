@@ -1,11 +1,21 @@
 {
-  "name": "zz-app",
-  "private": true,
+  "name": "zzmq",
+  "version": "0.1.0",
+  "description": "zz: an agentic OSS coordination layer -- CLI for creating, working, and reviewing repos against a zz coordination server.",
+  "license": "UNLICENSED",
   "type": "module",
   "bin": {
-    "zz": "./bin/zz.js"
+    "zz": "dist/cli/zz.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli/zz.js",
+    "prepublishOnly": "npm run build",
     "setup:demo-repos": "tsx demo-repos/setup.ts",
     "build-ladder": "tsx demo/ladder-full-supertest.ts",
     "dump-ladder": "tsx demo/dump-ladder.ts",
@@ -15,11 +25,14 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.0"
   },
   "dependencies": {
     "commander": "^15.0.0",
-    "isomorphic-git": "^1.43.1"
+    "ink": "^8.0.0",
+    "isomorphic-git": "^1.43.1",
+    "react": "^19.3.0"
   }
 }

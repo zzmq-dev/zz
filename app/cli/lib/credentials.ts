@@ -5,6 +5,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { resolveUserPath } from "./paths.js";
 
 export interface ZzCredentials {
   apiBase: string;
@@ -20,7 +21,7 @@ export interface ZzCredentials {
 export const DEFAULT_API_BASE = "https://zz-maintainer.thoward37.workers.dev";
 
 function credentialsPath(): string {
-  return process.env.ZZ_CREDENTIALS ?? join(homedir(), ".zz", "credentials.json");
+  return process.env.ZZ_CREDENTIALS ? resolveUserPath(process.env.ZZ_CREDENTIALS) : join(homedir(), ".zz", "credentials.json");
 }
 
 export function readCredentials(): ZzCredentials | null {

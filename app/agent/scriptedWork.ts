@@ -23,7 +23,8 @@
 import { execFileSync } from "node:child_process";
 import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
-import type { ResolvedRepo } from "../cli/lib/repo.js";
+import { resolveRepo, ensureCloned, type ResolvedRepo } from "../cli/lib/repo.js";
+import { apiFetch } from "../cli/lib/api.js";
 import type { AskEntry } from "../engine/types.js";
 import { resolveBackend } from "../engine/backend.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
@@ -151,14 +152,16 @@ async function postForReview(opts: {
   summary: string;
   baseCommit: string;
   callTool: ProtocolCall;
+  /** Shard provenance, when this proposal was actually committed for real in a task shard first (runContributorWorkAsk's remote path) -- carried for traceability/TUI display. Absent for local/demo mode and for runResolveConflict's own call (unchanged, no shard concept there). */
+  source?: { repo: string; lane: string; commitOid: string };
 }): Promise<void> {
-  const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit, callTool } = opts;
+  const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit, callTool, source } = opts;
   const review = (await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
     kind: "changeset_review",
     from: agent,
-    payload: { taskDescription, files, message, summary },
+    payload: { taskDescription, files, message, summary, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
     depends_on: [],
   })) as AskEntry;
   await callTool("ask_post", {
@@ -166,7 +169,7 @@ async function postForReview(opts: {
     lane_id: laneId,
     kind: "submit_changeset",
     from: agent,
-    payload: { files, message, summary, baseCommit },
+    payload: { files, message, summary, baseCommit, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
     depends_on: [taskAskId, review.id],
   });
 }
@@ -201,17 +204,54 @@ export interface ScriptedFlowOptions {
   onLog: (line: string) => void;
   /** Where a protocol mutation (ask_claim/ask_post/ask_answer/commit_changeset/ladder_write_rung) actually runs -- defaults to local execution. `zz work` against a remote repo passes callRemoteTool instead; run_in_sandbox is never affected by this, it's always local (see localCallTool/verifyProposal). */
   callTool?: ProtocolCall;
+  /** Remote mode only, runContributorWorkAsk only: builds a real `git clone`-able URL (credentials embedded) for a given slug, the same way `zz work` clones the repos it started with -- needed here because a task shard (see worker/src/webApp.ts's ensureShard) is discovered mid-run, not known up front. Its presence is also what gates the whole shard flow: omitted (local/demo mode), the contributor keeps working directly on `resolved`, exactly as before this feature existed. */
+  authedCloneUrlFor?: (slug: string) => string;
+  /** Called once a task shard's local clone is ready, so the TUI/mainLoop start watching it immediately instead of only finding out once the ask that created it completes (see cli/lib/watchedRepos.ts). */
+  onShardReady?: (repo: ResolvedRepo) => void;
 }
 
 const MAX_SANDBOX_ATTEMPTS = 2;
 
 export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
+  const { resolved: parentResolved, laneId: parentLaneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool, authedCloneUrlFor, onShardReady } = opts;
   if (!alreadyClaimed) {
-    await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+    await callTool("ask_claim", { repo: parentResolved.slug, lane_id: parentLaneId, ask_id: theAsk.id, actor: agent });
   }
 
   const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
+
+  // Remote contributor work always happens in a task shard: a real
+  // forked repo scoped to this one task, owned by this agent (see
+  // worker/src/webApp.ts's ensureShard) -- never directly on
+  // parentResolved, which this agent doesn't own. `parentResolved`
+  // here may itself already be a shard (a sub-agent picking up a
+  // delegated piece of an already-sharded task), which is exactly what
+  // makes sharding a shard work with no special-casing: ensureShard
+  // only ever looks at whatever repo the ask's own Lane lives in.
+  // Local/demo mode (authedCloneUrlFor omitted -- no Worker, no
+  // Artifacts, no D1 to shard against) keeps working directly on
+  // parentResolved, unchanged from before this feature existed.
+  let resolved = parentResolved;
+  let laneId = parentLaneId;
+  let shardSource: { repo: string; lane: string; commitOid: string } | undefined;
+  if (authedCloneUrlFor) {
+    const shardRow = await apiFetch<{ slug: string }>("POST", `/api/repos/${parentResolved.slug}/shard`, { task: description });
+    resolved = resolveRepo(shardRow.slug);
+    ensureCloned(resolved, authedCloneUrlFor(shardRow.slug));
+    onShardReady?.(resolved);
+    onLog(`[scripted] working in shard ${shardRow.slug}`);
+
+    const shardLane = (await callTool("lane_propose", {
+      repo: shardRow.slug,
+      name: description.slice(0, 60),
+      objective: description,
+      scope: ["**"],
+      actor: agent,
+      origin_lane: parentLaneId,
+      origin_repo: parentResolved.slug,
+    })) as { id: string };
+    laneId = shardLane.id;
+  }
 
   let proposal: ParsedFileProposal;
   let systemPrompt = PROPOSE_SYSTEM_PROMPT;
@@ -234,10 +274,55 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
     const result = await verifyProposal(resolved, proposal.files);
     if (result.exitCode === 0) {
-      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: description, files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit, callTool });
+      if (authedCloneUrlFor) {
+        // Commit for real in the shard -- the agent owns it, so this is
+        // authorized the same way a maintainer's own direct commit on a
+        // repo it coordinates is (lane_propose above made this agent
+        // the shard lane's coordinator). This, plus the ladder write
+        // right after, is the real "creating a changeset and a ladder
+        // within that lane" the shard flow exists for -- not just a
+        // JSON payload like the pre-shard design.
+        onLog(`[scripted] committing ${proposal.files.map((f) => f.path).join(", ")} in ${resolved.slug}`);
+        const commitResult = (await callTool("commit_changeset", {
+          repo: resolved.slug,
+          files: proposal.files,
+          message: proposal.message,
+          author_name: agent,
+          author_email: `${agent}@local`,
+        })) as { commitOid: string };
+        const now = new Date().toISOString();
+        const source = [{ kind: "commit" as const, ref: commitResult.commitOid, title: proposal.message, author: agent, at: now }];
+        await callTool("ladder_write_rung", {
+          repo: resolved.slug,
+          rung: [
+            ...proposal.files.map((f) => ({ path: f.path, kind: "file" as const, summary: proposal.summary, sources: source, children: [] })),
+            {
+              path: `changesets/${commitResult.commitOid}`,
+              kind: "changeset" as const,
+              summary: proposal.summary,
+              sources: source,
+              children: proposal.files.map((f) => ({ path: `changesets/${commitResult.commitOid}/${f.path}`, kind: "filechange" as const, summary: "changed.", sources: source, children: [] })),
+            },
+          ],
+        });
+        shardSource = { repo: resolved.slug, lane: laneId, commitOid: commitResult.commitOid };
+      }
+      await postForReview({
+        resolved: parentResolved,
+        laneId: parentLaneId,
+        agent,
+        taskAskId: theAsk.id,
+        taskDescription: description,
+        files: proposal.files,
+        message: proposal.message,
+        summary: proposal.summary,
+        baseCommit,
+        callTool,
+        source: shardSource,
+      });
       await callTool("ask_answer", {
-        repo: resolved.slug,
-        lane_id: laneId,
+        repo: parentResolved.slug,
+        lane_id: parentLaneId,
         ask_id: theAsk.id,
         actor: agent,
         action: "complete",
@@ -252,8 +337,8 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
   }
 
   await callTool("ask_answer", {
-    repo: resolved.slug,
-    lane_id: laneId,
+    repo: parentResolved.slug,
+    lane_id: parentLaneId,
     ask_id: theAsk.id,
     actor: agent,
     action: "deny",

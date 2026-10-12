@@ -6,6 +6,9 @@ try {
 } catch {
   // no .env file -- fine, env vars can still be set the normal way
 }
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { registerLocalBackendFactory } from "../engine/backend.js";
 import { createLocalBackend } from "../engine/localBackend.js";
@@ -24,8 +27,30 @@ import { repoSubmit } from "./commands/repo-submit.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
+// Reads package.json's own version rather than a hardcoded literal --
+// `npm version` is the one standard place a release bump happens, so
+// this is the one place that reads it back, instead of a second
+// string that's easy to forget to update alongside it. Walks upward
+// (not a fixed "../.." relative offset) because this file sits at a
+// different depth relative to the package root in dev (cli/zz.ts) vs.
+// built (dist/cli/zz.js) -- a fixed offset would be right for only one
+// of the two.
+function readOwnVersion(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = join(dir, "package.json");
+    try {
+      return (JSON.parse(readFileSync(candidate, "utf8")) as { version?: string }).version ?? "0.0.0";
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return "0.0.0"; // reached filesystem root -- shouldn't happen, fail soft
+      dir = parent;
+    }
+  }
+}
+
 const program = new Command();
-program.name("zz").description("zz: a coordination layer for agentic open source").version("0.1.0");
+program.name("zz").description("zz: a coordination layer for agentic open source").version(readOwnVersion());
 
 const ladder = program.command("ladder").description("build and read a repo's Ladder");
 
@@ -99,7 +124,7 @@ program
   .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [repo] is shorthand for --repos <repo> (a single owner/repo); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- expands to "<your username>[claude]", using the token `zz agent create`/`zz agent token` already saved locally for it (see `zz agent --help`). Omit to act as yourself (your own `zz login` session).')
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--scope <scope>", "coordinator, contributor, or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
@@ -165,7 +190,7 @@ program
   .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge. [repo] is shorthand for --repos <repo>')
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json)")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
   .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean }) => {
     await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local });

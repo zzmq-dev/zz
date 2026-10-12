@@ -2,7 +2,7 @@
 // protocol, built from the same TabView/LaneList/LiveLog/LadderView used
 // by `zz top`, plus an activity tab fed by the running work loop's
 // LogBuffer.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { TabView } from "./TabView.js";
 import { LaneList } from "./LaneList.js";
 import { LiveLog } from "./LiveLog.js";
@@ -14,22 +14,38 @@ import { flattenEvents } from "./types.js";
 import { laneListText, liveLogText, ladderText } from "./textExport.js";
 import type { LogBuffer } from "./LogBuffer.js";
 
+// Loose structural shape, not an import of cli/lib/watchedRepos.js's
+// RepoWatchStore -- tui/ has never depended on cli/ (the dependency
+// runs the other way, cli/commands/work.ts imports WorkApp), and a
+// real ResolvedRepo[] (the store's actual get() type) is a structural
+// superset of this, so it's assignable here with no import needed.
+interface RepoWatch {
+  get(): { slug: string; repoDir: string; stateDir: string }[];
+  subscribe(listener: () => void): () => void;
+}
+
 export function WorkApp({
   agent,
-  repos,
+  watch,
+  remote,
   logBuffer,
   statusRef,
   onExit,
 }: {
   agent: string;
-  repos: { repo: string; repoDir: string; stateDir: string }[];
+  /** The session's live watched-repo set -- grows as `zz work` creates/discovers task shards mid-run (agent/scriptedWork.ts), not just the fixed set `zz work` started with. */
+  watch: RepoWatch;
+  /** Mirrors work.ts's own useRemote: in remote mode, Lane/Ladder state lives on the deployed Worker, not in a local clone's flat files/git notes, so the two view hooks need to read it over the API instead -- see useLaneSnapshots.ts/useLadderTrees.ts's own `remote` param. */
+  remote: boolean;
   logBuffer: LogBuffer;
   statusRef: { current: string };
   /** Awaited before the TUI actually exits (q/Ctrl+C) -- the hook `zz work --as <name>` uses to revoke its session's token (see TabView's own comment for why this can't just be a process.on("SIGINT") handler). */
   onExit?: () => Promise<void> | void;
 }) {
-  const snapshots = useLaneSnapshots(repos);
-  const ladders = useLadderTrees(repos);
+  const watchedRepos = useSyncExternalStore(watch.subscribe, watch.get);
+  const repos = watchedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir }));
+  const snapshots = useLaneSnapshots(repos, 500, remote);
+  const ladders = useLadderTrees(repos, 2000, remote);
   const [, forceTick] = useState(0);
 
   useEffect(() => {

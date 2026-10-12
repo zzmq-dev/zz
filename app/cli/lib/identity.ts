@@ -27,6 +27,7 @@
 import { readFileSync } from "node:fs";
 import { apiBase, requireCredentials } from "./credentials.js";
 import { apiFetch } from "./api.js";
+import { resolveUserPath } from "./paths.js";
 
 export interface ResolvedIdentity {
   apiBase: string;
@@ -48,7 +49,7 @@ export async function resolveIdentity(asName?: string): Promise<ResolvedIdentity
     return { apiBase: apiBase(), token, username, ephemeral: false };
   }
   if (process.env.ZZ_ID_FILE) {
-    const raw = readFileSync(process.env.ZZ_ID_FILE, "utf8").trim();
+    const raw = readFileSync(resolveUserPath(process.env.ZZ_ID_FILE), "utf8").trim();
     const { username, token } = parseIdPair(raw, "ZZ_ID_FILE");
     return { apiBase: apiBase(), token, username, ephemeral: false };
   }

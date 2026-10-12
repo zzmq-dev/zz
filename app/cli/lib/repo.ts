@@ -5,25 +5,19 @@
 // Ladder's own reads/writes go through the Workers-compatible engine).
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-// Lazy, not module-scope: import.meta.url doesn't exist in workerd
-// (confirmed directly building the Worker side -- a module-scope
-// fileURLToPath(import.meta.url) crashes a Worker immediately on
-// load, "Received undefined", even in a module nothing there ever
-// calls). agent/tools.ts imports this file for run_in_sandbox, which
-// can't run in a Worker anyway (no child_process there either) --
-// deferring this until resolveRepo/ensureCloned actually run means
-// the Worker bundle can include this file without crashing on load,
-// since neither of those genuinely executes there.
-let appRootCache: string | null = null;
-function appRoot(): string {
-  if (!appRootCache) {
-    const here = dirname(fileURLToPath(import.meta.url));
-    appRootCache = join(here, "..", "..");
-  }
-  return appRootCache;
+// `~/.zz/repos`/`~/.zz/state`, not anywhere relative to this module's own
+// location -- same convention as credentials.ts/config.ts's ~/.zz/*.json.
+// This used to be package-root-relative (two dirs up from this file), which
+// quietly worked only because every real use so far ran straight out of
+// the dev repo; a globally `npm install -g`'d copy of this package has no
+// business writing a user's real work clones into wherever npm happened to
+// put its own installed files (not always writable, not meant to hold user
+// data, and gets blown away on upgrade/reinstall).
+function zzHome(): string {
+  return join(homedir(), ".zz");
 }
 
 export interface ResolvedRepo {
@@ -54,8 +48,8 @@ export function resolveRepo(slug: string): ResolvedRepo {
   return {
     slug,
     name,
-    repoDir: join(appRoot(), "demo-repos", ownerDir, name),
-    stateDir: join(appRoot(), "state", ownerDir, name),
+    repoDir: join(zzHome(), "repos", ownerDir, name),
+    stateDir: join(zzHome(), "state", ownerDir, name),
   };
 }
 

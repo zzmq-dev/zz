@@ -25,6 +25,7 @@ export interface RepoMeta {
   description: string;
   policy: RepoPolicy;
   owner: string; // an Agent's username -- every principal is an Agent, human or synthetic, no type tag (see governance.md); no separate internal id (see migration 0006)
+  shard_of?: string; // immediate-parent repo slug, if this repo is a task shard (see webApp.ts's ensureShard) -- absent for an ordinary repo
   created_at: string;
 }
 
@@ -121,7 +122,7 @@ export async function readRepoRoles(remote: string, token: { plaintext: string }
 }
 
 /** Creates the zz-meta branch with default meta.json/roles.json if it doesn't exist yet -- lazy bootstrap, called on repo creation or first web view of a pre-existing repo. No-op if meta.json already exists. */
-export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; owner: string }): Promise<void> {
+export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; owner: string; shardOf?: string }): Promise<void> {
   const existing = await readRepoMeta(remote, token);
   if (existing) return;
 
@@ -129,6 +130,7 @@ export async function ensureMeta(remote: string, token: { plaintext: string } | 
     description: defaults.description,
     policy: { require_changeset_review: false, visibility: "public" },
     owner: defaults.owner,
+    ...(defaults.shardOf ? { shard_of: defaults.shardOf } : {}),
     created_at: new Date().toISOString(),
   };
   const roles: RepoRoles = {

@@ -1,0 +1,24 @@
+// Scoped to exactly what the published package ships: the CLI itself
+// and the engine/agent/tui it depends on -- not demo/demo-repos (dev
+// playground scripts, never installed by a real user) and not
+// worker/ (a separate Cloudflare Worker deployable, its own
+// tsconfig/runtime, never part of this npm package). Mirrors the root
+// tsconfig.json's compilerOptions so dev-time `tsc --noEmit -p .`
+// (which still covers demo/demo-repos) and this build stay in sync.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "jsx": "react-jsx",
+    "outDir": "dist",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["engine/**/*.ts", "agent/**/*.ts", "cli/**/*.ts", "cli/**/*.tsx", "tui/**/*.tsx", "tui/**/*.ts"],
+  "exclude": ["node_modules"]
+}

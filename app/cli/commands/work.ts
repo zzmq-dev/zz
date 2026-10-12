@@ -34,6 +34,7 @@ import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { remoteBackend } from "../lib/remoteBackend.js";
+import { createRepoWatchStore, type RepoWatchStore } from "../lib/watchedRepos.js";
 
 export type Provider = "ollama" | "gemini" | "groq" | "cloudflare";
 
@@ -189,6 +190,8 @@ async function runClaimedAsk(
   backend: ChatBackend,
   statusRef: { current: string },
   useRemote: boolean,
+  identity: { apiBase: string; token: string } | null,
+  watch: RepoWatchStore,
 ): Promise<void> {
   const baseStatus = statusRef.current;
   const remoteCall = useRemote ? remoteCallTool : undefined;
@@ -201,7 +204,21 @@ async function runClaimedAsk(
   // itself, in a fixed order. Every other ask kind still goes through
   // the generic loop below.
   if (theAsk.kind === "work") {
-    await runContributorWorkAsk({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
+    await runContributorWorkAsk({
+      resolved,
+      laneId,
+      theAsk,
+      agent,
+      alreadyClaimed,
+      backend,
+      onLog,
+      callTool: remoteCall,
+      // Gates the shard flow itself (see ScriptedFlowOptions' own
+      // comment) -- only present in remote mode, where there's a real
+      // Worker/Artifacts/D1 to shard against.
+      authedCloneUrlFor: identity ? (slug: string) => authedCloneUrl(identity.apiBase, identity.token, slug) : undefined,
+      onShardReady: (repo) => watch.add(repo),
+    });
     statusRef.current = baseStatus;
     return;
   }
@@ -328,6 +345,13 @@ export async function work(options: WorkOptions): Promise<void> {
     }
   }
 
+  // The set this session actually watches -- starts as the fixed list
+  // above but grows as task shards get created mid-run (see
+  // agent/scriptedWork.ts's runContributorWorkAsk and
+  // cli/lib/watchedRepos.ts's own header); both the TUI and mainLoop's
+  // own polling read from this one store, not a separate copy each.
+  const watch = createRepoWatchStore(resolvedRepos);
+
   const logBuffer = new LogBuffer();
   const statusRef = { current: "starting..." };
   const onLog = options.stdio ? (line: string) => console.error(line) : (line: string) => logBuffer.push(line);
@@ -336,7 +360,7 @@ export async function work(options: WorkOptions): Promise<void> {
     console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();
-    render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef, onExit: cleanup }));
+    render(React.createElement(WorkApp, { agent: config.agent, watch, remote: useRemote, logBuffer, statusRef, onExit: cleanup }));
   }
 
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
@@ -345,7 +369,8 @@ export async function work(options: WorkOptions): Promise<void> {
   const mainLoop = async (): Promise<void> => {
     let lastIdleLogged: string | null = null;
     for (;;) {
-      const claimable = await claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
+      const watched = watch.get();
+      const claimable = await claimableAcrossRepos(watched.map((r) => ({ repo: r.slug })), config.agent, scope);
       if (claimable.length === 0) {
         const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
         statusRef.current = msg;
@@ -358,7 +383,7 @@ export async function work(options: WorkOptions): Promise<void> {
       }
       lastIdleLogged = null;
       const next = claimable[0];
-      const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
+      const resolved = watched.find((r) => r.slug === next.repo)!;
       if (useRemote) {
         // Another agent's commit landed on the real remote, not in
         // this local working copy, since the last time it was read --
@@ -369,7 +394,7 @@ export async function work(options: WorkOptions): Promise<void> {
       }
       statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
       onLog(statusRef.current);
-      await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote);
+      await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
     }
   };
 
