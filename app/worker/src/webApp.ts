@@ -410,31 +410,54 @@ async function walkTreeForZip(repo: ArtifactsRepo, treeHash: string, prefix: str
   }
 }
 
-async function handleRepoPage(account: Account | null, slug: string, env: WebEnv, origin: string): Promise<Response> {
+// Loads what every read path needs to decide access + render: the D1
+// row plus meta.json/roles.json off zz-meta. A second, separate
+// `env.ARTIFACTS.get()` happens in each handler afterward for the
+// actual content read -- an extra token mint per request, traded for
+// every read path (page, blob, archive, the git proxy below) sharing
+// one access-control check instead of four separate ones that could
+// drift out of sync.
+async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> } | null> {
   const repoRow = await getRepoBySlug(env.DB, slug);
-  if (!repoRow) return new Response("no such repo", { status: 404 });
+  if (!repoRow) return null;
+  using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
+  const token = await repo.createToken("read", 300);
+  const info = await repo.info();
+  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: { type: repoRow.owner_type, id: repoRow.owner_id } });
+  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  return { repoRow, meta, roles };
+}
+
+// Public repos (the default, and everything created so far): open to
+// anyone, same as today. Private repos: this was never actually
+// enforced before -- handleRepoPage/handleBlob/handleArchive rendered
+// content to anyone who knew the URL regardless of meta.json's
+// policy.visibility. Fixed here: a private repo needs an explicit
+// grant (any role, including "reader") for the signed-in principal or
+// one of their agents. Git CLI requests (the proxy below) carry no
+// session cookie at all, so this always denies them for a private
+// repo -- cloning a private repo isn't wired up yet, only browsing it
+// while logged in; a real fast-follow, not silently pretended to work.
+async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnType<typeof readRepoMeta>>, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
+  if (meta?.policy.visibility !== "private") return true;
+  const account = await getCurrentAccount(request, env);
+  if (!account) return false;
+  const myAgents = await listAgentsForAccount(env.DB, account.id);
+  const principals = [`account:${account.id}`, ...myAgents.map((a) => `agent:${a.id}`)];
+  return principals.some((p) => (roles?.grants ?? []).some((g) => g.principal === p));
+}
+
+async function handleRepoPage(account: Account | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("no such repo", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
+  const { repoRow, meta, roles } = ctx;
 
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
-  const readToken = await repo.createToken("read", 3600);
   const info = await repo.info();
-
-  await ensureMeta(info.remote, readToken, { description: repoRow.description ?? "", owner: { type: repoRow.owner_type, id: repoRow.owner_id } });
-  const [meta, roles, log] = await Promise.all([readRepoMeta(info.remote, readToken), readRepoRoles(info.remote, readToken), repo.log({ ref: info.defaultBranch, limit: 1 })]);
-  const head = log[0];
+  const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
   const tree: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
   const readme = head ? await findReadme(repo, tree) : null;
-
-  const cloneToken = await repo.createToken("read", 3600);
-  const cloneTokenPlaintext = typeof cloneToken === "string" ? cloneToken : cloneToken.plaintext;
-  // The credential itself can contain "?"/"=" (confirmed live: a real
-  // token came back as "<token>?expires=<ts>", not just the bare
-  // token) -- harmless when passed to isomorphic-git's onAuth (that
-  // builds the Basic Auth header directly, no URL parsing involved),
-  // but fatal here: this string gets embedded in a literal URL a
-  // human's own git client parses, and an un-encoded "?" in the
-  // userinfo segment breaks that parse ("URL rejected: Port number
-  // was not a decimal number...", confirmed live). Percent-encode it.
-  const remoteWithAuth = info.remote.replace("https://", `https://x-token-auth:${encodeURIComponent(cloneTokenPlaintext)}@`);
 
   const fileListHtml = tree
     .map((e) => `<li>${e.type === "tree" ? "📁" : "📄"} ${esc(e.name)}${e.type !== "tree" ? ` <a href="${origin}/${esc(slug)}/blob/${esc(e.name)}">view/download</a>` : ""}</li>`)
@@ -449,27 +472,29 @@ async function handleRepoPage(account: Account | null, slug: string, env: WebEnv
      <p>${rolesHtml}</p>
      <p><a href="${origin}/${esc(slug)}/archive.zip">Download repo as .zip</a></p>
      <h2>Clone</h2>
-     <pre>git clone ${esc(remoteWithAuth)}</pre>
+     <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
      <h2>Files</h2>
      <ul>${fileListHtml || "<li class=\"muted\">Empty repo.</li>"}</ul>
      ${readme ? `<h2>README</h2><pre>${esc(readme)}</pre>` : ""}`,
   );
 }
 
-async function handleBlob(slug: string, path: string, env: WebEnv): Promise<Response> {
-  const repoRow = await getRepoBySlug(env.DB, slug);
-  if (!repoRow) return new Response("no such repo", { status: 404 });
-  using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
+async function handleBlob(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const info = await repo.info();
   const blob = await repo.readFile({ ref: info.defaultBranch, path });
   if (!blob) return new Response("not found", { status: 404 });
   return new Response(blob, { headers: { "content-type": blob.type || "application/octet-stream" } });
 }
 
-async function handleArchive(slug: string, env: WebEnv): Promise<Response> {
-  const repoRow = await getRepoBySlug(env.DB, slug);
-  if (!repoRow) return new Response("no such repo", { status: 404 });
-  using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
+async function handleArchive(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const info = await repo.info();
   const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
   if (!head) return new Response("empty repo", { status: 404 });
@@ -477,7 +502,64 @@ async function handleArchive(slug: string, env: WebEnv): Promise<Response> {
   const files: Record<string, Uint8Array> = {};
   await walkTreeForZip(repo, head.treeHash, "", files);
   const zipped = zipSync(files);
-  return new Response(zipped, { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${repoRow.slug.replace("/", "-")}.zip"` } });
+  return new Response(zipped, { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${ctx.repoRow.slug.replace("/", "-")}.zip"` } });
+}
+
+// --- Git smart-HTTP proxy, so `git clone <origin>/<slug>` works with
+// no credential ever visible to the client at all. Cloudflare
+// Artifacts' remote is already a real git-smart-HTTP server; this
+// just forwards info/refs and git-upload-pack to it with a
+// short-lived, server-side-only read token injected as Basic Auth via
+// base64 (never URL-embedded, so none of the clone-URL encoding
+// problem applies here). Read-only: git-receive-pack (push) isn't
+// proxied -- pushing still goes through commit_changeset.
+
+function stripHopByHopHeaders(headers: Headers): Headers {
+  const copy = new Headers(headers);
+  // fetch() already transparently decodes a gzipped upstream body, but
+  // leaves the original content-encoding/content-length headers in
+  // place -- forwarding them verbatim would tell the git client the
+  // body is still gzipped when it isn't, corrupting the clone.
+  copy.delete("content-encoding");
+  copy.delete("content-length");
+  copy.delete("transfer-encoding");
+  return copy;
+}
+
+async function handleGitInfoRefs(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  const service = new URL(request.url).searchParams.get("service");
+  if (service !== "git-upload-pack") return new Response("only clone/fetch is proxied here (no push)", { status: 400 });
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const token = await repo.createToken("read", 120);
+  const info = await repo.info();
+  const tokenPlaintext = typeof token === "string" ? token : token.plaintext;
+  const upstream = await fetch(`${info.remote}/info/refs?service=git-upload-pack`, {
+    headers: { authorization: `Basic ${btoa(`x-token-auth:${tokenPlaintext}`)}` },
+  });
+  return new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
+}
+
+async function handleGitUploadPack(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const token = await repo.createToken("read", 120);
+  const info = await repo.info();
+  const tokenPlaintext = typeof token === "string" ? token : token.plaintext;
+  const headers: Record<string, string> = {
+    authorization: `Basic ${btoa(`x-token-auth:${tokenPlaintext}`)}`,
+    "content-type": request.headers.get("content-type") ?? "application/x-git-upload-pack-request",
+  };
+  const gitProtocol = request.headers.get("git-protocol");
+  if (gitProtocol) headers["git-protocol"] = gitProtocol;
+  const upstream = await fetch(`${info.remote}/git-upload-pack`, { method: "POST", headers, body: request.body });
+  return new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
 }
 
 // --- Dispatch ---
@@ -511,17 +593,25 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
 
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/archive\.zip$/);
-    if (m) return handleArchive(`${m[1]}/${m[2]}`, env);
+    if (m) return handleArchive(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
-    if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], env);
+    if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/info\/refs$/);
+    if (m) return handleGitInfoRefs(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/git-upload-pack$/);
+    if (m) return handleGitUploadPack(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)$/);
     if (m) {
       const account = await getCurrentAccount(request, env);
-      return handleRepoPage(account, `${m[1]}/${m[2]}`, env, origin);
+      return handleRepoPage(account, `${m[1]}/${m[2]}`, request, env, origin);
     }
   }
 
