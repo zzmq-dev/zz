@@ -1254,6 +1254,26 @@ async function handleApiMintToken(username: string, request: Request, env: WebEn
   });
 }
 
+// Revokes whichever token authenticated THIS request -- no id needed
+// client-side, which is exactly the point: a CLI session that just
+// minted a token for one `--as <name>` session (lib/identity.ts) can
+// clean up after itself at exit using nothing but the token it
+// already has in hand, with no separate id to have tracked. Scoped to
+// "your own" by construction (the bearer token IS the identity being
+// revoked), so no additional authority check is needed the way
+// handleRevokeTokenForm's id-based version needs (owner === you, or
+// you created it).
+async function handleApiRevokeSelf(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const bearer = readBearerToken(request);
+    if (!bearer) throw new ApiError(401, "no bearer token presented");
+    const token = await findActiveAgentToken(env.DB, hashAgentToken(bearer));
+    if (!token) throw new ApiError(404, "token not found or already revoked");
+    await revokeAgentToken(env.DB, token.id);
+    return json({ ok: true });
+  });
+}
+
 async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -1824,6 +1844,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/login/start" && request.method === "POST") return handleApiLoginStart(request, env);
   if (path === "/api/login/poll" && request.method === "GET") return handleApiLoginPoll(request, env);
   if (path === "/api/me" && request.method === "GET") return handleApiMe(request, env);
+  if (path === "/api/me/revoke" && request.method === "POST") return handleApiRevokeSelf(request, env);
   if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
   if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
   if (path === "/api/agents/search" && request.method === "GET") return handleApiSearchAgents(request, env);

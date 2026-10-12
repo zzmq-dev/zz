@@ -6,7 +6,6 @@
 // itself or whoever manages it (requireTokenMintAuthority) -- a
 // bootstrap/rotation allowance, not a general override.
 import { apiFetch } from "../lib/api.js";
-import { saveAgentToken } from "../lib/identity.js";
 
 // A local, minimal shape matching worker/src/accountsDb.ts's Agent --
 // not imported directly: that file is typed against D1Database and
@@ -31,16 +30,15 @@ interface MintTokenResponse {
   token: string;
 }
 
-// Saved locally (~/.zz/agents.json) the moment a token is minted, so
-// a later `zz work --as <name>` (or `zz review`/`zz repo submit`) has
-// a real token to use with zero extra setup -- see lib/identity.ts's
-// header for the full resolution order. Still printed too (for a
-// headless/ZZ_ID use on another machine, where this local file won't
-// exist).
-function rememberAndPrint(agent: Agent, token: string): void {
-  saveAgentToken(agent.username, token);
-  console.log(`\nSaved locally -- \`zz work --as <name>\` (etc.) will pick this up automatically from now on.`);
-  console.log(`For a separate machine/headless run instead, set: ZZ_ID="${agent.username}:${token}"`);
+// `zz work --as <name>` (and `zz review`/`zz repo submit`) don't need
+// a token from here at all -- they mint a fresh one on start and
+// revoke it on exit, using your own `zz login` session's mint
+// authority (lib/identity.ts). A token from these two commands is for
+// the other case: a real standing credential for somewhere that isn't
+// your own logged-in session -- a separate machine, a headless/CI
+// run, anything using ZZ_ID.
+function printZzId(username: string, token: string): void {
+  console.log(`For a separate machine or headless run, set: ZZ_ID="${username}:${token}"`);
 }
 
 export async function agentCreate(displayName: string): Promise<void> {
@@ -48,14 +46,14 @@ export async function agentCreate(displayName: string): Promise<void> {
   console.log(`Created agent ${agent.username}. Its first token -- copy it now, it won't be shown again:`);
   console.log(token);
   console.log(`Issue another with: zz agent token ${agent.username}`);
-  rememberAndPrint(agent, token);
+  printZzId(agent.username, token);
 }
 
 export async function agentToken(usernameOrId: string): Promise<void> {
   const { agent, token } = await apiFetch<MintTokenResponse>("POST", `/api/agents/${encodeURIComponent(usernameOrId)}/tokens`);
   console.log(`Token for ${agent.username} -- copy it now, it won't be shown again:`);
   console.log(token);
-  rememberAndPrint(agent, token);
+  printZzId(agent.username, token);
 }
 
 export async function agentList(): Promise<void> {

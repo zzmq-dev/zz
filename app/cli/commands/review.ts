@@ -20,7 +20,7 @@ import { ask, answer } from "../../engine/lane.js";
 import { resolveBackend, withBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
 import { authedCloneUrl } from "../lib/credentials.js";
-import { resolveIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import { remoteBackend } from "../lib/remoteBackend.js";
@@ -62,8 +62,21 @@ function printReview(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry): 
 
 export async function review(options: ReviewOptions): Promise<void> {
   const useRemote = !options.local;
-  const identity = useRemote ? resolveIdentity(options.as) : null;
+  const identity = useRemote ? await resolveIdentity(options.as) : null;
   if (identity) setActiveToken(identity.token);
+
+  // --as mints a fresh token for the session -- clean it up on every
+  // exit path. No TUI/raw-mode here (just readline), so an actual
+  // SIGINT reaches this handler on Ctrl+C -- unlike work.ts's TUI
+  // path, no separate onExit prop is needed.
+  let cleanedUp = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    await releaseIdentity(identity);
+  };
+  process.on("SIGINT", () => void cleanup().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   // See work.ts's identical comment: in remote mode your identity IS
   // your resolved credential, not a separate (and easily mismatched)
@@ -134,5 +147,6 @@ export async function review(options: ReviewOptions): Promise<void> {
     else await mainLoop();
   } finally {
     rl.close();
+    await cleanup();
   }
 }

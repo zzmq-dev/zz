@@ -19,11 +19,14 @@ export function WorkApp({
   repos,
   logBuffer,
   statusRef,
+  onExit,
 }: {
   agent: string;
   repos: { repo: string; repoDir: string; stateDir: string }[];
   logBuffer: LogBuffer;
   statusRef: { current: string };
+  /** Awaited before the TUI actually exits (q/Ctrl+C) -- the hook `zz work --as <name>` uses to revoke its session's token (see TabView's own comment for why this can't just be a process.on("SIGINT") handler). */
+  onExit?: () => Promise<void> | void;
 }) {
   const snapshots = useLaneSnapshots(repos);
   const ladders = useLadderTrees(repos);
@@ -37,6 +40,7 @@ export function WorkApp({
   return (
     <TabView
       title={`zz work -- ${agent}`}
+      onExit={onExit}
       tabs={[
         {
           label: "activity",

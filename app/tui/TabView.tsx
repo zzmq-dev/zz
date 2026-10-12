@@ -51,7 +51,7 @@ function tabClickRanges(title: string, tabs: Tab[]): { start: number; end: numbe
   return ranges;
 }
 
-export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
+export function TabView({ title, tabs, onExit }: { title: string; tabs: Tab[]; onExit?: () => Promise<void> | void }) {
   const [active, setActive] = useState(0);
   const [scroll, setScroll] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
@@ -83,8 +83,17 @@ export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
   useInput(
     (input, key) => {
       if (input === "q" || (key.ctrl && input === "c")) {
-        exitFullscreen();
-        process.exit(0);
+        // Raw mode swallows the OS-level SIGINT translation for a
+        // keypress, so this is the only place Ctrl+C is ever actually
+        // observed in the TUI -- any process-level exit cleanup (e.g.
+        // `zz work --as <name>` revoking its session's token) has to
+        // run here, not in a process.on("SIGINT", ...) handler, which
+        // this keypress never triggers.
+        void Promise.resolve(onExit?.()).finally(() => {
+          exitFullscreen();
+          process.exit(0);
+        });
+        return;
       }
       if (key.rightArrow || input === "l") setActive((i) => (i + 1) % tabs.length);
       else if (key.leftArrow || input === "h") setActive((i) => (i - 1 + tabs.length) % tabs.length);

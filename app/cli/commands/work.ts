@@ -30,7 +30,7 @@ import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 import { authedCloneUrl } from "../lib/credentials.js";
-import { resolveIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { remoteBackend } from "../lib/remoteBackend.js";
@@ -286,8 +286,26 @@ export async function work(options: WorkOptions): Promise<void> {
   // --local stays fully supported for the demo/cascade-case-study
   // path, which has no reason to touch the network at all.
   const useRemote = !options.local;
-  const identity = useRemote ? resolveIdentity(options.as) : null;
+  const identity = useRemote ? await resolveIdentity(options.as) : null;
   if (identity) setActiveToken(identity.token);
+
+  // --as mints a fresh token for the session (lib/identity.ts) --
+  // clean it up on every exit path: normal completion/a thrown error
+  // (the try/finally below), Ctrl+C/SIGTERM in --stdio mode (no TUI,
+  // so a real SIGINT reaches this handler), and the TUI's own q/
+  // Ctrl+C keypress (raw mode swallows the OS-level SIGINT translation
+  // for that one, so WorkApp gets this same function as an onExit
+  // prop instead -- see its own call below). Idempotent and a no-op
+  // for anything resolveIdentity didn't itself mint (your own login,
+  // ZZ_ID) -- see releaseIdentity.
+  let cleanedUp = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    await releaseIdentity(identity);
+  };
+  process.on("SIGINT", () => void cleanup().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   // In remote mode your identity IS your resolved credential -- default
   // --agent to it rather than silently falling through to a separate
@@ -318,7 +336,7 @@ export async function work(options: WorkOptions): Promise<void> {
     console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();
-    render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef }));
+    render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef, onExit: cleanup }));
   }
 
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
@@ -355,6 +373,10 @@ export async function work(options: WorkOptions): Promise<void> {
     }
   };
 
-  if (useRemote) await withBackend(remoteBackend, mainLoop);
-  else await mainLoop();
+  try {
+    if (useRemote) await withBackend(remoteBackend, mainLoop);
+    else await mainLoop();
+  } finally {
+    await cleanup();
+  }
 }
