@@ -50,3 +50,9 @@ export function writeCredentials(creds: ZzCredentials): void {
 export function apiBase(): string {
   return process.env.ZZ_API_BASE ?? readCredentials()?.apiBase ?? DEFAULT_API_BASE;
 }
+
+/** A real `git clone`-able URL with the bearer token embedded as Basic Auth userinfo, against the zz-maintainer Worker's own git smart-HTTP proxy (not a raw Artifacts URL -- see site/content/git-compatibility). Shared by `zz repo clone` and the remote work loop's own ensureCloned, so there's one place this convention lives. */
+export function authedCloneUrl(base: string, token: string, slug: string): string {
+  const host = base.replace(/^https?:\/\//, "");
+  return `https://${encodeURIComponent(token)}@${host}/${slug}`;
+}

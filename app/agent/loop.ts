@@ -60,6 +60,15 @@ export interface RunAgentOptions {
    */
   onPartial?: (textSoFar: string) => void;
   /**
+   * Overrides how a tool call actually runs -- used for `zz work`
+   * against a remote repo: the tool's real name/schema (for the
+   * model) stays the same, but execution is proxied to the deployed
+   * Worker (cli/lib/remoteTools.ts's callRemoteTool) instead of
+   * calling `tool.execute` in this process. Defaults to calling
+   * `tool.execute(args)` directly, today's local behavior.
+   */
+  executeTool?: (tool: ToolDef, args: Record<string, unknown>) => Promise<unknown>;
+  /**
    * Checked whenever the model stops calling tools, before trusting
    * that as completion -- observed repeatedly: a model describes a
    * plan in prose ("Now I'll implement X and test it") and then simply
@@ -177,7 +186,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
         result = { error: `no such tool: ${call.function.name}` };
       } else {
         try {
-          result = await tool.execute(coerceJsonStringArgs(call.function.arguments));
+          const args = coerceJsonStringArgs(call.function.arguments);
+          result = opts.executeTool ? await opts.executeTool(tool, args) : await tool.execute(args);
         } catch (err) {
           const resolved = err instanceof Error && (err as { resolved?: boolean }).resolved === true;
           result = { error: err instanceof Error ? err.message : String(err), ...(resolved ? { resolved: true } : {}) };

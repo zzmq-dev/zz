@@ -317,6 +317,21 @@ const laneGet: ToolDef = {
   },
 };
 
+// Exists so a remote Backend (cli/lib/remoteBackend.ts) can proxy
+// Backend.listLanes() through the same tool-call surface (MaintainerDO.
+// callTool only dispatches names in ALL_TOOLS) everything else uses,
+// instead of needing its own bespoke endpoint. engine/workqueue.ts's
+// claimableAcrossRepos is the real caller, via resolveBackend().
+// listLanes(repo). Harmless to also leave model-facing -- read-only.
+const laneList: ToolDef = {
+  name: "lane_list",
+  description: "List every Lane in a repo, full records.",
+  parameters: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] },
+  async execute({ repo }) {
+    return resolveBackend().listLanes(repo as string);
+  },
+};
+
 const askPostTool: ToolDef = {
   name: "ask_post",
   description:
@@ -579,7 +594,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderWriteRung, laneProposeTool, laneGet, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

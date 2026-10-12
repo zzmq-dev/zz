@@ -631,6 +631,41 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
   });
 }
 
+// Generic passthrough to MaintainerDO.callTool -- the same mechanism
+// the web app's own doPostAsk/doRbacGrant etc. use internally, just
+// exposed directly so `zz work` (CLI) can drive the real protocol
+// (ask_claim, ask_answer, commit_changeset, ladder_write_rung, ...)
+// against a remote repo without the CLI needing its own copy of any
+// of that logic. No repo-level RBAC gate here beyond "authenticated as
+// someone real" -- every tool already enforces its own Lane-level
+// rules (coordinators/maintainers/ASK_SCOPE) server-side, the same as
+// it does called from the web app or MaintainerDO's existing routes.
+// The one thing checked here: args.actor/args.from, when present,
+// must equal the authenticated caller's own id -- otherwise a valid
+// token for Agent A could act as Agent B just by naming it in the
+// payload, which no tool-level check catches (they trust the caller-
+// supplied actor/from field completely, same as the local CLI always
+// has).
+async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const repo = await getRepoBySlug(env.DB, slug);
+    if (!repo) throw new ApiError(404, "no such repo");
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    for (const field of ["actor", "from"]) {
+      if (field in body && body[field] !== me.id) throw new ApiError(403, `${field} must be your own agent id (${me.id}) -- a token only acts as the agent it belongs to`);
+    }
+    const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
+    await stub.configure(repo.artifacts_name);
+    try {
+      const result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
+      return json({ result });
+    } catch (err) {
+      throw new ApiError(400, err instanceof Error ? err.message : String(err));
+    }
+  });
+}
+
 async function handleApiRbacGrant(slug: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -979,6 +1014,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/asks$/);
     if (m && request.method === "GET") return handleApiGetAsks(`${m[1]}/${m[2]}`, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/tools\/([^/]+)$/);
+    if (m && request.method === "POST") return handleApiCallTool(`${m[1]}/${m[2]}`, m[3], request, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);

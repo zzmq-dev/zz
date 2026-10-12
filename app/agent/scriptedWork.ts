@@ -35,7 +35,12 @@ function findTool(name: string) {
   return tool;
 }
 
-async function callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+// Always local, unconditionally -- run_in_sandbox inherently needs a
+// real local git worktree/node process, so it's never proxied to a
+// remote repo regardless of mode (the state it reads/writes, Lane/
+// Ladder/commits, lives remotely in that mode, but the sandbox run
+// itself always happens on this machine).
+async function localCallTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   return findTool(name).execute(args);
 }
 
@@ -122,7 +127,7 @@ function parseFileProposal(text: string): ParsedFileProposal {
 async function verifyProposal(resolved: ResolvedRepo, files: { path: string; content: string }[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const dropProblem = await checkNoDroppedExports(resolved.slug, files);
   if (dropProblem) return { exitCode: 1, stdout: "", stderr: dropProblem };
-  return (await callTool("run_in_sandbox", {
+  return (await localCallTool("run_in_sandbox", {
     repos: [{ repo: resolved.slug, files }],
     command: "node --test",
     cwd: resolved.slug,
@@ -145,8 +150,9 @@ async function postForReview(opts: {
   message: string;
   summary: string;
   baseCommit: string;
+  callTool: ProtocolCall;
 }): Promise<void> {
-  const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit } = opts;
+  const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit, callTool } = opts;
   const review = (await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
@@ -183,6 +189,8 @@ List one FILE block per file you're adding or changing. Nothing else -- no prose
 
 const FIX_SYSTEM_PROMPT = `${PROPOSE_SYSTEM_PROMPT}\n\nYour previous proposal failed when actually run. Fix it and output the same format again, for the full corrected set of files.`;
 
+type ProtocolCall = (name: string, args: Record<string, unknown>) => Promise<unknown>;
+
 export interface ScriptedFlowOptions {
   resolved: ResolvedRepo;
   laneId: string;
@@ -191,12 +199,14 @@ export interface ScriptedFlowOptions {
   alreadyClaimed: boolean;
   backend: ChatBackend;
   onLog: (line: string) => void;
+  /** Where a protocol mutation (ask_claim/ask_post/ask_answer/commit_changeset/ladder_write_rung) actually runs -- defaults to local execution. `zz work` against a remote repo passes callRemoteTool instead; run_in_sandbox is never affected by this, it's always local (see localCallTool/verifyProposal). */
+  callTool?: ProtocolCall;
 }
 
 const MAX_SANDBOX_ATTEMPTS = 2;
 
 export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
@@ -224,7 +234,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
     const result = await verifyProposal(resolved, proposal.files);
     if (result.exitCode === 0) {
-      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: description, files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit });
+      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: description, files: proposal.files, message: proposal.message, summary: proposal.summary, baseCommit, callTool });
       await callTool("ask_answer", {
         repo: resolved.slug,
         lane_id: laneId,
@@ -280,7 +290,7 @@ function parseSummaries(text: string): { perFile: Map<string, string>; changeset
 }
 
 export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
@@ -409,7 +419,7 @@ FILE: <path, relative to the repo root>
 Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
 
 export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
@@ -429,7 +439,7 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
     const result = await verifyProposal(resolved, allFiles);
     if (result.exitCode === 0) {
       const baseCommit = currentHeadSha(resolved);
-      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: payload.originalDescription, files: allFiles, message: payload.message, summary: payload.summary, baseCommit });
+      await postForReview({ resolved, laneId, agent, taskAskId: theAsk.id, taskDescription: payload.originalDescription, files: allFiles, message: payload.message, summary: payload.summary, baseCommit, callTool });
       await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "complete", payload: { summary: payload.summary } });
       onLog(`[scripted] conflict resolution passed -- posted for review and answered ${theAsk.id} complete`);
       return;
@@ -487,7 +497,7 @@ function parseReviewDecision(text: string): { decision: "approve" | "request_cha
 }
 
 export async function runChangesetReview(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }

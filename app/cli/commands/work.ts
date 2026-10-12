@@ -9,14 +9,15 @@
 // focus on coordinator-level work without also hoovering up contributor
 // asks it's merely allowed to pick up).
 import React from "react";
+import { execFileSync } from "node:child_process";
 import { render } from "ink";
-import { ensureCloned, resolveRepo, type ResolvedRepo } from "../lib/repo.js";
+import { ensureCloned, resolveRepo, syncClone, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
 import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
-import { resolveBackend as resolveStorageBackend } from "../../engine/backend.js";
+import { resolveBackend as resolveStorageBackend, withBackend } from "../../engine/backend.js";
 import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js";
-import type { AskEntry } from "../../engine/types.js";
+import type { AskEntry, Lane } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
 import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, runChangesetReview } from "../../agent/scriptedWork.js";
@@ -28,6 +29,9 @@ import { createCloudflareBackend } from "../../agent/cloudflareBackend.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
+import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
+import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
+import { remoteBackend } from "../lib/remoteBackend.js";
 
 export type Provider = "ollama" | "gemini" | "groq" | "cloudflare";
 
@@ -96,6 +100,49 @@ async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
   return repoLane;
 }
 
+// The remote-mode twin of ensureRepoLane: same bootstrap, but every
+// Lane/Ladder mutation goes through callRemoteTool (the real protocol
+// tools, running server-side where MaintainerDO's atomic withLane
+// lives) instead of the bare engine functions, which internally need
+// a Backend's writeLane/withLane -- remoteBackend deliberately doesn't
+// implement those (see its own header for why). The root commit's
+// sha/message come from the local clone (ensureCloned already ran) --
+// cheaper than inventing a remote "list commits" tool for the one
+// thing that needs it, and ladder_write_rung's server-side anchoring
+// for "repo"-kind rungs ignores the sha's actual value anyway (it
+// re-derives the true root commit itself); this just satisfies
+// validateAnchorSources' requirement that *some* real commit source
+// be present.
+async function ensureRepoLaneRemote(repo: ResolvedRepo, agent: string): Promise<Lane> {
+  let repoLane = (await callRemoteTool(repo.slug, "lane_get", { lane_id: REPO_RUNG_PATH })) as Lane | null;
+  if (!repoLane) {
+    repoLane = (await callRemoteTool(repo.slug, "lane_propose", {
+      id: REPO_RUNG_PATH,
+      name: repo.name,
+      objective: `the ${repo.slug} repository`,
+      scope: ["**"],
+      actor: agent,
+    })) as Lane;
+    const review = (await callRemoteTool(repo.slug, "ask_post", { lane_id: repoLane.id, kind: "review_request", from: agent })) as AskEntry;
+    await callRemoteTool(repo.slug, "ask_answer", { lane_id: repoLane.id, ask_id: review.id, actor: agent, action: "grant" });
+  }
+  const rootRung = await callRemoteTool(repo.slug, "ladder_read", { path: REPO_RUNG_PATH });
+  if (!rootRung) {
+    const rootSha = execFileSync("git", ["-C", repo.repoDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const rootMsg = execFileSync("git", ["-C", repo.repoDir, "log", "-1", "--format=%s", rootSha], { encoding: "utf8" }).trim();
+    await callRemoteTool(repo.slug, "ladder_write_rung", {
+      rung: {
+        path: REPO_RUNG_PATH,
+        kind: "repo",
+        summary: `${repo.name}, bootstrapped by "${agent}" via \`zz work\` (remote).`,
+        sources: [{ kind: "commit", ref: rootSha, title: rootMsg, author: agent, at: new Date().toISOString() }],
+        children: [],
+      },
+    });
+  }
+  return repoLane;
+}
+
 // Deliberately agent- and repo-independent, byte-for-byte identical on
 // every call -- verified directly against Ollama's real caching
 // behavior: a shared prefix gets reused (a cache hit costs ~0.15s here
@@ -139,8 +186,10 @@ async function runClaimedAsk(
   maxTurns: number,
   backend: ChatBackend,
   statusRef: { current: string },
+  useRemote: boolean,
 ): Promise<void> {
   const baseStatus = statusRef.current;
+  const remoteCall = useRemote ? remoteCallTool : undefined;
   // "work" and "submit_changeset" are driven by code instead of the
   // generic tool-calling loop (agent/scriptedWork.ts) -- both are the
   // ask kinds where a model assembling a large nested tool-call
@@ -150,22 +199,22 @@ async function runClaimedAsk(
   // itself, in a fixed order. Every other ask kind still goes through
   // the generic loop below.
   if (theAsk.kind === "work") {
-    await runContributorWorkAsk({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    await runContributorWorkAsk({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
     statusRef.current = baseStatus;
     return;
   }
   if (theAsk.kind === "submit_changeset") {
-    await runCoordinatorSubmitChangeset({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    await runCoordinatorSubmitChangeset({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
     statusRef.current = baseStatus;
     return;
   }
   if (theAsk.kind === "resolve_conflict") {
-    await runResolveConflict({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    await runResolveConflict({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
     statusRef.current = baseStatus;
     return;
   }
   if (theAsk.kind === "changeset_review") {
-    await runChangesetReview({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog });
+    await runChangesetReview({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
     statusRef.current = baseStatus;
     return;
   }
@@ -189,6 +238,7 @@ async function runClaimedAsk(
     maxTurns,
     backend,
     onLog,
+    executeTool: useRemote ? remoteExecuteTool : undefined,
     onPartial: (textSoFar) => {
       // Single line, tail-truncated -- ActivityLog budgets exactly one
       // row for the status line, so showing the most recent text (not
@@ -218,6 +268,8 @@ export interface WorkOptions {
   pollMs?: number;
   model?: string;
   provider?: Provider;
+  /** Forces the original local/demo backend (a real local clone, state in .zz/) instead of the default: a deployed Worker's real protocol state, driven entirely over callRemoteTool. Default is remote because that's the real coordination layer this project is about; local stays fully supported for the demo/cascade-case-study path, which has no reason to involve the network at all. */
+  local?: boolean;
 }
 
 export async function work(options: WorkOptions): Promise<void> {
@@ -226,9 +278,22 @@ export async function work(options: WorkOptions): Promise<void> {
   const provider = options.provider ?? "ollama";
   const backend = resolveBackend(provider, options.model);
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
+
+  // Remote is the default -- the real coordination layer this project
+  // is about runs on a deployed Worker, not a local .zz/ directory.
+  // --local stays fully supported for the demo/cascade-case-study
+  // path, which has no reason to touch the network at all.
+  const useRemote = !options.local;
+  const creds = useRemote ? requireCredentials() : null;
+
   for (const r of resolvedRepos) {
-    ensureCloned(r);
-    await ensureRepoLane(r, config.agent);
+    if (useRemote) {
+      ensureCloned(r, authedCloneUrl(creds!.apiBase, creds!.token, r.slug));
+      await ensureRepoLaneRemote(r, config.agent);
+    } else {
+      ensureCloned(r);
+      await ensureRepoLane(r, config.agent);
+    }
   }
 
   const logBuffer = new LogBuffer();
@@ -236,7 +301,7 @@ export async function work(options: WorkOptions): Promise<void> {
   const onLog = options.stdio ? (line: string) => console.error(line) : (line: string) => logBuffer.push(line);
 
   if (options.stdio) {
-    console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} repos=${config.repos.join(", ")}`);
+    console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();
     render(React.createElement(WorkApp, { agent: config.agent, repos: resolvedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir })), logBuffer, statusRef }));
@@ -244,25 +309,38 @@ export async function work(options: WorkOptions): Promise<void> {
 
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
-  let lastIdleLogged: string | null = null;
 
-  for (;;) {
-    const claimable = await claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
-    if (claimable.length === 0) {
-      const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
-      statusRef.current = msg;
-      if (msg !== lastIdleLogged) {
-        onLog(msg);
-        lastIdleLogged = msg;
+  const mainLoop = async (): Promise<void> => {
+    let lastIdleLogged: string | null = null;
+    for (;;) {
+      const claimable = await claimableAcrossRepos(resolvedRepos.map((r) => ({ repo: r.slug })), config.agent, scope);
+      if (claimable.length === 0) {
+        const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
+        statusRef.current = msg;
+        if (msg !== lastIdleLogged) {
+          onLog(msg);
+          lastIdleLogged = msg;
+        }
+        await sleep(pollMs);
+        continue;
       }
-      await sleep(pollMs);
-      continue;
+      lastIdleLogged = null;
+      const next = claimable[0];
+      const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
+      if (useRemote) {
+        // Another agent's commit landed on the real remote, not in
+        // this local working copy, since the last time it was read --
+        // fast-forward before starting real work on it. Once per
+        // claimed ask, not every idle poll: cheap enough, and avoids
+        // hammering the git proxy on every ~1s recheck.
+        syncClone(resolved);
+      }
+      statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
+      onLog(statusRef.current);
+      await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote);
     }
-    lastIdleLogged = null;
-    const next = claimable[0];
-    const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
-    statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
-    onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef);
-  }
+  };
+
+  if (useRemote) await withBackend(remoteBackend, mainLoop);
+  else await mainLoop();
 }

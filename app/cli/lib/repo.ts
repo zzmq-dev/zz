@@ -45,17 +45,32 @@ export function parseSlug(slug: string): { owner: string; name: string } {
 }
 
 export function resolveRepo(slug: string): ResolvedRepo {
-  const { name } = parseSlug(slug);
+  const { owner, name } = parseSlug(slug);
+  // Nested by a sanitized owner segment, not just `name` -- a bare
+  // "demo-repos/<name>" would collide if two different owners (now
+  // genuinely possible with remote repos, e.g. two humans' repos both
+  // named "shoes") happened to pick the same repo name.
+  const ownerDir = owner.replace(/[^a-zA-Z0-9._-]/g, "_");
   return {
     slug,
     name,
-    repoDir: join(appRoot(), "demo-repos", name),
-    stateDir: join(appRoot(), "state", name),
+    repoDir: join(appRoot(), "demo-repos", ownerDir, name),
+    stateDir: join(appRoot(), "state", ownerDir, name),
   };
 }
 
-export function ensureCloned(repo: ResolvedRepo): void {
-  if (existsSync(repo.repoDir)) return;
+/** `remoteUrl`, when given, is a real git URL with credentials already embedded (cli/lib/credentials.ts's authedCloneUrl) -- the zz Worker's own git smart-HTTP proxy, cloned exactly like any other git remote. Omit it for the original GitHub-based local/demo path, unchanged. */
+export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
+  if (existsSync(repo.repoDir)) {
+    if (remoteUrl) syncClone(repo);
+    return;
+  }
   console.error(`cloning ${repo.slug}...`);
-  execFileSync("git", ["clone", "--quiet", `https://github.com/${repo.slug}.git`, repo.repoDir], { stdio: "inherit" });
+  execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, repo.repoDir], { stdio: "inherit" });
+}
+
+/** Fast-forwards an existing clone to match the remote's current `main` -- needed in remote mode specifically, since other agents' commits land on the real remote, not in this local working copy, between one read and the next (local mode has no such gap: LocalBackend commits land directly in this same repoDir). */
+export function syncClone(repo: ResolvedRepo): void {
+  execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
+  execFileSync("git", ["-C", repo.repoDir, "reset", "--quiet", "--hard", "origin/main"], { stdio: "inherit" });
 }

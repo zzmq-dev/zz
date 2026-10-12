@@ -6,7 +6,7 @@
 // you used.
 import { execFileSync } from "node:child_process";
 import { apiFetch } from "../lib/api.js";
-import { requireCredentials } from "../lib/credentials.js";
+import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
 
 interface RepoRow {
   id: string;
@@ -76,8 +76,7 @@ export async function repoAsks(slug: string): Promise<void> {
 // token) that most people won't get it right by hand on the first try.
 export async function repoClone(slug: string, dir?: string): Promise<void> {
   const creds = requireCredentials();
-  const host = creds.apiBase.replace(/^https?:\/\//, "");
-  const url = `https://${encodeURIComponent(creds.token)}@${host}/${slug}`;
+  const url = authedCloneUrl(creds.apiBase, creds.token, slug);
   const args = dir ? ["clone", url, dir] : ["clone", url];
   execFileSync("git", args, { stdio: "inherit" });
 }
