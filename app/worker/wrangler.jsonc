@@ -9,6 +9,13 @@
       "namespace": "zz"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zz-accounts",
+      "database_id": "340465c5-bd3b-49cc-878b-fbf8e577b99a"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

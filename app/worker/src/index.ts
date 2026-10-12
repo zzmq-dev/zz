@@ -13,6 +13,7 @@ import { createMemFs } from "./memFs.js";
 import { MaintainerDO } from "./MaintainerDO.js";
 import { commitChangesetOnArtifacts, readFileAtCommit } from "./cloudflareGitBackend.js";
 import { writeRung, readRung, appendRepoChildren } from "./cloudflareLadderBackend.js";
+import { ensureMeta, readRepoMeta, readRepoRoles, writeRepoRoles } from "./repoMeta.js";
 
 export { MaintainerDO };
 
@@ -24,6 +25,7 @@ export { MaintainerDO };
 interface Env {
   ARTIFACTS: Artifacts;
   MAINTAINER_DO: DurableObjectNamespace<MaintainerDO>;
+  DB: D1Database;
 }
 
 function tokenString(token: { plaintext: string } | string): string {
@@ -240,6 +242,41 @@ async function testRepoRungAndAppend(env: Env): Promise<Response> {
   }
 }
 
+// Diagnostic only: the zz-meta orphan branch is brand new this phase
+// -- verify ensureMeta's bootstrap, a role-grant write, and reads of
+// both files against a real Artifacts repo before anything else is
+// built on top of it (D1, the web app).
+async function testRepoMeta(env: Env): Promise<Response> {
+  const repoName = "repo-meta-proof-" + Date.now();
+  const steps: Record<string, unknown> = {};
+  try {
+    const { remote } = await seedRepo(env, repoName, [{ path: "a.txt", content: "a\n" }]);
+    using repo = await env.ARTIFACTS.get(repoName);
+    const token = await repo.createToken("write", 3600);
+
+    await ensureMeta(remote, token, { description: "a test repo", owner: { type: "account", id: "acct-test" } });
+    steps.ensuredOnce = await readRepoMeta(remote, token);
+
+    // Idempotency: calling ensureMeta again must not clobber the existing meta.json.
+    await ensureMeta(remote, token, { description: "SHOULD NOT APPEAR", owner: { type: "account", id: "acct-other" } });
+    steps.ensuredTwice = await readRepoMeta(remote, token);
+
+    const rolesBefore = await readRepoRoles(remote, token);
+    steps.rolesBefore = rolesBefore;
+    await writeRepoRoles(remote, token, { grants: [...(rolesBefore?.grants ?? []), { principal: "agent:agent-test", role: "contributor", granted_by: "acct-test", at: new Date().toISOString() }] });
+    steps.rolesAfter = await readRepoRoles(remote, token);
+
+    // meta.json must survive the roles.json-only write untouched.
+    steps.metaAfterRolesWrite = await readRepoMeta(remote, token);
+
+    await env.ARTIFACTS.delete(repoName);
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
+  }
+}
+
 async function testFetchMissingRef(env: Env): Promise<Response> {
   const repoName = "fetch-missing-ref-" + Date.now();
   const steps: Record<string, unknown> = {};
@@ -277,6 +314,7 @@ export default {
     if (path === "/changeset-test") return testChangesetCommit(env);
     if (path === "/fetch-missing-ref-test") return testFetchMissingRef(env);
     if (path === "/repo-rung-test") return testRepoRungAndAppend(env);
+    if (path === "/repo-meta-test") return testRepoMeta(env);
 
     const repoName = "proof-" + Date.now();
     const steps: Record<string, unknown> = {};
