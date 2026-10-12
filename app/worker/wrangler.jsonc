@@ -3,6 +3,10 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "CF_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/cloudflare",
+    "GOOGLE_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/google"
+  },
   "artifacts": [
     {
       "binding": "ARTIFACTS",
