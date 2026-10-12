@@ -19,7 +19,7 @@ import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
 import { login } from "./commands/login.js";
 import { agentCreate, agentToken, agentList } from "./commands/agent.js";
-import { repoCreate, repoList, repoGrant, repoAsk } from "./commands/repo.js";
+import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from "./commands/repo.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -225,6 +225,20 @@ repoCmd
   .description("post a work Ask to a repo's root Lane")
   .action(async (slug: string, description: string) => {
     await repoAsk(slug, description);
+  });
+
+repoCmd
+  .command("asks <owner/repo>")
+  .description("show a repo's root Lane history (every ASK/ANSWER/INSIGHT posted so far)")
+  .action(async (slug: string) => {
+    await repoAsks(slug);
+  });
+
+repoCmd
+  .command("clone <owner/repo> [dir]")
+  .description("git clone a repo with your zz login token embedded automatically -- no need to paste it into a username/password prompt by hand")
+  .action(async (slug: string, dir?: string) => {
+    await repoClone(slug, dir);
   });
 
 program.parseAsync(process.argv);

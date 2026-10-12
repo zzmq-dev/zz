@@ -82,7 +82,7 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function layout(title: string, agent: Agent | null, body: string): Response {
+function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[] } = {}): Response {
   const nav = agent
     ? `<a href="/explore">Explore</a> · <a href="/profile">${esc(agent.display_name)}</a> · <a href="/logout">Log out</a>`
     : `<a href="/explore">Explore</a> · <a href="/login">Log in</a>`;
@@ -104,7 +104,9 @@ form{margin:1rem 0}
 <h1>${esc(title)}</h1>
 ${body}
 </body></html>`;
-  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
+  for (const cookie of opts.cookies ?? []) headers.append("set-cookie", cookie);
+  return new Response(html, { headers });
 }
 
 // Takes `cookies` as a real array, appended individually -- joining
@@ -219,6 +221,28 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     }
   }
 
+  // First-ever browser login, no CLI involved: mint a token right
+  // here too, same reasoning as doCreateAgent -- a credential that's
+  // only ever issued from a buried "issue yourself a token" button on
+  // /profile is a credential most people won't find until they
+  // already need it (confirmed live: git push failure asking "how do
+  // I even get a token"). Only on first login (zero existing active
+  // tokens) -- a token is shown-once by design, so minting one on
+  // every return visit would just produce unusable, never-seen tokens.
+  const existingTokens = (await listTokensForAgent(env.DB, agent.id)).filter((t) => !t.revoked_at);
+  if (existingTokens.length === 0) {
+    const plaintext = generateAgentToken();
+    await createAgentToken(env.DB, agent.id, hashAgentToken(plaintext));
+    return layout(
+      "Welcome",
+      agent,
+      `<p>Logged in as <b>${esc(agent.display_name)}</b>. Here's a token for \`git push\`, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
+       <pre>${esc(plaintext)}</pre>
+       <p><a href="/profile">Continue to your profile</a></p>`,
+      { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
+    );
+  }
+
   return redirect("/profile", { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
 }
 
@@ -248,9 +272,18 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 
 // --- Shared core logic (used by both HTML forms and the JSON API) ---
 
-async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): Promise<Agent> {
+// Issues the agent's first credential as part of creation itself,
+// not a separate click -- there's no reason to make "spin up an Agent
+// and get it a usable token" a two-step dance when both steps happen
+// in the same request anyway. Issuing an *additional* token later
+// (rotation, a second credential for a second machine/process) stays
+// its own explicit action -- see doMintToken.
+async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): Promise<{ agent: Agent; token: string }> {
   if (!displayName.trim()) throw new ApiError(400, "display_name is required");
-  return createAgent(env.DB, displayName.trim(), null, creator.id);
+  const agent = await createAgent(env.DB, displayName.trim(), null, creator.id);
+  const token = generateAgentToken();
+  await createAgentToken(env.DB, agent.id, hashAgentToken(token));
+  return { agent, token };
 }
 
 /** Minting a token for an agent is allowed for the agent itself (re-authenticating with an existing token/session) or whoever created it -- a practical bootstrap allowance (a brand-new agent has no credential yet, so someone has to issue its first one), not a general override. */
@@ -311,6 +344,30 @@ async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principa
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
 }
 
+interface LaneHistoryEntry {
+  id?: string;
+  type: "ASK" | "ANSWER" | "INSIGHT";
+  kind?: string;
+  from?: string;
+  action?: string;
+  ask?: string;
+  payload?: unknown;
+  at: string;
+}
+
+interface LaneSnapshot {
+  id: string;
+  status: string;
+  history: LaneHistoryEntry[];
+}
+
+/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol, the only place this is currently visible (there's no dedicated Ladder/Lane viewer page yet). Null if the repo has no root Lane yet (never had an Ask posted to it). */
+async function getRootLane(env: WebEnv, artifactsName: string): Promise<LaneSnapshot | null> {
+  const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(artifactsName));
+  await stub.configure(artifactsName);
+  return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: "_repo" })) as LaneSnapshot | null;
+}
+
 async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
@@ -348,7 +405,7 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
       const repos = repoLists[i + 1];
       return `<li><b>${esc(a.display_name)}</b> <span class="muted">(${a.id})</span>
         <form method="post" action="/profile/agents/${a.id}/tokens" style="display:inline">
-          <button type="submit">New token</button>
+          <button type="submit">Issue another token</button>
         </form>
         <ul>${tokens.map((t) => `<li>token ${t.id} created ${esc(t.created_at)} ${t.last_used_at ? `last used ${esc(t.last_used_at)}` : "(never used)"} <form method="post" action="/profile/tokens/${t.id}/revoke" style="display:inline"><button type="submit">Revoke</button></form></li>`).join("")}</ul>
         <div class="muted">Repos: ${repos.length ? repos.map((r) => `<a href="/${esc(r.slug)}">${esc(r.slug)}</a>`).join(", ") : "none"}</div>
@@ -363,10 +420,11 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
     me,
     `<p>${esc(me.display_name)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
      <p class="muted">Your own tokens: ${myTokens.length ? myTokens.map((t) => `${t.id}${t.last_used_at ? ` (last used ${esc(t.last_used_at)})` : " (never used)"}`).join(", ") : "none"}
-       <form method="post" action="/profile/agents/${me.id}/tokens" style="display:inline"><button type="submit">New token for yourself</button></form>
-       -- used by \`zz login\`/the CLI, or any script acting directly as you.</p>
+       <form method="post" action="/profile/agents/${me.id}/tokens" style="display:inline"><button type="submit">Issue yourself a token</button></form>
+       -- for \`git push\`, the CLI, or any script acting directly as you. Use it as the username (password blank) when git prompts for credentials.</p>
 
-     <h2>Agents you created</h2>
+     <h2>Managed agents</h2>
+     <p class="muted">Agents whose credentials you can issue, rotate, or revoke -- not "yours" in the sense of owning their actions, just the one accountable for their access, same as any API credential you'd manage.</p>
      <form method="post" action="/profile/agents">
        <input name="display_name" placeholder="agent name" required>
        <button type="submit">Create agent</button>
@@ -409,11 +467,18 @@ async function handleCreateAgentForm(request: Request, env: WebEnv): Promise<Res
   if (!me) return redirect("/login");
   const form = await request.formData();
   try {
-    await doCreateAgent(env, me, String(form.get("display_name") ?? ""));
+    const { agent, token } = await doCreateAgent(env, me, String(form.get("display_name") ?? ""));
+    return layout(
+      "Agent created",
+      me,
+      `<p>Created <b>${esc(agent.display_name)}</b> (${esc(agent.id)}). Its first token -- copy it now, it won't be shown again:</p>
+       <pre>${esc(token)}</pre>
+       <p><a href="/profile">Back to profile</a></p>`,
+    );
   } catch (err) {
-    if (!(err instanceof ApiError)) throw err;
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
   }
-  return redirect("/profile");
 }
 
 async function handleMintTokenForm(agentId: string, request: Request, env: WebEnv): Promise<Response> {
@@ -512,8 +577,8 @@ async function handleApiCreateAgent(request: Request, env: WebEnv): Promise<Resp
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
     const body = (await request.json()) as { display_name?: string };
-    const agent = await doCreateAgent(env, me, body.display_name ?? "");
-    return json(agent, 201);
+    const { agent, token } = await doCreateAgent(env, me, body.display_name ?? "");
+    return json({ ...agent, token }, 201);
   });
 }
 
@@ -554,6 +619,15 @@ async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
     const ctx = await getRepoAccessContext(slug, env);
     if (!ctx) throw new ApiError(404, "no such repo");
     return json({ repo: ctx.repoRow, meta: ctx.meta, roles: ctx.roles });
+  });
+}
+
+async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const ctx = await getRepoAccessContext(slug, env);
+    if (!ctx) throw new ApiError(404, "no such repo");
+    const lane = await getRootLane(env, ctx.repoRow.artifacts_name);
+    return json({ lane });
   });
 }
 
@@ -727,6 +801,17 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
 
+  const lane = await getRootLane(env, repoRow.artifacts_name);
+  const asksHtml = (lane?.history ?? [])
+    .slice()
+    .reverse()
+    .map((e) => {
+      if (e.type === "ASK") return `<li><b>ASK</b> (${esc(e.kind ?? "?")}) from ${esc(e.from ?? "?")} -- ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+      if (e.type === "ANSWER") return `<li><b>ANSWER</b> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
+      return `<li><b>INSIGHT</b> ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+    })
+    .join("");
+
   return layout(
     slug,
     me,
@@ -735,10 +820,12 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
      <p><a href="${origin}/${esc(slug)}/archive.zip">Download repo as .zip</a></p>
      <h2>Clone</h2>
      <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
-     <p class="muted">To push: mint an agent token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo), then use it as the username -- <code>git clone https://&lt;token&gt;@${esc(origin.replace("https://", ""))}/${esc(slug)}</code> -- or let git prompt you and paste it in as the password.</p>
+     <p class="muted">To push: issue yourself (or a managed agent) a token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo). <code>zz repo clone ${esc(slug)}</code> handles this automatically if you're logged in via the CLI -- or use the token as the username when git prompts, password blank.</p>
      <h2>Files</h2>
      <ul>${fileListHtml || "<li class=\"muted\">Empty repo.</li>"}</ul>
-     ${readme ? `<h2>README</h2><pre>${esc(readme)}</pre>` : ""}`,
+     ${readme ? `<h2>README</h2><pre>${esc(readme)}</pre>` : ""}
+     <h2>Asks (root Lane)</h2>
+     <ul>${asksHtml || "<li class=\"muted\">No Asks posted yet.</li>"}</ul>`,
   );
 }
 
@@ -888,6 +975,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/ask$/);
     if (m && request.method === "POST") return handleApiPostAsk(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/asks$/);
+    if (m && request.method === "GET") return handleApiGetAsks(`${m[1]}/${m[2]}`, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);

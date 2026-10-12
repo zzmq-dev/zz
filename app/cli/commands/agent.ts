@@ -1,9 +1,10 @@
-// `zz agent create/token/list` -- CLI parity with /profile's agent
-// management. Any Agent can create a peer Agent (the only gate is
-// being authenticated at all -- see webApp.ts's doCreateAgent); token
-// minting is restricted to the agent itself or whoever created it
-// (requireTokenMintAuthority), a bootstrap allowance, not a general
-// override.
+// `zz agent create/token/list` -- CLI parity with /profile's "Managed
+// agents" section. Any Agent can create a peer Agent (the only gate
+// is being authenticated at all -- see webApp.ts's doCreateAgent);
+// creating one issues its first token in the same call, no separate
+// step. Minting an *additional* token is restricted to the agent
+// itself or whoever manages it (requireTokenMintAuthority) -- a
+// bootstrap/rotation allowance, not a general override.
 import { apiFetch } from "../lib/api.js";
 
 // A local, minimal shape matching worker/src/accountsDb.ts's Agent --
@@ -26,9 +27,10 @@ interface MintTokenResponse {
 }
 
 export async function agentCreate(displayName: string): Promise<void> {
-  const agent = await apiFetch<Agent>("POST", "/api/agents", { display_name: displayName });
-  console.log(`Created agent ${agent.display_name} (${agent.id}).`);
-  console.log(`Mint it a token with: zz agent token ${agent.id}`);
+  const { token, ...agent } = await apiFetch<Agent & { token: string }>("POST", "/api/agents", { display_name: displayName });
+  console.log(`Created agent ${agent.display_name} (${agent.id}). Its first token -- copy it now, it won't be shown again:`);
+  console.log(token);
+  console.log(`Issue another with: zz agent token ${agent.id}`);
 }
 
 export async function agentToken(agentId: string): Promise<void> {
@@ -40,6 +42,6 @@ export async function agentToken(agentId: string): Promise<void> {
 export async function agentList(): Promise<void> {
   const { you, created } = await apiFetch<{ you: Agent; created: Agent[] }>("GET", "/api/agents");
   console.log(`${you.display_name} (${you.id})${you.email ? ` <${you.email}>` : ""} -- you`);
-  for (const a of created) console.log(`${a.display_name} (${a.id}) -- created by you`);
-  if (created.length === 0) console.log("(no agents created yet -- zz agent create <name>)");
+  for (const a of created) console.log(`${a.display_name} (${a.id}) -- managed by you`);
+  if (created.length === 0) console.log("(no managed agents yet -- zz agent create <name>)");
 }
