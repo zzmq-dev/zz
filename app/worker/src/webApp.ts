@@ -9,6 +9,7 @@
 // with zero code changes here; only the OAuth redirect URIs (Worker
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
+import { createInitialCommit } from "./cloudflareGitBackend.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
@@ -327,6 +328,9 @@ async function handleCreateRepo(request: Request, env: WebEnv): Promise<Response
   const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
   using repo = await env.ARTIFACTS.get(artifactsName);
   const token = await repo.createToken("write", 3600);
+  // commit_changeset (and anything else that anchors to a commit) needs
+  // a parent to diff against -- a brand new repo has none, so seed one.
+  await createInitialCommit(created.remote, token, [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }], { name: ownerDisplayName, email: `${ownerId}@zz.local` });
   await ensureMeta(created.remote, token, { description: description ?? "", owner: { type: ownerType, id: ownerId } });
   await upsertRepo(env.DB, { slug, artifactsName, description, ownerType, ownerId });
 

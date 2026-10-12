@@ -316,6 +316,23 @@ export default {
     if (path === "/fetch-missing-ref-test") return testFetchMissingRef(env);
     if (path === "/repo-rung-test") return testRepoRungAndAppend(env);
     if (path === "/repo-meta-test") return testRepoMeta(env);
+    if (path === "/dev-seed-content") {
+      const artifactsName = new URL(req.url).searchParams.get("repo");
+      if (!artifactsName) return new Response("missing ?repo=", { status: 400 });
+      const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(artifactsName));
+      await stub.configure(artifactsName);
+      const commitResult = await stub.callTool("commit_changeset", {
+        repo: artifactsName,
+        files: [
+          { path: "README.md", content: "# Demo widget\n\nA tiny demo repo for testing the web app.\n" },
+          { path: "index.js", content: "export function widget() { return 42; }\n" },
+        ],
+        message: "seed content",
+        author_name: "dev-seed",
+        author_email: "dev-seed@local",
+      });
+      return Response.json(commitResult);
+    }
 
     const webResponse = await handleWebRequest(req, env);
     if (webResponse) return webResponse;

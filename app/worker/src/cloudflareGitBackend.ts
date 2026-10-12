@@ -31,6 +31,34 @@ function tokenString(token: { plaintext: string } | string): string {
   return typeof token === "string" ? token.split("?")[0] : token.plaintext;
 }
 
+/**
+ * Pushes a brand-new repo's first commit. Needed because
+ * commitChangesetOnArtifacts always diffs against a parent via
+ * headOid() -- a repo with zero commits has nothing to diff against,
+ * so every real repo needs exactly one of these before
+ * commit_changeset (or any Ladder/zz-meta write, which all anchor to
+ * a commit) can touch it. Safe to call with an empty `files` array
+ * (an empty-tree root commit).
+ */
+export async function createInitialCommit(remote: string, token: { plaintext: string } | string, files: { path: string; content: string }[], author: CommitAuthor): Promise<string> {
+  const fs = createMemFs();
+  const dir = "/init";
+  await git.init({ fs, dir, defaultBranch: "main" });
+  const entries: { mode: string; path: string; oid: string; type: "blob" }[] = [];
+  for (const f of files) {
+    const oid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode(f.content) });
+    entries.push({ mode: "100644", path: f.path, oid, type: "blob" });
+  }
+  const treeOid = await git.writeTree({ fs, dir, tree: entries });
+  const person = { name: author.name, email: author.email, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+  const commitOid = await git.writeCommit({ fs, dir, commit: { message: "initial commit", tree: treeOid, parent: [], author: person, committer: person } });
+  await git.writeRef({ fs, dir, ref: "refs/heads/main", value: commitOid, force: true });
+  const onAuth = () => ({ username: "x-token-auth", password: tokenString(token) });
+  const pushResult = await git.push({ fs, http, dir, url: remote, onAuth, ref: "main", remoteRef: "main" });
+  if (!pushResult.ok) throw new Error(`initial commit push rejected: ${JSON.stringify(pushResult.refs)}`);
+  return commitOid;
+}
+
 /** The repo's current HEAD commit, via the native binding -- no clone. */
 export async function headOid(repo: ArtifactsRepoHandle): Promise<string> {
   const [latest] = await repo.log({ ref: "main", limit: 1 });
