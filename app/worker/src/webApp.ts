@@ -305,8 +305,8 @@ function zzAutocomplete(inputEl, listEl, url) {
         (data.agents || []).forEach(function (a) {
           var item = document.createElement('div');
           item.className = 'ac-item';
-          item.textContent = a.display_name + ' (' + a.username + ')';
-          item.onclick = function () { inputEl.value = a.id; listEl.hidden = true; };
+          item.textContent = a.username;
+          item.onclick = function () { inputEl.value = a.username; listEl.hidden = true; };
           listEl.appendChild(item);
         });
         listEl.hidden = (data.agents || []).length === 0;
@@ -341,7 +341,7 @@ function zzExploreSearch(inputEl, listEl) {
       fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { repos: [], agents: [] }; }).then(function (data) {
         listEl.innerHTML = '';
         (data.repos || []).forEach(function (r) { addItem('pink', r.slug, '/' + r.slug); });
-        (data.agents || []).forEach(function (a) { addItem('cyan', a.display_name, '/' + a.username); });
+        (data.agents || []).forEach(function (a) { addItem('cyan', a.username, '/' + a.username); });
         listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0;
       });
     }, 200);
@@ -365,7 +365,7 @@ document.querySelectorAll('[data-copy]').forEach(function (btn) {
 
 function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string } = {}): Response {
   const nav = agent
-    ? `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/${esc(agent.username)}">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
+    ? `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/${esc(agent.username)}">${esc(agent.username)}</a><a href="/logout">Log out</a>`
     : `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
@@ -504,7 +504,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       return layout(
         "Logged in",
         agent,
-        `<div class="card"><p>Logged in as <b>${esc(agent.display_name)}</b>. You can close this tab and return to your terminal.</p></div>`,
+        `<div class="card"><p>Logged in as <b class="mono">${esc(agent.username)}</b>. You can close this tab and return to your terminal.</p></div>`,
       );
     }
   }
@@ -525,7 +525,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       "Welcome",
       agent,
       `<div class="card stack">
-         <p>Logged in as <b>${esc(agent.display_name)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
+         <p>Logged in as <b class="mono">${esc(agent.username)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
          <pre>${esc(plaintext)}</pre>
          <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
        </div>`,
@@ -557,7 +557,7 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
   const result = await pollAndConsumeCliLoginSession(env.DB, nonce);
   if (!result) return json({ status: "pending" });
   const agent = await getAgent(env.DB, result.agentId);
-  return json({ status: "ready", token: result.token, agent: { id: result.agentId, display_name: agent?.display_name ?? result.agentId } });
+  return json({ status: "ready", token: result.token, agent: { id: result.agentId, username: agent?.username ?? result.agentId } });
 }
 
 // --- Shared core logic (used by both HTML forms and the JSON API) ---
@@ -577,8 +577,9 @@ async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): 
 }
 
 /** Minting a token for an agent is allowed for the agent itself (re-authenticating with an existing token/session) or whoever created it -- a practical bootstrap allowance (a brand-new agent has no credential yet, so someone has to issue its first one), not a general override. */
+/** `targetAgentId` accepts either a bare agent id or a username -- CLI/UI surfaces show only the username now (never the raw id), so a command built from what you see on screen (`zz agent token <username>`) has to actually work. */
 async function requireTokenMintAuthority(env: WebEnv, actor: Agent, targetAgentId: string): Promise<Agent> {
-  const target = await getAgent(env.DB, targetAgentId);
+  const target = (await getAgent(env.DB, targetAgentId)) ?? (await getAgentByUsername(env.DB, targetAgentId));
   if (!target) throw new ApiError(404, "no such agent");
   if (target.id !== actor.id && target.created_by !== actor.id) throw new ApiError(403, "you can only mint tokens for yourself or an agent you created");
   return target;
@@ -665,9 +666,12 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   return row;
 }
 
-async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
+async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principalInput: string, role: RbacRole): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
+  const target = await resolveAgent(env, principalInput);
+  if (!target) throw new ApiError(404, `no such agent "${principalInput}"`);
+  const principal = target.id;
 
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
@@ -681,6 +685,20 @@ async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principa
 
   const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
   nextGrants.push({ principal, role, granted_by: actor.id, at: new Date().toISOString() });
+  await writeRepoRoles(info.remote, token, { grants: nextGrants });
+  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
+}
+
+/** Removes one grant by its exact stored `principal` value (never resolved through resolveAgent first -- unlike doRbacGrant, this has to be able to remove a grant whose principal doesn't correspond to any current agent at all, e.g. a stale one written before principals were consistently stored as ids). */
+async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("write", 3600);
+  const info = await artifactsRepo.info();
+  const roles = await readRepoRoles(info.remote, token);
+  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
   await syncRepoRoleCache(env.DB, repo.id, nextGrants);
 }
@@ -702,7 +720,7 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
 async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerId: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  const newOwner = await getAgent(env.DB, newOwnerId);
+  const newOwner = await resolveAgent(env, newOwnerId);
   if (!newOwner) throw new ApiError(404, "no such agent");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
@@ -729,6 +747,17 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
   await env.ARTIFACTS.delete(repo.artifacts_name);
   await deleteRepoRow(env.DB, repo.id);
+}
+
+/** Resolves a bare agent id (what roles.json's `principal` field always stores -- that has to stay a stable, immutable key, never a display string) to that Agent's `username`, for the one place ids should ever reach a person: display. Falls back to the raw id only for a grant whose agent record is gone (shouldn't normally happen, but shouldn't crash the page either). */
+async function usernameFor(env: WebEnv, agentId: string): Promise<string> {
+  const a = await getAgent(env.DB, agentId);
+  return a?.username ?? agentId;
+}
+
+/** The inverse direction: every surface that lets someone name an agent (grant a role, transfer ownership, mint a token) shows and accepts only usernames now -- whatever's typed or picked from autocomplete needs to resolve back to a real Agent the same way, trying a bare id first (still valid, just never shown) then falling back to username. */
+async function resolveAgent(env: WebEnv, idOrUsername: string): Promise<Agent | null> {
+  return (await getAgent(env.DB, idOrUsername)) ?? (await getAgentByUsername(env.DB, idOrUsername));
 }
 
 function doStub(env: WebEnv, artifactsName: string) {
@@ -959,10 +988,9 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
     if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.roles))) visible.push(r);
   }
   return layout(
-    agent.display_name,
+    agent.username,
     await resolveRequestAgent(request, env),
-    `<p class="hint">@${esc(agent.username)}</p>
-     ${card(
+    `${card(
        "Repos",
        `<ul class="list">${visible.map((r) => `<li><a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${esc(r.description)}</div>` : ""}</li>`).join("") || '<li class="empty">No public repos.</li>'}</ul>`,
      )}`,
@@ -982,7 +1010,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
     .flatMap((a, i) => tokenLists[i].filter((t) => !t.revoked_at).map((t) => ({ agent: a, token: t })))
     .map(
       ({ agent, token }) =>
-        `<li class="row"><b>${esc(agent.display_name)}</b> <span class="mono">${esc(token.id)}</span> <span class="muted">${token.last_used_at ? `last used ${esc(token.last_used_at)}` : "never used"}</span>
+        `<li class="row"><b class="mono">${esc(agent.username)}</b> <span class="mono">${esc(token.id)}</span> <span class="muted">${token.last_used_at ? `last used ${esc(token.last_used_at)}` : "never used"}</span>
           <form method="post" action="/profile/tokens/${token.id}/revoke" class="inline"><button type="submit" class="danger">Revoke</button></form></li>`,
     )
     .join("");
@@ -991,11 +1019,9 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   const repoRows: { repo: RepoRow; role: string }[] = [...ownedRepos.map((r) => ({ repo: r, role: "owner" })), ...sharedRepos.map((r) => ({ repo: r as RepoWithRole, role: (r as RepoWithRole).role }))];
 
   return layout(
-    `${me.display_name} (you)`,
+    `${me.username} (you)`,
     me,
-    `<p class="hint">@${esc(me.username)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
-
-     ${card(
+    `${card(
        "Credentials",
        `<p class="hint">You, and every agent you manage, share one token list -- not "yours" vs "theirs" in any authority sense, just one place to issue, rotate, or revoke whatever can authenticate as any of them.</p>
         <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>`,
@@ -1058,13 +1084,13 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
   const form = await request.formData();
   const value = String(form.get("agent") ?? "").trim();
   try {
-    const existing = value.startsWith("agent-") ? await getAgent(env.DB, value) : null;
+    const existing = await resolveAgent(env, value);
     const { agent, token } = existing ? await doMintToken(env, me, existing.id) : await doCreateAgent(env, me, value);
     return layout(
       "New token",
       me,
       `<div class="card stack">
-         <p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
+         <p>Token for <b class="mono">${esc(agent.username)}</b> -- copy it now, it won't be shown again:</p>
          <pre>${esc(token)}</pre>
          <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
        </div>`,
@@ -1092,6 +1118,19 @@ async function handleRbacGrantForm(repoSlug: string, request: Request, env: WebE
   const form = await request.formData();
   try {
     await doRbacGrant(env, me, repoSlug, String(form.get("principal") ?? ""), String(form.get("role") ?? "reader") as RbacRole);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${repoSlug}/settings`);
+}
+
+async function handleRbacRevokeForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  try {
+    await doRevokeGrant(env, me, repoSlug, String(form.get("principal") ?? ""));
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
@@ -1473,7 +1512,11 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     )
     .join("");
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"}">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
+  const rolesHtml = (
+    await Promise.all(
+      (roles?.grants ?? []).map(async (g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"} mono">${esc(await usernameFor(env, g.principal))}: ${esc(g.role)}</span>`),
+    )
+  ).join(" ");
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.id), "owner");
 
@@ -1572,10 +1615,11 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   const { meta, roles } = ctx;
   if (!repoAtLeast(repoRoleFor(roles, me.id), "owner")) return new Response("Owners only", { status: 403 });
 
-  const roleRows = (roles?.grants ?? [])
-    .map(
-      (g) => `<li class="row">
-        <span class="mono">${esc(g.principal)}</span>
+  const roleRows = (
+    await Promise.all(
+      (roles?.grants ?? []).map(
+        async (g) => `<li class="row">
+        <span class="mono">${esc(await usernameFor(env, g.principal))}</span>
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
@@ -1584,9 +1628,14 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
           <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
           <button type="submit" class="secondary" hidden>Save</button>
         </form>
+        <form method="post" action="/${esc(slug)}/settings/roles/revoke" class="inline">
+          <input type="hidden" name="principal" value="${esc(g.principal)}">
+          <button type="submit" class="danger">Revoke</button>
+        </form>
       </li>`,
+      ),
     )
-    .join("");
+  ).join("");
 
   const visibility = meta?.policy.visibility ?? "public";
 
@@ -1817,6 +1866,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/roles$/);
     if (m && request.method === "POST") return handleRbacGrantForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/roles\/revoke$/);
+    if (m && request.method === "POST") return handleRbacRevokeForm(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/visibility$/);

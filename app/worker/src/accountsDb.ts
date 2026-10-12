@@ -97,8 +97,16 @@ export async function getAgentByUsername(db: D1Database, username: string): Prom
   return db.prepare("SELECT * FROM agents WHERE username = ?").bind(username).first<Agent>();
 }
 
+/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent a managed agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. This makes "who's accountable for this identity" readable directly off the id, and is why every display surface should show `username`, never the raw `id` or `display_name`, for consistency. */
+async function computeUsername(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<string> {
+  if (email) return uniqueUsername(db, email);
+  const creator = createdBy ? await getAgent(db, createdBy) : null;
+  const base = creator ? `${creator.username}[${usernameSlug(displayName)}]` : usernameSlug(displayName);
+  return uniqueUsername(db, base);
+}
+
 export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
-  const username = await uniqueUsername(db, email ?? usernameSlug(displayName));
+  const username = await computeUsername(db, displayName, email, createdBy);
   const agent: Agent = { id: shortId("agent"), display_name: displayName, email, username, created_at: new Date().toISOString(), created_by: createdBy };
   await db
     .prepare("INSERT INTO agents (id, display_name, email, username, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)")

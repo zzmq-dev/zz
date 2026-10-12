@@ -186,10 +186,10 @@ agentCmd
   });
 
 agentCmd
-  .command("token <agent-id>")
+  .command("token <username>")
   .description("mint a bearer token for an Agent -- yourself, or one you created (practical bootstrap, not a general override)")
-  .action(async (agentId: string) => {
-    await agentToken(agentId);
+  .action(async (username: string) => {
+    await agentToken(username);
   });
 
 agentCmd
@@ -219,7 +219,7 @@ repoCmd
 
 repoCmd
   .command("grant <owner/repo> <principal> <role>")
-  .description("grant an Agent (by id) a repo Role -- owner, maintainer, contributor, or reader. Needs Owner on the repo yourself.")
+  .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, maintainer, contributor, or reader. Needs Owner on the repo yourself.")
   .action(async (slug: string, principal: string, role: string) => {
     await repoGrant(slug, principal, role);
   });

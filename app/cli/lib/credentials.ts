@@ -10,7 +10,7 @@ export interface ZzCredentials {
   apiBase: string;
   token: string;
   agentId: string;
-  displayName: string;
+  username: string;
 }
 
 // The deployed Worker's current URL -- the one thing in the CLI that

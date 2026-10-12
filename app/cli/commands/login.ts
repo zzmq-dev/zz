@@ -15,7 +15,7 @@ interface LoginStartResponse {
 interface LoginPollResponse {
   status: "pending" | "ready";
   token?: string;
-  agent?: { id: string; display_name: string };
+  agent?: { id: string; username: string };
 }
 
 function tryOpenBrowser(url: string): void {
@@ -46,8 +46,8 @@ export async function login(opts: { apiBase?: string; timeoutMs?: number } = {})
     if (!pollResp.ok) continue;
     const poll = (await pollResp.json()) as LoginPollResponse;
     if (poll.status === "ready" && poll.token && poll.agent) {
-      writeCredentials({ apiBase: base, token: poll.token, agentId: poll.agent.id, displayName: poll.agent.display_name });
-      console.log(`Logged in as ${poll.agent.display_name} (${poll.agent.id}).`);
+      writeCredentials({ apiBase: base, token: poll.token, agentId: poll.agent.id, username: poll.agent.username });
+      console.log(`Logged in as ${poll.agent.username}.`);
       return;
     }
   }
