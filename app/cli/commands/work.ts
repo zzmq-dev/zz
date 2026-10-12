@@ -29,7 +29,9 @@ import { createCloudflareBackend } from "../../agent/cloudflareBackend.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
-import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
+import { authedCloneUrl } from "../lib/credentials.js";
+import { resolveIdentity } from "../lib/identity.js";
+import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { remoteBackend } from "../lib/remoteBackend.js";
 
@@ -261,6 +263,8 @@ async function runClaimedAsk(
 
 export interface WorkOptions {
   agent?: string;
+  /** --as <name>: act as a managed agent instead of yourself -- "<name>" expands to "<your username>[<name>]" and its token comes from the local registry `zz agent create`/`zz agent token` populated (see lib/identity.ts). Mutually exclusive with --agent in practice (both end up setting the same acting identity); --as is the one meant for everyday use, --agent remains for the local/demo path and edge cases (acting as something not in the local registry, e.g. via ZZ_ID). */
+  as?: string;
   repos?: string[];
   scope?: WorkScope;
   stdio?: boolean;
@@ -282,22 +286,23 @@ export async function work(options: WorkOptions): Promise<void> {
   // --local stays fully supported for the demo/cascade-case-study
   // path, which has no reason to touch the network at all.
   const useRemote = !options.local;
-  const creds = useRemote ? requireCredentials() : null;
+  const identity = useRemote ? resolveIdentity(options.as) : null;
+  if (identity) setActiveToken(identity.token);
 
-  // In remote mode your identity IS your logged-in credential --
-  // default --agent to it rather than silently falling through to a
-  // separate (and easily stale or just never-set) agent id in
+  // In remote mode your identity IS your resolved credential -- default
+  // --agent to it rather than silently falling through to a separate
+  // (and easily stale or just never-set) agent id in
   // ~/.zz/config.json. A mismatch there isn't a soft problem: the
   // server's anti-impersonation check (handleApiCallTool) rejects
   // every single tool call whose actor/from isn't the bearer token's
   // own agent id, so this used to fail closed, silently, for anyone
   // who hadn't hand-edited config.json to match their login.
-  const config = readConfig({ agent: options.agent ?? creds?.username, repos: options.repos });
+  const config = readConfig({ agent: options.agent ?? identity?.username, repos: options.repos });
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
 
   for (const r of resolvedRepos) {
     if (useRemote) {
-      ensureCloned(r, authedCloneUrl(creds!.apiBase, creds!.token, r.slug));
+      ensureCloned(r, authedCloneUrl(identity!.apiBase, identity!.token, r.slug));
       await ensureRepoLaneRemote(r, config.agent);
     } else {
       ensureCloned(r);

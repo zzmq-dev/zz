@@ -19,12 +19,16 @@ import { claimableAcrossRepos } from "../../engine/workqueue.js";
 import { ask, answer } from "../../engine/lane.js";
 import { resolveBackend, withBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
-import { requireCredentials, authedCloneUrl } from "../lib/credentials.js";
+import { authedCloneUrl } from "../lib/credentials.js";
+import { resolveIdentity } from "../lib/identity.js";
+import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import { remoteBackend } from "../lib/remoteBackend.js";
 
 export interface ReviewOptions {
   agent?: string;
+  /** --as <name>: act as a managed agent instead of yourself -- see WorkOptions.as (work.ts) / lib/identity.ts for the full resolution order. */
+  as?: string;
   repos?: string[];
   pollMs?: number;
   local?: boolean;
@@ -58,13 +62,14 @@ function printReview(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry): 
 
 export async function review(options: ReviewOptions): Promise<void> {
   const useRemote = !options.local;
-  const creds = useRemote ? requireCredentials() : null;
+  const identity = useRemote ? resolveIdentity(options.as) : null;
+  if (identity) setActiveToken(identity.token);
 
   // See work.ts's identical comment: in remote mode your identity IS
-  // your logged-in credential, not a separate (and easily mismatched)
+  // your resolved credential, not a separate (and easily mismatched)
   // id in ~/.zz/config.json -- a mismatch fails every remote call
   // closed via the server's anti-impersonation check.
-  const config = readConfig({ agent: options.agent ?? creds?.username, repos: options.repos });
+  const config = readConfig({ agent: options.agent ?? identity?.username, repos: options.repos });
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
   // Review only ever reads a changeset's payload (already embedded in
   // the ask) and posts grant/deny -- no working tree is touched, so a
@@ -73,7 +78,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   if (!useRemote) {
     for (const r of resolvedRepos) ensureCloned(r);
   } else {
-    for (const r of resolvedRepos) ensureCloned(r, authedCloneUrl(creds!.apiBase, creds!.token, r.slug));
+    for (const r of resolvedRepos) ensureCloned(r, authedCloneUrl(identity!.apiBase, identity!.token, r.slug));
   }
 
   const pollMs = options.pollMs ?? 1000;

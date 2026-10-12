@@ -17,7 +17,8 @@
 // path exists to go through instead.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { requireCredentials } from "../lib/credentials.js";
+import { resolveIdentity } from "../lib/identity.js";
+import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { AskEntry, Lane } from "../../engine/types.js";
 
@@ -27,10 +28,13 @@ function git(args: string[]): string {
 
 export interface RepoSubmitOptions {
   message?: string;
+  /** --as <name>: submit as a managed agent instead of yourself -- see WorkOptions.as (work.ts) / lib/identity.ts for the full resolution order. */
+  as?: string;
 }
 
 export async function repoSubmit(slug: string, laneId: string, askId: string, opts: RepoSubmitOptions): Promise<void> {
-  const creds = requireCredentials();
+  const identity = resolveIdentity(opts.as);
+  setActiveToken(identity.token);
 
   const staged = git(["diff", "--cached", "--name-only"])
     .split("\n")
@@ -54,7 +58,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   const review = (await callRemoteTool(slug, "ask_post", {
     lane_id: laneId,
     kind: "changeset_review",
-    from: creds.username,
+    from: identity.username,
     payload: { taskDescription, files, message, summary: message },
     depends_on: [],
   })) as AskEntry;
@@ -62,7 +66,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   await callRemoteTool(slug, "ask_post", {
     lane_id: laneId,
     kind: "submit_changeset",
-    from: creds.username,
+    from: identity.username,
     payload: { files, message, summary: message, baseCommit },
     depends_on: [askId, review.id],
   });
@@ -70,7 +74,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   await callRemoteTool(slug, "ask_answer", {
     lane_id: laneId,
     ask_id: askId,
-    actor: creds.username,
+    actor: identity.username,
     action: "complete",
     payload: { summary: message },
   });

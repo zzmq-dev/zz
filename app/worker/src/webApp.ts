@@ -1077,8 +1077,7 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
   try {
     const existing = await getAgent(env.DB, value);
     const { agent, token } = existing ? await doMintToken(env, me, existing.username) : await doCreateAgent(env, me, value);
-    const origin = new URL(request.url).origin;
-    const credsJson = JSON.stringify({ apiBase: origin, token, username: agent.username }, null, 2);
+    const zzId = `${agent.username}:${token}`;
     return layout(
       "New token",
       me,
@@ -1089,8 +1088,8 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
        </div>
        ${card(
          "Run zz work as this identity",
-         `<p class="hint">\`zz login\` is OAuth-only and writes your own session -- to run <code>zz work</code>/<code>zz review</code> as ${esc(agent.username)} from a separate terminal, save this as a credentials file and point <code>ZZ_CREDENTIALS</code> at its path:</p>
-          <div class="clone-row"><pre>${esc(credsJson)}</pre><button class="secondary icon-btn" data-copy="${esc(credsJson)}" title="Copy">⧉</button></div>`,
+         `<p class="hint">If you created this from the same machine's \`zz login\` session, <code>zz work --as ${esc(value)}</code> already picks it up automatically -- nothing else to do. From a separate machine or a headless run, set this instead:</p>
+          <div class="clone-row"><pre>ZZ_ID="${esc(zzId)}"</pre><button class="secondary icon-btn" data-copy="${esc(`ZZ_ID="${zzId}"`)}" title="Copy">⧉</button></div>`,
        )}`,
     );
   } catch (err) {

@@ -95,18 +95,19 @@ askCmd
   });
 
 program
-  .command("work")
-  .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on, across every repo in your zz config")
-  .option("--agent <id>", "your agent identity (default: from ~/.zz/config.json)")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .command("work [repo]")
+  .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [repo] is shorthand for --repos <repo> (a single owner/repo); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
+  .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- expands to "<your username>[claude]", using the token `zz agent create`/`zz agent token` already saved locally for it (see `zz agent --help`). Omit to act as yourself (your own `zz login` session).')
+  .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given")
   .option("--scope <scope>", "coordinator, contributor, or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare (remote, each needs its own API key -- see app/.env)")
   .option("--model <name>", 'model name for whichever provider -- default is "qwen2.5:14b-instruct" (ollama), "gemini-3.8-flash" (gemini), "openai/gpt-oss-120b" (groq), or "@cf/meta/llama-3.3-70b-instruct-fp8-fast" (cloudflare). Run `zz models` to see what\'s available locally for ollama.')
-  .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your zz-logged-in identity's real protocol state on the deployed Worker")
-  .action(async (opts: { agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean }) => {
+  .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your resolved identity's real protocol state on the deployed Worker")
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean }) => {
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
       process.exitCode = 1;
@@ -118,8 +119,9 @@ program
       return;
     }
     await work({
+      as: opts.as,
       agent: opts.agent,
-      repos: opts.repos,
+      repos: repo ? [repo] : opts.repos,
       scope: opts.scope as "coordinator" | "contributor" | "all" | undefined,
       stdio: opts.stdio,
       maxTurns: opts.maxTurns,
@@ -159,13 +161,14 @@ program
   });
 
 program
-  .command("review")
-  .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge')
-  .option("--agent <id>", "your agent identity (default: your zz-logged-in identity, remote; ~/.zz/config.json, local)")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
-  .option("--local", "use the original local/demo backend instead of the default: your zz-logged-in identity's real protocol state on the deployed Worker")
-  .action(async (opts: { agent?: string; repos?: string[]; local?: boolean }) => {
-    await review({ agent: opts.agent, repos: opts.repos, local: opts.local });
+  .command("review [repo]")
+  .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge. [repo] is shorthand for --repos <repo>')
+  .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
+  .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json)")
+  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given")
+  .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean }) => {
+    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local });
   });
 
 program
@@ -249,8 +252,9 @@ repoCmd
   .command("submit <owner/repo> <lane-id> <ask-id>")
   .description("the human-contributor path: from inside your local clone, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated")
   .option("--message <text>", "commit message / summary (default: a generated one naming the staged files)")
-  .action(async (slug: string, laneId: string, askId: string, opts: { message?: string }) => {
-    await repoSubmit(slug, laneId, askId, { message: opts.message });
+  .option("--as <name>", 'submit as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
+  .action(async (slug: string, laneId: string, askId: string, opts: { message?: string; as?: string }) => {
+    await repoSubmit(slug, laneId, askId, { message: opts.message, as: opts.as });
   });
 
 program.parseAsync(process.argv);

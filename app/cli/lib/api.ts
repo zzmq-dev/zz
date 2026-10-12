@@ -13,8 +13,21 @@ export class ApiRequestError extends Error {
   }
 }
 
+// Set once, near the top of a remote command (work/review/repo submit)
+// after resolveIdentity() -- everything downstream (callRemoteTool,
+// the remote Backend, every plain apiFetch call) picks it up without
+// needing a token threaded through every function signature in
+// between. A per-call `tokenOverride` still wins when given; falling
+// through to requireCredentials() keeps every existing direct
+// apiFetch call (zz repo create/grant/clone, zz agent list, ...)
+// working exactly as before for commands that never touch identity.ts.
+let activeToken: string | null = null;
+export function setActiveToken(token: string): void {
+  activeToken = token;
+}
+
 export async function apiFetch<T>(method: "GET" | "POST", path: string, body?: unknown, tokenOverride?: string): Promise<T> {
-  const token = tokenOverride ?? requireCredentials().token;
+  const token = tokenOverride ?? activeToken ?? requireCredentials().token;
   const resp = await fetch(`${apiBase()}${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
