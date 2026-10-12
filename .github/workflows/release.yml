@@ -1,0 +1,64 @@
+name: Release
+
+# Fires on a version tag (npm version's own default tag shape, "v0.1.0"
+# etc.) -- the one trigger for an actual publish. Nothing here runs on
+# a normal push/PR; see ci.yml for that. Cutting a release is manual on
+# purpose (see app/RELEASING.md): `npm version <bump>` + `git push
+# --follow-tags` from app/, then this takes over.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # to create the GitHub Release
+  id-token: write # for npm provenance (--provenance)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      # The tag is the one source of truth for "what version is this
+      # release" -- fail loudly if package.json disagrees, rather than
+      # silently publishing whatever the tag says over whatever
+      # package.json says (or vice versa). A mistagged release is a
+      # mistake worth stopping for, not working around.
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+
+      # The full dev-time typecheck (covers demo/demo-repos too, same
+      # as this project's own verify-before-deploy discipline
+      # elsewhere), not just the published subset -- a release is
+      # exactly the moment to run the stricter check.
+      - run: npx tsc --noEmit -p .
+
+      - run: npm run build
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
