@@ -425,7 +425,16 @@ async function handleRepoPage(account: Account | null, slug: string, env: WebEnv
   const readme = head ? await findReadme(repo, tree) : null;
 
   const cloneToken = await repo.createToken("read", 3600);
-  const remoteWithAuth = info.remote.replace("https://", `https://x-token-auth:${typeof cloneToken === "string" ? cloneToken : cloneToken.plaintext}@`);
+  const cloneTokenPlaintext = typeof cloneToken === "string" ? cloneToken : cloneToken.plaintext;
+  // The credential itself can contain "?"/"=" (confirmed live: a real
+  // token came back as "<token>?expires=<ts>", not just the bare
+  // token) -- harmless when passed to isomorphic-git's onAuth (that
+  // builds the Basic Auth header directly, no URL parsing involved),
+  // but fatal here: this string gets embedded in a literal URL a
+  // human's own git client parses, and an un-encoded "?" in the
+  // userinfo segment breaks that parse ("URL rejected: Port number
+  // was not a decimal number...", confirmed live). Percent-encode it.
+  const remoteWithAuth = info.remote.replace("https://", `https://x-token-auth:${encodeURIComponent(cloneTokenPlaintext)}@`);
 
   const fileListHtml = tree
     .map((e) => `<li>${e.type === "tree" ? "📁" : "📄"} ${esc(e.name)}${e.type !== "tree" ? ` <a href="${origin}/${esc(slug)}/blob/${esc(e.name)}">view/download</a>` : ""}</li>`)
