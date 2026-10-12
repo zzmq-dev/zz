@@ -9,10 +9,12 @@
 // own OAuth docs (fundamentals/oauth/integrate-with-cloudflare);
 // "User Details Read" is scope id "user-details.read", confirmed via
 // GET https://api.cloudflare.com/client/v4/oauth/scopes. The full
-// login flow (authorize -> consent -> token exchange -> userinfo ->
-// account/session creation) is verified live end to end as of
-// 2026-10-12; userinfo's real shape is just {sub, iss, aud, ...} with
-// no email or name, see the cloudflare provider's parseUserInfo.
+// login flow (authorize -> consent -> token exchange -> profile fetch
+// -> account/session creation) is verified live end to end as of
+// 2026-10-12, including real email/name via GET /client/v4/user (the
+// OIDC-shaped /oauth2/userinfo returns no profile data at all -- see
+// the cloudflare provider's own comment for why that endpoint isn't
+// used here).
 import { createHash, randomBytes } from "node:crypto";
 import type { Account } from "./accountsDb.js";
 
@@ -53,21 +55,29 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
   cloudflare: {
     authorizeUrl: "https://dash.cloudflare.com/oauth2/auth",
     tokenUrl: "https://dash.cloudflare.com/oauth2/token",
-    userinfoUrl: "https://dash.cloudflare.com/oauth2/userinfo",
+    // Not the OIDC-shaped /oauth2/userinfo (confirmed live to return
+    // only {sub, iss, aud, ...}, no email/name, despite the
+    // "user-details.read" scope's name) -- the OAuth access token also
+    // works as a Bearer token against the real REST API, confirmed
+    // live via /dev-cf-userinfo-raw: GET /client/v4/user returns the
+    // full account profile. Only email/name/username are used below;
+    // the rest of that response (org membership, full permissions
+    // list, billing/subscription flags) is deliberately not requested
+    // further or stored.
+    userinfoUrl: "https://api.cloudflare.com/client/v4/user",
     scope: "user-details.read",
     clientId: (env) => required(env.CF_OAUTH_CLIENT_ID, "CF_OAUTH_CLIENT_ID"),
     clientSecret: (env) => required(env.CF_OAUTH_CLIENT_SECRET, "CF_OAUTH_CLIENT_SECRET"),
     redirectUri: (env) => required(env.CF_OAUTH_REDIRECT_URI, "CF_OAUTH_REDIRECT_URI"),
     parseUserInfo: (json) => {
-      // Confirmed live (2026-10-12) against a real "user-details.read"
-      // grant: {aud, auth_time, iat, iss, rat, sub} -- no email, no
-      // name, despite the scope's name. Cloudflare's OAuth identity is
-      // just an opaque per-user `sub`; there is no profile data to ask
-      // for here. displayName falls back to a short, readable form of
-      // it rather than the raw 32-char hash.
-      const j = json as { sub?: string };
-      if (!j.sub) throw new Error(`Cloudflare userinfo response had no "sub": ${JSON.stringify(json)}`);
-      return { subject: j.sub, email: null, displayName: `cf-${j.sub.slice(0, 8)}` };
+      const j = json as { result?: { id?: string; email?: string; first_name?: string | null; last_name?: string | null; username?: string } };
+      const r = j.result;
+      if (!r?.id) throw new Error(`Cloudflare /client/v4/user response had no "result.id": ${JSON.stringify(json)}`);
+      const fullName = [r.first_name, r.last_name].filter(Boolean).join(" ").trim();
+      // email before username: Cloudflare's `username` is often itself
+      // an opaque, auto-generated hash (confirmed live) when no
+      // first/last name is set, no more readable than the raw id.
+      return { subject: r.id, email: r.email ?? null, displayName: fullName || r.email || r.username || `cf-${r.id.slice(0, 8)}` };
     },
   },
   google: {

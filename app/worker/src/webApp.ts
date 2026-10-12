@@ -34,6 +34,7 @@ import {
   listRecentRepos,
   listReposOwnedBy,
   listTokensForAgent,
+  refreshAccountProfile,
   revokeAgentToken,
   searchRepos,
   shortId,
@@ -141,6 +142,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
   if (existing) {
     account = (await getAccount(env.DB, existing.account_id))!;
     await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
+    await refreshAccountProfile(env.DB, account.id, identity.displayName, identity.email);
   } else {
     account = await createAccount(env.DB, identity.displayName, identity.email);
     await createIdentity(env.DB, account.id, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });

@@ -75,6 +75,12 @@ export async function createAccount(db: D1Database, displayName: string, email: 
   return account;
 }
 
+/** Refreshes display_name/email on every login, not just signup -- a provider's profile data (especially Cloudflare's, fetched via a second REST call) can be absent or wrong at signup time and correct itself later. Never clears a field the provider stops returning: only overwrites with a real, non-null value. */
+export async function refreshAccountProfile(db: D1Database, accountId: string, displayName: string, email: string | null): Promise<void> {
+  if (email) await db.prepare("UPDATE accounts SET display_name = ?, email = ? WHERE id = ?").bind(displayName, email, accountId).run();
+  else await db.prepare("UPDATE accounts SET display_name = ? WHERE id = ?").bind(displayName, accountId).run();
+}
+
 export async function createIdentity(db: D1Database, accountId: string, provider: string, providerSubject: string, tokens: { accessTokenEnc: string | null; refreshTokenEnc: string | null; expiresAt: string | null }): Promise<AccountIdentity> {
   const identity: AccountIdentity = {
     id: shortId("ident"),

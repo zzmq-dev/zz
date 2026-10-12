@@ -336,18 +336,26 @@ export default {
     }
 
     if (path === "/dev-cf-userinfo-raw") {
-      // One-off diagnostic: parseCloudflareUserInfo's field-name guess
-      // (auth.ts's header flagged this as unverified) turned out wrong
-      // -- a real login landed display_name on the raw `sub` hex
-      // instead of an email/name, so neither was found. Decrypts the
-      // most recently stored Cloudflare access token and re-fetches
-      // userinfo directly to see its real shape.
+      // One-off diagnostic, extended: does GET /client/v4/user with the
+      // OAuth access token as a bearer actually return email/name,
+      // the way a REST API token's Bearer auth would? (user-details.read
+      // is an API-token-permission-shaped scope, not an OIDC one, so
+      // it's plausible the access token doubles as a regular API
+      // token for that one permission -- or it may not, API tokens and
+      // OAuth access tokens aren't always interchangeable. Checking
+      // directly rather than assuming either way.)
       const row = await env.DB.prepare("SELECT access_token_enc FROM account_identities WHERE provider = 'cloudflare' ORDER BY created_at DESC LIMIT 1").first<{ access_token_enc: string }>();
       if (!row) return new Response("no cloudflare identity stored yet", { status: 404 });
       const accessToken = await decryptSecret(env, row.access_token_enc);
-      const resp = await fetch("https://dash.cloudflare.com/oauth2/userinfo", { headers: { authorization: `Bearer ${accessToken}` } });
-      const text = await resp.text();
-      return new Response(`status ${resp.status}\n\n${text}`, { headers: { "content-type": "text/plain" } });
+      const [userinfoResp, apiUserResp] = await Promise.all([
+        fetch("https://dash.cloudflare.com/oauth2/userinfo", { headers: { authorization: `Bearer ${accessToken}` } }),
+        fetch("https://api.cloudflare.com/client/v4/user", { headers: { authorization: `Bearer ${accessToken}` } }),
+      ]);
+      const [userinfoText, apiUserText] = await Promise.all([userinfoResp.text(), apiUserResp.text()]);
+      return new Response(
+        `GET /oauth2/userinfo -> ${userinfoResp.status}\n${userinfoText}\n\nGET /client/v4/user -> ${apiUserResp.status}\n${apiUserText}`,
+        { headers: { "content-type": "text/plain" } },
+      );
     }
 
     const webResponse = await handleWebRequest(req, env);
