@@ -136,14 +136,27 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
     async readAnchor(_repo, path: string): Promise<RealEmbeddedRung | null> {
       return withRepo(artifacts, artifactsName, async (repo, remote) => {
         const token = await repo.createToken("read", 3600);
-        // "repo" for the root path, "file" for everything else -- the
-        // only two anchor kinds this path needs to resolve a bare
-        // path into (changeset rungs are read by commitOid, which
-        // readAnchor's plain-path signature doesn't carry; nothing in
-        // the live agent loop reads a changeset rung by path alone).
-        const kind = path === "_repo" ? "repo" : "file";
-        const rung = await readRung(remote, token, repo, kind, path);
-        return rung as RealEmbeddedRung | null;
+        // "repo" for the root path. A changeset is anchored by commit
+        // sha, not a tree path -- readRung's `explicitAnchorSha` param
+        // exists for exactly this, but needs a real sha from somewhere.
+        // The established path convention (agent/tools.ts's
+        // VALID_RUNG_EXAMPLE, cli/commands/work.ts's own comment) is
+        // "changesets/<full commit sha>", so the sha is sitting right
+        // there in the path itself -- no index file needed, unlike the
+        // local backend's stateDir-based one (engine/ladderNotes.ts).
+        // Confirmed live: before this, a changeset rung could be
+        // written (writeLadder/toSimpleRung handle "changeset" fine)
+        // but never read back through this path -- readAnchor always
+        // fell through to "file", which tried to resolve the path as a
+        // real tree entry and failed ("not found in the repo at HEAD").
+        if (path === "_repo") {
+          return (await readRung(remote, token, repo, "repo", path)) as RealEmbeddedRung | null;
+        }
+        if (path.startsWith("changesets/")) {
+          const sha = path.slice("changesets/".length);
+          return (await readRung(remote, token, repo, "changeset", path, sha)) as RealEmbeddedRung | null;
+        }
+        return (await readRung(remote, token, repo, "file", path)) as RealEmbeddedRung | null;
       });
     },
 

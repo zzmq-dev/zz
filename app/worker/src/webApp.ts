@@ -617,7 +617,13 @@ function buildInitialLadderRungs(opts: { description: string | null; ownerName: 
   const licenseRung: Rung | null = opts.license ? { path: "LICENSE", kind: "file", summary: `${opts.license.name} license.`, sources: source("Initial commit"), children: [] } : null;
 
   const changesetRung: Rung = {
-    path: `changesets/${opts.sha.slice(0, 7)}`,
+    // Full sha, not truncated -- the established convention
+    // (agent/tools.ts's VALID_RUNG_EXAMPLE, cli/commands/work.ts's own
+    // comment), and load-bearing for the Cloudflare backend
+    // specifically: readAnchor derives the anchor sha directly from
+    // this path for "changesets/" paths (see its own comment), so a
+    // truncated sha would make this rung permanently unreadable.
+    path: `changesets/${opts.sha}`,
     kind: "changeset",
     summary: `Initial commit: added README.md${opts.license ? ", LICENSE" : ""}.`,
     sources: source("Initial commit"),
@@ -630,7 +636,7 @@ function buildInitialLadderRungs(opts: { description: string | null; ownerName: 
   const repoRung: Rung = {
     path: REPO_RUNG_PATH,
     kind: "repo",
-    summary: `${opts.description?.trim() || "No description."} Contains README.md${opts.license ? ` and a ${opts.license.name} LICENSE` : ""}.`,
+    summary: `${(opts.description?.trim() || "No description").replace(/\.$/, "")}. Contains README.md${opts.license ? ` and a ${opts.license.name} LICENSE` : ""}.`,
     sources: source("Initial commit"),
     children: [],
   };
@@ -1788,7 +1794,19 @@ async function handleGitPack(service: GitService, slug: string, request: Request
 /** Returns null for any path this module doesn't own, so index.ts can fall through to its existing diagnostic routes. */
 export async function handleWebRequest(request: Request, env: WebEnv): Promise<Response | null> {
   const url = new URL(request.url);
-  const path = url.pathname;
+  // Decoded once, up front: a username can contain "[", "]", "@" --
+  // none of those are in the WHATWG URL spec's path percent-encode
+  // set, so a conformant browser leaves them literal in `pathname`
+  // (confirmed live: a route built from `agent.username` works as-is).
+  // But a client that DOES percent-encode them anyway (confirmed live:
+  // `encodeURIComponent` on a bracketed username, which some CLI/API
+  // call sites reasonably reach for) would otherwise 404 forever,
+  // since every lookup below (getRepoBySlug, getAgentByUsername, ...)
+  // compares against the literal, undecoded form stored in D1.
+  // Decoding here once means every route matches either form the same
+  // way, instead of every individual call site needing to know which
+  // encoding its particular caller happened to use.
+  const path = decodeURIComponent(url.pathname);
   const origin = url.origin;
 
   if (path === "/login") return handleLogin(request);
