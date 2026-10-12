@@ -10,6 +10,7 @@ export interface Agent {
   id: string;
   display_name: string;
   email: string | null;
+  username: string; // the public URL segment (/<username>) -- frozen at creation, never recomputed from display_name (see createAgent)
   created_at: string;
   created_by: string | null; // provenance only, never an authority relationship
 }
@@ -63,6 +64,21 @@ export function shortId(prefix: string): string {
   return `${prefix}-${randomBytes(4).toString("hex")}`;
 }
 
+function usernameSlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+}
+
+/** `base`, or `base-2`/`base-3`/... if already taken -- usernames are frozen at creation (createAgent), so collisions are only ever checked once, here. */
+async function uniqueUsername(db: D1Database, base: string): Promise<string> {
+  let candidate = base;
+  let n = 2;
+  while (await db.prepare("SELECT 1 FROM agents WHERE username = ?").bind(candidate).first()) {
+    candidate = `${base}-${n}`;
+    n++;
+  }
+  return candidate;
+}
+
 export async function findAgentIdentity(db: D1Database, provider: string, providerSubject: string): Promise<AgentIdentity | null> {
   return db.prepare("SELECT * FROM agent_identities WHERE provider = ? AND provider_subject = ?").bind(provider, providerSubject).first<AgentIdentity>();
 }
@@ -71,9 +87,22 @@ export async function getAgent(db: D1Database, id: string): Promise<Agent | null
   return db.prepare("SELECT * FROM agents WHERE id = ?").bind(id).first<Agent>();
 }
 
+/** The agent a verified email already belongs to, if any -- used to link a second OAuth provider to an EXISTING agent instead of minting a disconnected duplicate (see handleAuthCallback's header comment for the real bug this closes). */
+export async function getAgentByEmail(db: D1Database, email: string): Promise<Agent | null> {
+  return db.prepare("SELECT * FROM agents WHERE email = ? LIMIT 1").bind(email).first<Agent>();
+}
+
+export async function getAgentByUsername(db: D1Database, username: string): Promise<Agent | null> {
+  return db.prepare("SELECT * FROM agents WHERE username = ?").bind(username).first<Agent>();
+}
+
 export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
-  const agent: Agent = { id: shortId("agent"), display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy };
-  await db.prepare("INSERT INTO agents (id, display_name, email, created_at, created_by) VALUES (?, ?, ?, ?, ?)").bind(agent.id, agent.display_name, agent.email, agent.created_at, agent.created_by).run();
+  const username = await uniqueUsername(db, email ?? usernameSlug(displayName));
+  const agent: Agent = { id: shortId("agent"), display_name: displayName, email, username, created_at: new Date().toISOString(), created_by: createdBy };
+  await db
+    .prepare("INSERT INTO agents (id, display_name, email, username, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(agent.id, agent.display_name, agent.email, agent.username, agent.created_at, agent.created_by)
+    .run();
   return agent;
 }
 
@@ -205,6 +234,48 @@ export async function searchRepos(db: D1Database, query: string, limit: number):
 
 export async function listReposOwnedBy(db: D1Database, ownerId: string): Promise<RepoRow[]> {
   const result = await db.prepare("SELECT * FROM repos WHERE owner_id = ? ORDER BY updated_at DESC").bind(ownerId).all<RepoRow>();
+  return result.results;
+}
+
+export async function deleteRepoRow(db: D1Database, repoId: string): Promise<void> {
+  await db.prepare("DELETE FROM repo_roles WHERE repo_id = ?").bind(repoId).run();
+  await db.prepare("DELETE FROM repos WHERE id = ?").bind(repoId).run();
+}
+
+export async function updateRepoOwner(db: D1Database, repoId: string, ownerId: string): Promise<void> {
+  await db.prepare("UPDATE repos SET owner_id = ?, updated_at = ? WHERE id = ?").bind(ownerId, new Date().toISOString(), repoId).run();
+}
+
+/** Agents matching a display name/email/id prefix -- autocomplete for "who should this role/token belong to", searched across every Agent known to zz, not just ones you created. */
+export async function searchAgents(db: D1Database, query: string, limit: number): Promise<Agent[]> {
+  const like = `%${query}%`;
+  const result = await db.prepare("SELECT * FROM agents WHERE display_name LIKE ? OR email LIKE ? OR username LIKE ? OR id LIKE ? ORDER BY display_name LIMIT ?").bind(like, like, like, like, limit).all<Agent>();
+  return result.results;
+}
+
+export interface RepoRoleRow {
+  repo_id: string;
+  principal: string;
+  role: string;
+  granted_by: string;
+  at: string;
+}
+
+/** Mirrors a repo's CURRENT full grant list (roles.json, the source of truth) into the D1 cache -- replace-all for that repo_id, so the cache can never drift into showing a grant that was since revoked. */
+export async function syncRepoRoleCache(db: D1Database, repoId: string, grants: { principal: string; role: string; granted_by: string; at: string }[]): Promise<void> {
+  const writes: D1PreparedStatement[] = [db.prepare("DELETE FROM repo_roles WHERE repo_id = ?").bind(repoId)];
+  for (const g of grants) {
+    writes.push(db.prepare("INSERT INTO repo_roles (repo_id, principal, role, granted_by, at) VALUES (?, ?, ?, ?, ?)").bind(repoId, g.principal, g.role, g.granted_by, g.at));
+  }
+  await db.batch(writes);
+}
+
+/** Repos (beyond ones owned outright) a principal has any repo-level Role grant on -- the profile page's "shared with you" list. Reads the D1 cache, not roles.json directly (see migration 0004's header for why a live cross-repo scan isn't affordable here). */
+export async function listRepoRolesForAgent(db: D1Database, principal: string): Promise<(RepoRow & { role: string })[]> {
+  const result = await db
+    .prepare("SELECT r.*, rr.role as role FROM repo_roles rr JOIN repos r ON r.id = rr.repo_id WHERE rr.principal = ? AND r.owner_id != ? ORDER BY r.updated_at DESC")
+    .bind(principal, principal)
+    .all<RepoRow & { role: string }>();
   return result.results;
 }
 

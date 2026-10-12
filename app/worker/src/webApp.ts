@@ -32,26 +32,33 @@ import {
   createAgentToken,
   createCliLoginSession,
   createSession,
+  deleteRepoRow,
   deleteSession,
   findActiveAgentToken,
   findAgentIdentity,
   fulfillCliLoginSession,
   getAgent,
+  getAgentByEmail,
+  getAgentByUsername,
   getAgentToken,
   getRepoBySlug,
   getValidSession,
   listAgentsCreatedBy,
   listRecentRepos,
   listReposOwnedBy,
+  listRepoRolesForAgent,
   listTokensForAgent,
   pollAndConsumeCliLoginSession,
   refreshAgentProfile,
   revokeAgentToken,
+  searchAgents,
   searchRepos,
   shortId,
+  syncRepoRoleCache,
   touchAgentToken,
   touchRepoUpdatedAt,
   updateIdentityTokens,
+  updateRepoOwner,
   upsertRepo,
 } from "./accountsDb.js";
 import {
@@ -68,7 +75,9 @@ import {
   type OAuthEnv,
   type Provider,
 } from "./auth.js";
-import { ensureMeta, readRepoMeta, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, type RbacRole } from "./repoMeta.js";
+import { ensureMeta, readRepoMeta, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole } from "./repoMeta.js";
+import { LICENSES, LICENSE_ORDER } from "./licenses.js";
+import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -146,20 +155,100 @@ form.inline{display:inline}
 .muted{color:var(--muted);font-size:.9rem}
 .hint{color:var(--muted);font-size:.88rem;margin:0 0 1rem}
 .empty{color:var(--muted);font-style:italic;padding:.5rem 0}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem}
+.card-head h2{margin:0}
+.icon-btn{width:1.8rem;height:1.8rem;padding:0;border-radius:999px;font-size:1.1rem;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+dialog.modal{border:none;border-radius:12px;padding:0;background:var(--surface);color:var(--fg);border:1px solid var(--border);max-width:460px;width:92vw}
+dialog.modal::backdrop{background:rgba(10,6,20,.65)}
+dialog.modal .modal-body{padding:1.25rem 1.4rem}
+dialog.modal h3{margin:0 0 1rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.1rem}
+.ac-wrap{position:relative}
+.ac-list{position:absolute;top:100%;left:0;right:0;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-top:.25rem;max-height:220px;overflow-y:auto;z-index:30}
+.ac-item{padding:.5rem .7rem;cursor:pointer;font-size:.88rem}
+.ac-item:hover,.ac-item.active{background:var(--surface)}
+.tab-bar{display:flex;gap:.25rem;border-bottom:1px solid var(--border);margin-bottom:1rem;flex-wrap:wrap}
+.tab-btn{background:none;border:none;color:var(--muted);font-weight:600;padding:.5rem .9rem;border-bottom:2px solid transparent;border-radius:0;cursor:pointer}
+.tab-btn.active{color:var(--pink);border-bottom-color:var(--pink)}
+.tab-btn:hover{color:var(--fg);background:none}
+select.role-select{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:.2rem .5rem;border-radius:6px;font-size:.85rem}
+select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background:rgba(180,163,214,.08)}
+.split{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
+.split>div{flex:1 1 16rem;min-width:0}
+.align-right{text-align:right}
+.align-right pre{text-align:left}
+.danger-zone{border-color:rgba(255,68,102,.4)}
 `;
 
-function card(heading: string, innerHtml: string): string {
-  return `<section class="card"><h2>${esc(heading)}</h2>${innerHtml}</section>`;
+function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
+  const addBtn = opts.addModal ? `<button type="button" class="icon-btn" onclick="document.getElementById('${opts.addModal}').showModal()" aria-label="Add" title="Add">+</button>` : "";
+  return `<section class="card${opts.extraClass ? ` ${opts.extraClass}` : ""}"><div class="card-head"><h2>${esc(heading)}</h2>${addBtn}</div>${innerHtml}</section>`;
 }
 
 const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", reader: "muted" };
+const LANE_STATUS_BADGE_VARIANT: Record<string, string> = { proposed: "yellow", open: "yellow", claimed: "blue", active: "cyan", merged: "green", closed: "muted", vetoed: "red", stopped: "red" };
 function roleBadge(role: string): string {
   return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
 }
 
+/** A text input that autocompletes against /api/agents/search as you type, so you never have to remember or paste a raw agent id -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Submits the agent's `id` (what every principal field expects) once a suggestion is clicked; typing a raw id and not picking a suggestion still works, same as before. */
+function agentAutocompleteField(name: string, placeholder: string, idSuffix: string): string {
+  const boxId = `ac-box-${idSuffix}`;
+  return `<div class="ac-wrap">
+    <input name="${name}" placeholder="${esc(placeholder)}" required autocomplete="off" data-autocomplete="${boxId}" data-ac-url="/api/agents/search">
+    <div id="${boxId}" class="ac-list" hidden></div>
+  </div>`;
+}
+
+// Generic, reused across every page: `data-tabs` containers get click-
+// to-switch tab panels, `data-autocomplete` inputs get a debounced
+// agent search dropdown. No framework -- every page here is server-
+// rendered and form-POST-driven already, so this stays a handful of
+// plain DOM calls rather than a client-side rendering layer.
+const WEB_JS = `
+function zzInitTabs(container) {
+  var btns = container.querySelectorAll('.tab-btn');
+  btns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      btns.forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      container.querySelectorAll('.tab-panel').forEach(function (p) { p.hidden = true; });
+      document.getElementById(btn.dataset.target).hidden = false;
+    });
+  });
+}
+document.querySelectorAll('[data-tabs]').forEach(zzInitTabs);
+
+function zzAutocomplete(inputEl, listEl, url) {
+  var t;
+  inputEl.addEventListener('input', function () {
+    clearTimeout(t);
+    var q = inputEl.value.trim();
+    if (!q) { listEl.hidden = true; listEl.innerHTML = ''; return; }
+    t = setTimeout(function () {
+      fetch(url + '?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { agents: [] }; }).then(function (data) {
+        listEl.innerHTML = '';
+        (data.agents || []).forEach(function (a) {
+          var item = document.createElement('div');
+          item.className = 'ac-item';
+          item.textContent = a.display_name + ' (' + a.username + ')';
+          item.onclick = function () { inputEl.value = a.id; listEl.hidden = true; };
+          listEl.appendChild(item);
+        });
+        listEl.hidden = (data.agents || []).length === 0;
+      });
+    }, 200);
+  });
+  inputEl.addEventListener('blur', function () { setTimeout(function () { listEl.hidden = true; }, 150); });
+}
+document.querySelectorAll('[data-autocomplete]').forEach(function (el) {
+  zzAutocomplete(el, document.getElementById(el.dataset.autocomplete), el.dataset.acUrl);
+});
+`;
+
 function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[] } = {}): Response {
   const nav = agent
-    ? `<a href="/explore">Explore</a><a href="/profile">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
+    ? `<a href="/explore">Explore</a><a href="/${esc(agent.username)}">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
     : `<a href="/explore">Explore</a><a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
@@ -168,6 +257,7 @@ function layout(title: string, agent: Agent | null, body: string, opts: { cookie
 <h1>${esc(title)}</h1>
 ${body}
 </main>
+<script>${WEB_JS}</script>
 </body></html>`;
   const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
   for (const cookie of opts.cookies ?? []) headers.append("set-cookie", cookie);
@@ -265,7 +355,21 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
     await refreshAgentProfile(env.DB, agent.id, identity.displayName, identity.email);
   } else {
-    agent = await createAgent(env.DB, identity.displayName, identity.email, null);
+    // A second OAuth provider with the SAME verified email links to
+    // the agent that already owns that email instead of minting a
+    // disconnected duplicate -- confirmed live as a real bug: logging
+    // in with Google, then later with Cloudflare, produced two
+    // separate Agents sharing no history (different provider_subject,
+    // so findAgentIdentity above correctly found nothing -- the gap
+    // was never checking for an existing Agent by email before
+    // falling through to createAgent).
+    const byEmail = identity.email ? await getAgentByEmail(env.DB, identity.email) : null;
+    if (byEmail) {
+      agent = byEmail;
+      await refreshAgentProfile(env.DB, agent.id, identity.displayName, identity.email);
+    } else {
+      agent = await createAgent(env.DB, identity.displayName, identity.email, null);
+    }
     await createAgentIdentity(env.DB, agent.id, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
   }
 
@@ -306,13 +410,13 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       `<div class="card stack">
          <p>Logged in as <b>${esc(agent.display_name)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
          <pre>${esc(plaintext)}</pre>
-         <p><a href="/profile">Continue to your profile &rarr;</a></p>
+         <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
        </div>`,
       { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
     );
   }
 
-  return redirect("/profile", { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
+  return redirect(`/${agent.username}`, { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
 }
 
 async function handleLogout(request: Request, env: WebEnv): Promise<Response> {
@@ -374,24 +478,29 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
 }
 
-/** The repo URL's owner segment: an Agent's real email if it has one (literal, not slugified -- per direct instruction), else a slugified display name. Driven by data (does this Agent have an email?), not by a type tag -- there is no "human vs bot" branch here, any Agent could plausibly have an email if it ever links an OAuth identity. */
+/** The repo URL's owner segment, and the segment at /<username> for this Agent's own profile page. Frozen at creation (accountsDb.ts's createAgent) rather than recomputed live from display_name -- see migration 0003's header for why that matters. */
 function ownerUrlSegment(agent: Agent): string {
-  return agent.email ?? slugify(agent.display_name);
+  return agent.username;
 }
 
-async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null): Promise<RepoRow> {
+async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null, licenseKey: string | null): Promise<RepoRow> {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "repo name must match [A-Za-z0-9._-]+");
   const artifactsName = shortId("repo");
   const slug = `${ownerUrlSegment(owner)}/${slugify(name)}`;
+  const license = licenseKey ? LICENSES[licenseKey] : null;
 
   const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
   using repo = await env.ARTIFACTS.get(artifactsName);
   const token = await repo.createToken("write", 3600);
   // commit_changeset (and anything else that anchors to a commit) needs
   // a parent to diff against -- a brand new repo has none, so seed one.
-  await createInitialCommit(created.remote, token, [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }], { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
+  const files = [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }];
+  if (license) files.push({ path: "LICENSE", content: license.text(owner.display_name, new Date().getFullYear()) });
+  await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
   await ensureMeta(created.remote, token, { description: description ?? "", ownerId: owner.id });
-  return upsertRepo(env.DB, { slug, artifactsName, description, ownerId: owner.id });
+  const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerId: owner.id });
+  await syncRepoRoleCache(env.DB, row.id, [{ principal: owner.id, role: "owner", granted_by: "system", at: row.created_at }]);
+  return row;
 }
 
 async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
@@ -411,6 +520,52 @@ async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principa
   const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
   nextGrants.push({ principal, role, granted_by: actor.id, at: new Date().toISOString() });
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
+  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
+}
+
+async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visibility: "public" | "private"): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("write", 3600);
+  const info = await artifactsRepo.info();
+  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
+}
+
+/** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
+async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerId: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  const newOwner = await getAgent(env.DB, newOwnerId);
+  if (!newOwner) throw new ApiError(404, "no such agent");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("write", 3600);
+  const info = await artifactsRepo.info();
+  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+
+  await writeRepoMeta(info.remote, token, { ...meta, owner_id: newOwner.id });
+  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== newOwner.id);
+  nextGrants.push({ principal: newOwner.id, role: "owner", granted_by: actor.id, at: new Date().toISOString() });
+  await writeRepoRoles(info.remote, token, { grants: nextGrants });
+  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
+  await updateRepoOwner(env.DB, repo.id, newOwner.id);
+}
+
+async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("read", 120);
+  const info = await artifactsRepo.info();
+  const roles = await readRepoRoles(info.remote, token);
+  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  await env.ARTIFACTS.delete(repo.artifacts_name);
+  await deleteRepoRow(env.DB, repo.id);
 }
 
 interface LaneHistoryEntry {
@@ -427,14 +582,84 @@ interface LaneHistoryEntry {
 interface LaneSnapshot {
   id: string;
   status: string;
+  coordinators: string[];
   history: LaneHistoryEntry[];
 }
 
-/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol, the only place this is currently visible (there's no dedicated Ladder/Lane viewer page yet). Null if the repo has no root Lane yet (never had an Ask posted to it). */
-async function getRootLane(env: WebEnv, artifactsName: string): Promise<LaneSnapshot | null> {
+function doStub(env: WebEnv, artifactsName: string) {
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(artifactsName));
+  return stub;
+}
+
+/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). */
+async function getRootLane(env: WebEnv, artifactsName: string): Promise<LaneSnapshot | null> {
+  const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
   return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: "_repo" })) as LaneSnapshot | null;
+}
+
+/** Every Lane in the repo, for the "Lanes" tab -- the full flattened cross-lane protocol feed (the "Protocol" tab) is derived from these same objects' `.history`, not a second fetch. */
+async function getAllLanes(env: WebEnv, artifactsName: string): Promise<LaneSnapshot[]> {
+  const stub = doStub(env, artifactsName);
+  await stub.configure(artifactsName);
+  return (await stub.callTool("lane_list", { repo: artifactsName })) as LaneSnapshot[];
+}
+
+interface ProtocolEvent {
+  laneId: string;
+  entry: LaneHistoryEntry;
+}
+
+function flattenProtocol(lanes: LaneSnapshot[]): ProtocolEvent[] {
+  const events = lanes.flatMap((lane) => lane.history.map((entry) => ({ laneId: lane.id, entry })));
+  return events.sort((a, b) => (a.entry.at < b.entry.at ? 1 : -1));
+}
+
+// Ladder tab: the repo's full Ladder tree, read via repeated
+// ladder_read calls (the same shape engine/ladderRender.ts's
+// collectLadder resolves locally, just driven through callTool since
+// this runs in the Worker, not against a local clone). Only "ask"-
+// thread children come back as bare {ref} stubs needing a follow-up
+// call -- repo-wide/anchor kinds are already embedded inline. Capped
+// so a pathological ask-thread depth can't turn one page load into
+// hundreds of DO round-trips.
+interface LadderNode {
+  path: string;
+  kind: string;
+  summary: string;
+  children: LadderNode[];
+}
+
+const LADDER_TAB_NODE_CAP = 300;
+
+async function getLadderTree(env: WebEnv, artifactsName: string): Promise<LadderNode | null> {
+  const stub = doStub(env, artifactsName);
+  await stub.configure(artifactsName);
+  let remaining = LADDER_TAB_NODE_CAP;
+
+  async function resolve(rung: EmbeddedRung): Promise<LadderNode> {
+    remaining -= 1;
+    const children: LadderNode[] = [];
+    for (const child of rung.children) {
+      if (remaining <= 0) break;
+      if (isRef(child)) {
+        const anchor = (await stub.callTool("ladder_read", { repo: artifactsName, path: child.ref })) as EmbeddedRung | null;
+        children.push(anchor ? await resolve(anchor) : { path: child.ref, kind: "ask", summary: "[missing]", children: [] });
+      } else {
+        children.push(await resolve(child));
+      }
+    }
+    return { path: rung.path, kind: rung.kind, summary: rung.summary, children };
+  }
+
+  const root = (await stub.callTool("ladder_read", { repo: artifactsName, path: "_repo" })) as EmbeddedRung | null;
+  return root ? resolve(root) : null;
+}
+
+function renderLadderNode(node: LadderNode, depth = 0): string {
+  const indent = "&nbsp;&nbsp;".repeat(depth);
+  const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
+  return [self, ...node.children.map((c) => renderLadderNode(c, depth + 1))].join("");
 }
 
 async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
@@ -456,88 +681,83 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.id, payload: { description } });
 }
 
-// --- Profile (HTML) ---
+// --- Agent profile: /<username> is BOTH the public view (anyone) and
+// the private, editable view (when you're logged in as that agent) --
+// no separate /profile route. See migration 0003's header for why
+// `username` is a frozen, stored column rather than recomputed.
 
-async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
+interface RepoWithRole extends RepoRow {
+  role: string;
+}
+
+async function handleAgentPage(username: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
-  if (!me) return redirect("/login");
+  const pageAgent = await getAgentByUsername(env.DB, username);
+  if (!pageAgent) return new Response("no such agent", { status: 404 });
 
+  if (me && me.id === pageAgent.id) return renderOwnProfile(me, env);
+  return renderPublicProfile(pageAgent, request, env);
+}
+
+async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
+  const owned = await listReposOwnedBy(env.DB, agent.id);
+  const visible: RepoRow[] = [];
+  for (const r of owned) {
+    const ctx = await getRepoAccessContext(r.slug, env);
+    if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.roles))) visible.push(r);
+  }
+  return layout(
+    agent.display_name,
+    await resolveRequestAgent(request, env),
+    `<p class="hint">@${esc(agent.username)}</p>
+     ${card(
+       "Repos",
+       `<ul class="list">${visible.map((r) => `<li><a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${esc(r.description)}</div>` : ""}</li>`).join("") || '<li class="empty">No public repos.</li>'}</ul>`,
+     )}`,
+  );
+}
+
+async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   const createdAgents = await listAgentsCreatedBy(env.DB, me.id);
   const allSelf = [me, ...createdAgents];
-  const repoLists = await Promise.all(allSelf.map((a) => listReposOwnedBy(env.DB, a.id)));
-  const tokenLists = await Promise.all(createdAgents.map((a) => listTokensForAgent(env.DB, a.id)));
-  const myTokens = (await listTokensForAgent(env.DB, me.id)).filter((t) => !t.revoked_at);
+  const tokenLists = await Promise.all(allSelf.map((a) => listTokensForAgent(env.DB, a.id)));
 
-  const agentsHtml = createdAgents
-    .map((a, i) => {
-      const tokens = tokenLists[i].filter((t) => !t.revoked_at);
-      const repos = repoLists[i + 1];
-      const tokenRows = tokens
-        .map(
-          (t) =>
-            `<li class="row"><span class="mono">${esc(t.id)}</span> <span class="muted">${t.last_used_at ? `last used ${esc(t.last_used_at)}` : "never used"}</span>
-              <form method="post" action="/profile/tokens/${t.id}/revoke" class="inline"><button type="submit" class="danger">Revoke</button></form></li>`,
-        )
-        .join("");
-      return `<li class="stack">
-        <div class="row"><b>${esc(a.display_name)}</b> <span class="mono">${esc(a.id)}</span></div>
-        <div class="muted">repos: ${repos.length ? repos.map((r) => `<a href="/${esc(r.slug)}">${esc(r.slug)}</a>`).join(", ") : "none"}</div>
-        <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>
-        <form method="post" action="/profile/agents/${a.id}/tokens" class="inline"><button type="submit" class="secondary">Issue another token</button></form>
-      </li>`;
-    })
+  // One flat, unified list across you and every agent you manage --
+  // no more "your tokens" vs "managed agents' tokens" as two separate
+  // sub-UIs (per direct instruction: token management should not
+  // distinguish you from the agents you manage).
+  const tokenRows = allSelf
+    .flatMap((a, i) => tokenLists[i].filter((t) => !t.revoked_at).map((t) => ({ agent: a, token: t })))
+    .map(
+      ({ agent, token }) =>
+        `<li class="row"><b>${esc(agent.display_name)}</b> <span class="mono">${esc(token.id)}</span> <span class="muted">${token.last_used_at ? `last used ${esc(token.last_used_at)}` : "never used"}</span>
+          <form method="post" action="/profile/tokens/${token.id}/revoke" class="inline"><button type="submit" class="danger">Revoke</button></form></li>`,
+    )
     .join("");
 
-  const allRepos = repoLists.flat();
+  const [ownedRepos, sharedRepos] = await Promise.all([listReposOwnedBy(env.DB, me.id), listRepoRolesForAgent(env.DB, me.id)]);
+  const repoRows: { repo: RepoRow; role: string }[] = [...ownedRepos.map((r) => ({ repo: r, role: "owner" })), ...sharedRepos.map((r) => ({ repo: r as RepoWithRole, role: (r as RepoWithRole).role }))];
 
   return layout(
-    "Profile",
+    `${me.display_name} (you)`,
     me,
-    `<p class="hint">${esc(me.display_name)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
+    `<p class="hint">@${esc(me.username)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
 
      ${card(
-       "Your credentials",
-       `<p class="muted">${myTokens.length ? myTokens.map((t) => `<span class="mono">${esc(t.id)}</span>${t.last_used_at ? ` <span class="muted">(last used ${esc(t.last_used_at)})</span>` : ' <span class="badge badge-muted">never used</span>'}`).join(", ") : '<span class="empty">none yet</span>'}</p>
-        <form method="post" action="/profile/agents/${me.id}/tokens" class="inline"><button type="submit">Issue yourself a token</button></form>
-        <p class="hint" style="margin-top:.75rem">For <code>git push</code>, the CLI, or any script acting directly as you. Use it as the username (password blank) when git prompts for credentials.</p>`,
+       "Credentials",
+       `<p class="hint">You, and every agent you manage, share one token list -- not "yours" vs "theirs" in any authority sense, just one place to issue, rotate, or revoke whatever can authenticate as any of them.</p>
+        <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>`,
+       { addModal: "modal-add-token" },
      )}
 
      ${card(
-       "Managed agents",
-       `<p class="hint">Agents whose credentials you can issue, rotate, or revoke -- not "yours" in the sense of owning their actions, just the one accountable for their access, same as any API credential you'd manage.</p>
-        <form method="post" action="/profile/agents" class="field-row" style="margin-bottom:1rem">
-          <input name="display_name" placeholder="agent name" required>
-          <button type="submit">Create agent</button>
-        </form>
-        <ul class="list">${agentsHtml || '<li class="empty">None yet.</li>'}</ul>`,
-     )}
-
-     ${card(
-       "Your repos",
-       `<ul class="list">${repoLists[0].map((r) => `<li><a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a></li>`).join("") || '<li class="empty">None owned directly (check your agents above).</li>'}</ul>`,
-     )}
-
-     ${card(
-       "Grant a repo role",
-       `<form method="post" action="/profile/rbac" class="field-row">
-          <select name="repo_slug">${allRepos.map((r) => `<option value="${esc(r.slug)}">${esc(r.slug)}</option>`).join("")}</select>
-          <input name="principal" placeholder="agent id" required>
-          <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
-          <button type="submit">Grant</button>
-        </form>`,
-     )}
-
-     ${card(
-       "Create a repo",
-       `<form method="post" action="/profile/repos" class="field-row">
-          <select name="owner_id">
-            <option value="${esc(me.id)}">${esc(me.display_name)} (you)</option>
-            ${createdAgents.map((a) => `<option value="${esc(a.id)}">${esc(a.display_name)}</option>`).join("")}
-          </select>
-          <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
-          <input name="description" placeholder="description">
-          <button type="submit">Create</button>
-        </form>`,
+       "Repos",
+       `<ul class="list">${
+         repoRows
+           .map(({ repo, role }) => `<li class="row"><a href="/${esc(repo.slug)}" class="mono" style="color:var(--pink)">${esc(repo.slug)}</a>${roleBadge(role)}</li>`)
+           .join("") || '<li class="empty">None yet.</li>'
+       }</ul>`,
+       { addModal: "modal-create-repo" },
      )}
 
      ${card(
@@ -547,43 +767,54 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
           <textarea name="description" placeholder="what do you need done?" required></textarea>
           <button type="submit">Post ASK</button>
         </form>`,
-     )}`,
+     )}
+
+     <dialog id="modal-add-token" class="modal"><div class="modal-body">
+       <h3>Add a token</h3>
+       <form method="post" action="/profile/tokens" class="stack">
+         <p class="hint" style="margin:0">Pick an agent you manage, or type a new name to create one (and mint its first token in the same step).</p>
+         ${agentAutocompleteField("agent", "agent name or existing agent", "add-token")}
+         <div class="modal-actions">
+           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="submit">Add</button>
+         </div>
+       </form>
+     </div></dialog>
+
+     <dialog id="modal-create-repo" class="modal"><div class="modal-body">
+       <h3>Create a repo</h3>
+       <form method="post" action="/profile/repos" class="stack">
+         <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
+         <input name="description" placeholder="description">
+         <select name="license">
+           <option value="">No license</option>
+           ${LICENSE_ORDER.map((k) => `<option value="${esc(k)}">${esc(LICENSES[k].name)}</option>`).join("")}
+         </select>
+         <div class="modal-actions">
+           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="submit">Create</button>
+         </div>
+       </form>
+     </div></dialog>`,
   );
 }
 
-async function handleCreateAgentForm(request: Request, env: WebEnv): Promise<Response> {
+/** A single value covers both the earlier two actions (mint a token for an existing agent, or create a brand-new managed agent and mint its first token) -- matches the unified "+" modal: an id of an agent you already manage mints; anything else creates. */
+async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const form = await request.formData();
+  const value = String(form.get("agent") ?? "").trim();
   try {
-    const { agent, token } = await doCreateAgent(env, me, String(form.get("display_name") ?? ""));
+    const existing = value.startsWith("agent-") ? await getAgent(env.DB, value) : null;
+    const { agent, token } = existing ? await doMintToken(env, me, existing.id) : await doCreateAgent(env, me, value);
     return layout(
-      "Agent created",
-      me,
-      `<div class="card stack">
-         <p>Created <b>${esc(agent.display_name)}</b> <span class="mono">${esc(agent.id)}</span>. Its first token -- copy it now, it won't be shown again:</p>
-         <pre>${esc(token)}</pre>
-         <p><a href="/profile">&larr; Back to profile</a></p>
-       </div>`,
-    );
-  } catch (err) {
-    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
-    throw err;
-  }
-}
-
-async function handleMintTokenForm(agentId: string, request: Request, env: WebEnv): Promise<Response> {
-  const me = await resolveRequestAgent(request, env);
-  if (!me) return redirect("/login");
-  try {
-    const { agent, token } = await doMintToken(env, me, agentId);
-    return layout(
-      "New agent token",
+      "New token",
       me,
       `<div class="card stack">
          <p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
          <pre>${esc(token)}</pre>
-         <p><a href="/profile">&larr; Back to profile</a></p>
+         <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
        </div>`,
     );
   } catch (err) {
@@ -600,31 +831,28 @@ async function handleRevokeTokenForm(tokenId: string, request: Request, env: Web
     const owner = await getAgent(env.DB, token.agent_id);
     if (owner && (owner.id === me.id || owner.created_by === me.id)) await revokeAgentToken(env.DB, tokenId);
   }
-  return redirect("/profile");
+  return redirect(`/${me.username}`);
 }
 
-async function handleRbacGrantForm(request: Request, env: WebEnv): Promise<Response> {
+async function handleRbacGrantForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const form = await request.formData();
   try {
-    await doRbacGrant(env, me, String(form.get("repo_slug") ?? ""), String(form.get("principal") ?? ""), String(form.get("role") ?? "reader") as RbacRole);
+    await doRbacGrant(env, me, repoSlug, String(form.get("principal") ?? ""), String(form.get("role") ?? "reader") as RbacRole);
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
   }
-  return redirect("/profile");
+  return redirect(`/${repoSlug}/settings`);
 }
 
 async function handleCreateRepoForm(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const form = await request.formData();
-  const ownerId = String(form.get("owner_id") ?? "");
-  const owner = ownerId === me.id ? me : await getAgent(env.DB, ownerId);
-  if (!owner || (owner.id !== me.id && owner.created_by !== me.id)) return new Response("not yours to create repos as", { status: 403 });
   try {
-    const repo = await doCreateRepo(env, owner, String(form.get("name") ?? "").trim(), String(form.get("description") ?? "").trim() || null);
+    const repo = await doCreateRepo(env, me, String(form.get("name") ?? "").trim(), String(form.get("description") ?? "").trim() || null, String(form.get("license") ?? "").trim() || null);
     return redirect(`/${repo.slug}`);
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
@@ -642,7 +870,45 @@ async function handleAskForm(request: Request, env: WebEnv): Promise<Response> {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
   }
-  return redirect("/profile");
+  return redirect(`/${me.username}`);
+}
+
+async function handleVisibilityForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  try {
+    await doSetVisibility(env, me, repoSlug, String(form.get("visibility") ?? "public") as "public" | "private");
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${repoSlug}/settings`);
+}
+
+async function handleTransferForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  try {
+    await doTransferOwnership(env, me, repoSlug, String(form.get("new_owner") ?? "").trim());
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${repoSlug}/settings`);
+}
+
+async function handleDeleteRepoForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  try {
+    await doDeleteRepo(env, me, repoSlug);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${me.username}`);
 }
 
 // --- JSON API (same core logic, bearer-token or session authenticated, for the CLI and any script) ---
@@ -682,6 +948,16 @@ async function handleApiListAgents(request: Request, env: WebEnv): Promise<Respo
   });
 }
 
+/** Autocomplete backing for any "which agent" field (add-token, grant-role, transfer-ownership) -- searches every Agent known to zz, not just ones the caller created. The server-side authority check for what you're actually trying to DO with the chosen agent (mint a token, grant a role) still applies at the real action endpoint; this just helps you find the right id. */
+async function handleApiSearchAgents(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    await requireApiAgent(request, env);
+    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    if (!q) return json({ agents: [] });
+    return json({ agents: await searchAgents(env.DB, q, 10) });
+  });
+}
+
 async function handleApiMintToken(agentId: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -693,10 +969,10 @@ async function handleApiMintToken(agentId: string, request: Request, env: WebEnv
 async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const body = (await request.json()) as { name?: string; description?: string; owner_id?: string };
+    const body = (await request.json()) as { name?: string; description?: string; owner_id?: string; license?: string };
     const owner = !body.owner_id || body.owner_id === me.id ? me : await getAgent(env.DB, body.owner_id);
     if (!owner || (owner.id !== me.id && owner.created_by !== me.id)) throw new ApiError(403, "not yours to create repos as");
-    const repo = await doCreateRepo(env, owner, (body.name ?? "").trim(), body.description?.trim() || null);
+    const repo = await doCreateRepo(env, owner, (body.name ?? "").trim(), body.description?.trim() || null, body.license ?? null);
     return json(repo, 201);
   });
 }
@@ -925,6 +1201,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
   const tree: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
   const readme = head ? await findReadme(repo, tree) : null;
+  const commits = await repo.log({ ref: info.defaultBranch, limit: 30 });
 
   const fileListHtml = tree
     .map(
@@ -935,9 +1212,12 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"}">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
   const visibility = meta?.policy.visibility ?? "public";
+  const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.id), "owner");
 
-  const lane = await getRootLane(env, repoRow.artifacts_name);
-  const asksHtml = (lane?.history ?? [])
+  const [lanes, ladder] = await Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
+  const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
+
+  const asksHtml = (rootLane?.history ?? [])
     .slice()
     .reverse()
     .map((e) => {
@@ -947,28 +1227,136 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     })
     .join("");
 
+  const lanesHtml = lanes
+    .map((l) => `<li class="row"><span class="mono">${esc(l.id)}</span> <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord: ${esc(l.coordinators?.join(", ") ?? "")}</span></li>`)
+    .join("");
+
+  const protocolHtml = flattenProtocol(lanes)
+    .slice(0, 100)
+    .map(({ laneId, entry: e }) => {
+      const badge = e.type === "ASK" ? "badge-yellow" : e.type === "ANSWER" ? "badge-green" : "badge-cyan";
+      const rest = e.type === "ASK" ? `${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")}` : e.type === "ANSWER" ? `${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")}` : esc(JSON.stringify(e.payload ?? {}));
+      return `<li class="row"><span class="badge ${badge}">${esc(e.type)}</span> <span class="muted">${esc(laneId)}</span> ${rest} <span class="muted">${esc(e.at)}</span></li>`;
+    })
+    .join("");
+
+  const activityHtml = commits
+    .map((c) => `<li class="row"><span class="mono">${esc(c.hash.slice(0, 8))}</span> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
+    .join("");
+
+  const fileTabs = [
+    readme ? { id: "readme", label: "README", html: `<pre>${esc(readme)}</pre>` } : null,
+    { id: "ladder", label: "Ladder", html: `<ul class="list">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>` },
+    { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
+  ].filter((t): t is { id: string; label: string; html: string } => t !== null);
+
+  const activityTabs = [
+    { id: "activity", label: "Activity", html: `<ul class="list">${activityHtml || '<li class="empty">No commits yet.</li>'}</ul>` },
+    { id: "asks", label: "Asks", html: `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>` },
+    { id: "lanes", label: "Lanes", html: `<ul class="list">${lanesHtml || '<li class="empty">No Lanes yet.</li>'}</ul>` },
+    { id: "protocol", label: "Protocol", html: `<ul class="list">${protocolHtml || '<li class="empty">No protocol activity yet.</li>'}</ul>` },
+  ];
+
+  const tabGroup = (groupId: string, tabs: { id: string; label: string; html: string }[]): string => `
+    <div class="card" data-tabs>
+      <div class="tab-bar">${tabs.map((t, i) => `<button type="button" class="tab-btn${i === 0 ? " active" : ""}" data-target="${groupId}-${t.id}">${esc(t.label)}</button>`).join("")}</div>
+      ${tabs.map((t, i) => `<div id="${groupId}-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
+    </div>`;
+
   return layout(
     slug,
     me,
     `<div class="card">
-       <div class="row" style="margin-bottom:.5rem"><span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>${rolesHtml}</div>
-       <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
-       <div class="row">
-         <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
+       <div class="split">
+         <div>
+           <div class="row" style="margin-bottom:.5rem"><span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>${rolesHtml}</div>
+           <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+           <div class="row">
+             <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
+             ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="secondary">Settings</button></a>` : ""}
+           </div>
+         </div>
+         <div class="align-right">
+           <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
+           <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+         </div>
        </div>
      </div>
 
+     ${tabGroup("files", fileTabs)}
+     ${tabGroup("act", activityTabs)}`,
+  );
+}
+
+async function handleRepoSettings(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("no such repo", { status: 404 });
+  const { meta, roles } = ctx;
+  if (!repoAtLeast(repoRoleFor(roles, me.id), "owner")) return new Response("Owners only", { status: 403 });
+
+  const roleRows = (roles?.grants ?? [])
+    .map(
+      (g) => `<li class="row">
+        <span class="mono">${esc(g.principal)}</span>
+        <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
+          <input type="hidden" name="principal" value="${esc(g.principal)}">
+          <select name="role" class="role-select" disabled>
+            ${(["owner", "maintainer", "contributor", "reader"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
+          </select>
+          <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
+          <button type="submit" class="secondary" hidden>Save</button>
+        </form>
+      </li>`,
+    )
+    .join("");
+
+  const visibility = meta?.policy.visibility ?? "public";
+
+  return layout(
+    `${slug} settings`,
+    me,
+    `${card(
+      "Roles",
+      `<ul class="list">${roleRows || '<li class="empty">No grants yet.</li>'}</ul>`,
+      { addModal: "modal-add-role" },
+    )}
+
      ${card(
-       "Clone",
-       `<pre>git clone ${esc(origin)}/${esc(slug)}</pre>
-        <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo). <code>zz repo clone ${esc(slug)}</code> handles this automatically if you're logged in via the CLI -- or use the token as the username when git prompts, password blank.</p>`,
+       "Visibility",
+       `<p class="hint">Public repos are readable by anyone; private repos need an explicit role grant above to even view.</p>
+        <form method="post" action="/${esc(slug)}/settings/visibility" class="row">
+          <select name="visibility"><option value="public"${visibility === "public" ? " selected" : ""}>public</option><option value="private"${visibility === "private" ? " selected" : ""}>private</option></select>
+          <button type="submit" class="secondary">Save</button>
+        </form>`,
      )}
 
-     ${card("Files", `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>`)}
+     ${card(
+       "Danger zone",
+       `<div class="stack">
+          <form method="post" action="/${esc(slug)}/settings/transfer" class="field-row">
+            ${agentAutocompleteField("new_owner", "new owner (agent name or id)", "transfer")}
+            <button type="submit" class="danger">Transfer ownership</button>
+          </form>
+          <form method="post" action="/${esc(slug)}/settings/delete" onsubmit="return confirm('Permanently delete ${esc(slug).replace(/'/g, "\\'")}? This cannot be undone.')">
+            <button type="submit" class="danger">Delete repo</button>
+          </form>
+        </div>`,
+       { extraClass: "danger-zone" },
+     )}
 
-     ${readme ? card("README", `<pre>${esc(readme)}</pre>`) : ""}
-
-     ${card("Asks (root lane)", `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>`)}`,
+     <dialog id="modal-add-role" class="modal"><div class="modal-body">
+       <h3>Add a role</h3>
+       <form method="post" action="/${esc(slug)}/settings/roles" class="stack">
+         ${agentAutocompleteField("principal", "agent name or id", "add-role")}
+         <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
+         <div class="modal-actions">
+           <form method="dialog" class="inline"><button type="submit" class="secondary">Cancel</button></form>
+           <button type="submit">Grant</button>
+         </div>
+       </form>
+     </div></dialog>`,
   );
 }
 
@@ -1084,15 +1472,17 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/auth/start/google") return handleAuthStart("google", request, env);
   if (path === "/auth/callback/cloudflare") return handleAuthCallback("cloudflare", request, env);
   if (path === "/auth/callback/google") return handleAuthCallback("google", request, env);
-  if (path === "/profile" && request.method === "GET") return handleProfile(request, env);
-  if (path === "/profile/agents" && request.method === "POST") return handleCreateAgentForm(request, env);
-  if (path === "/profile/rbac" && request.method === "POST") return handleRbacGrantForm(request, env);
+  // /profile is kept only as a convenience redirect to your own
+  // /<username> page -- see that handler's header for why there's no
+  // separate profile route anymore (one route, public or editable
+  // depending on who's looking).
+  if (path === "/profile" && request.method === "GET") {
+    const me = await resolveRequestAgent(request, env);
+    return me ? redirect(`/${me.username}`) : redirect("/login");
+  }
+  if (path === "/profile/tokens" && request.method === "POST") return handleTokenAddForm(request, env);
   if (path === "/profile/ask" && request.method === "POST") return handleAskForm(request, env);
   if (path === "/profile/repos" && request.method === "POST") return handleCreateRepoForm(request, env);
-  {
-    const m = path.match(/^\/profile\/agents\/([^/]+)\/tokens$/);
-    if (m && request.method === "POST") return handleMintTokenForm(m[1], request, env);
-  }
   {
     const m = path.match(/^\/profile\/tokens\/([^/]+)\/revoke$/);
     if (m && request.method === "POST") return handleRevokeTokenForm(m[1], request, env);
@@ -1105,6 +1495,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/me" && request.method === "GET") return handleApiMe(request, env);
   if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
   if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
+  if (path === "/api/agents/search" && request.method === "GET") return handleApiSearchAgents(request, env);
   if (path === "/api/repos" && request.method === "POST") return handleApiCreateRepo(request, env);
   if (path === "/api/repos" && request.method === "GET") return handleApiListRepos(request, env);
   {
@@ -1141,6 +1532,26 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
   }
   {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings$/);
+    if (m && request.method === "GET") return handleRepoSettings(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/roles$/);
+    if (m && request.method === "POST") return handleRbacGrantForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/visibility$/);
+    if (m && request.method === "POST") return handleVisibilityForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/transfer$/);
+    if (m && request.method === "POST") return handleTransferForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/delete$/);
+    if (m && request.method === "POST") return handleDeleteRepoForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/info\/refs$/);
     if (m) return handleGitInfoRefs(`${m[1]}/${m[2]}`, request, env);
   }
@@ -1158,6 +1569,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
       const me = await resolveRequestAgent(request, env);
       return handleRepoPage(me, `${m[1]}/${m[2]}`, request, env, origin);
     }
+  }
+  {
+    const m = path.match(/^\/([^/]+)$/);
+    if (m && request.method === "GET") return handleAgentPage(m[1], request, env);
   }
 
   return null;
