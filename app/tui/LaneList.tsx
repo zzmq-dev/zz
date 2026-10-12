@@ -6,17 +6,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { LaneSnapshot } from "./types.js";
-
-const STATUS_COLOR: Record<string, string> = {
-  proposed: "yellow",
-  open: "yellow",
-  claimed: "blue",
-  active: "cyan",
-  merged: "green",
-  closed: "gray",
-  vetoed: "red",
-  stopped: "red",
-};
+import { STATUS_COLOR, MUTED, PINK } from "./theme.js";
 
 export function LaneList({ snapshots, maxRows, scrollOffset }: { snapshots: LaneSnapshot[]; maxRows: number; scrollOffset: number }) {
   const windowSize = Math.max(1, maxRows - 1);
@@ -26,19 +16,19 @@ export function LaneList({ snapshots, maxRows, scrollOffset }: { snapshots: Lane
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{snapshots.length === 0 ? "no lanes yet" : `showing ${offset + 1}-${offset + shown.length} of ${snapshots.length}`}</Text>
+      <Text color={MUTED}>{snapshots.length === 0 ? "no lanes yet" : `showing ${offset + 1}-${offset + shown.length} of ${snapshots.length}`}</Text>
       {shown.map(({ repo, lane }) => (
         <Box key={`${repo}/${lane.id}`}>
           <Box width={28}>
-            <Text>{repo}</Text>
+            <Text color={MUTED}>{repo}</Text>
           </Box>
           <Box width={24}>
-            <Text bold>{lane.id}</Text>
+            <Text bold color={PINK}>{lane.id}</Text>
           </Box>
           <Box width={12}>
-            <Text color={STATUS_COLOR[lane.status] ?? "white"}>{lane.status}</Text>
+            <Text bold color={STATUS_COLOR[lane.status] ?? MUTED}>{lane.status}</Text>
           </Box>
-          <Text dimColor wrap="truncate-end">
+          <Text color={MUTED} wrap="truncate-end">
             coord: {lane.coordinators.join(", ")}
           </Text>
         </Box>

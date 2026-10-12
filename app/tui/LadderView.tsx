@@ -7,6 +7,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { ResolvedRung } from "../engine/ladderRender.js";
 import type { LadderSnapshot } from "./useLadderTrees.js";
+import { PINK, MUTED } from "./theme.js";
 
 interface FlatRow {
   repo: string;
@@ -31,13 +32,13 @@ export function LadderView({ snapshots, maxRows, scrollOffset }: { snapshots: La
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{rows.length === 0 ? "no Ladder content yet (nothing bootstrapped)" : `showing ${offset + 1}-${offset + shown.length} of ${rows.length} rungs`}</Text>
+      <Text color={MUTED}>{rows.length === 0 ? "no Ladder content yet (nothing bootstrapped)" : `showing ${offset + 1}-${offset + shown.length} of ${rows.length} rungs`}</Text>
       {shown.map((row, i) => (
         <Box key={i}>
           <Text wrap="truncate-end">
             {multiRepo ? `[${row.repo}] ` : ""}
             {"  ".repeat(row.depth)}
-            <Text color="cyan">[{row.rung.kind}]</Text> <Text bold>{row.rung.path}</Text> -- {row.rung.summary}
+            <Text color={PINK}>[{row.rung.kind}]</Text> <Text bold>{row.rung.path}</Text> <Text color={MUTED}>-- {row.rung.summary}</Text>
           </Text>
         </Box>
       ))}

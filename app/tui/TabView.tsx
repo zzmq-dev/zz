@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { useMouse } from "./useMouse.js";
 import { exitFullscreen } from "./fullscreen.js";
+import { BACKDROP, PANEL, BORDER, MUTED, PINK } from "./theme.js";
 
 export interface Tab {
   label: string;
@@ -110,25 +111,25 @@ export function TabView({ title, tabs }: { title: string; tabs: Tab[] }) {
   );
 
   return (
-    <Box flexDirection="column" width={columns} height={rows}>
-      <Box>
-        <Text bold color="cyan">
+    <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
+      <Box backgroundColor={PANEL} paddingX={1}>
+        <Text bold color={PINK}>
           {title}
         </Text>
-        <Text dimColor>{"  "}</Text>
+        <Text>{"  "}</Text>
         {tabs.map((t, i) => (
           <Box key={t.label} marginRight={2}>
-            <Text bold={i === active} color={i === active ? "cyan" : undefined} underline={i === active}>
+            <Text bold={i === active} color={i === active ? PINK : MUTED} underline={i === active}>
               {i + 1}:{t.label}
             </Text>
           </Box>
         ))}
       </Box>
-      <Box borderStyle="round" borderColor="gray" flexDirection="column" height={contentHeight} overflow="hidden">
+      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={contentHeight} overflow="hidden" paddingX={1}>
         {tabs[active]?.content(pageSize, scroll)}
       </Box>
       <Box>
-        <Text dimColor>
+        <Text color={MUTED}>
           {flash ?? (isRawModeSupported ? "←/→ or 1-9 or click: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y: copy tab   q: quit" : "(non-interactive terminal -- controls disabled)")}
         </Text>
       </Box>

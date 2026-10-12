@@ -6,6 +6,7 @@
 // tail".
 import React from "react";
 import { Box, Text } from "ink";
+import { CYAN, MUTED } from "./theme.js";
 
 export function ActivityLog({ lines, status, maxRows, scrollOffset }: { lines: readonly string[]; status: string; maxRows: number; scrollOffset: number }) {
   const windowSize = Math.max(1, maxRows - 1);
@@ -15,11 +16,11 @@ export function ActivityLog({ lines, status, maxRows, scrollOffset }: { lines: r
   const shown = lines.slice(Math.max(0, end - windowSize), end);
   return (
     <Box flexDirection="column">
-      <Text color="cyan" wrap="truncate-end">
+      <Text bold color={CYAN} wrap="truncate-end">
         {offset > 0 ? `${status}  (${offset} line(s) back from live -- End to catch up)` : status}
       </Text>
       {shown.length === 0 ? (
-        <Text dimColor>(nothing yet)</Text>
+        <Text color={MUTED}>(nothing yet)</Text>
       ) : (
         shown.map((line, i) => (
           <Text key={i} wrap="truncate-end">

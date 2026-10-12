@@ -82,27 +82,92 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+// A bold, dark design system -- a muted purple backdrop with a handful
+// of saturated accents (pink/yellow/cyan/green/blue/red) reserved for
+// things that are actually signal: an action button, a status badge,
+// an id. Mirrors the TUI's own palette 1:1 (app/tui/theme.ts) so the
+// web app and `zz top`/`zz work` read as the same product, not two
+// unrelated tools glued together.
+const WEB_CSS = `
+:root{
+  --bg:#1A0F2E; --panel:#241433; --surface:#2D1B4E; --border:#4A2F73; --muted:#B4A3D6; --fg:#F3EFFF;
+  --pink:#FF2E92; --yellow:#E8FF3D; --cyan:#2EE6FF; --green:#4CFF6E; --blue:#5C8DFF; --red:#FF4466;
+  --code-bg:#140B24;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--fg);line-height:1.6}
+a{color:var(--cyan);text-decoration:none} a:hover{text-decoration:underline;color:var(--pink)}
+header.topbar{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:space-between;z-index:10}
+.brand{font-weight:800;font-size:1.3rem;letter-spacing:-.02em;color:var(--pink)}
+.brand span{color:var(--muted);font-weight:400}
+nav.links a{margin-left:1.25rem;color:var(--muted);font-size:.92rem}
+nav.links a:hover{color:var(--pink)}
+main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 4rem}
+h1{font-size:1.5rem;margin:0 0 1.25rem}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.4rem;margin-bottom:1.25rem}
+.card h2{margin:0 0 .6rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
+.stack>*+*{margin-top:.75rem}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;border:1px solid;white-space:nowrap}
+.badge-pink{color:var(--pink);background:rgba(255,46,146,.12);border-color:rgba(255,46,146,.4)}
+.badge-yellow{color:var(--yellow);background:rgba(232,255,61,.1);border-color:rgba(232,255,61,.35)}
+.badge-cyan{color:var(--cyan);background:rgba(46,230,255,.1);border-color:rgba(46,230,255,.35)}
+.badge-green{color:var(--green);background:rgba(76,255,110,.1);border-color:rgba(76,255,110,.35)}
+.badge-blue{color:var(--blue);background:rgba(92,141,255,.1);border-color:rgba(92,141,255,.35)}
+.badge-red{color:var(--red);background:rgba(255,68,102,.1);border-color:rgba(255,68,102,.35)}
+.badge-muted{color:var(--muted);background:rgba(180,163,214,.08);border-color:var(--border)}
+.mono{font-family:var(--mono);background:var(--code-bg);color:var(--cyan);padding:.1rem .4rem;border-radius:5px;font-size:.88em}
+pre{font-family:var(--mono);background:var(--code-bg);color:var(--fg);padding:.9rem 1rem;border-radius:8px;overflow-x:auto;border:1px solid var(--border)}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+td,th{padding:.5rem .4rem;border-bottom:1px solid var(--border);text-align:left}
+th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:.75rem;letter-spacing:.05em}
+ul.list{list-style:none;padding:0;margin:0}
+ul.list>li{padding:.65rem 0;border-bottom:1px solid var(--border)}
+ul.list>li:last-child{border-bottom:none}
+.repo-item{display:flex;flex-direction:column;gap:.15rem}
+.repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
+.repo-item .desc{color:var(--muted);font-size:.9rem}
+input,select,textarea{font-family:var(--sans);font-size:.95rem;padding:.55rem .7rem;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg)}
+input::placeholder,textarea::placeholder{color:var(--muted)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 2px rgba(255,46,146,.25)}
+textarea{width:100%;min-height:4.5rem;resize:vertical;display:block}
+button{font-family:var(--sans);font-size:.92rem;font-weight:700;padding:.55rem 1.1rem;border-radius:8px;border:1px solid var(--pink);background:var(--pink);color:#1A0F2E;cursor:pointer}
+button:hover{background:#ff58a8}
+button.secondary{background:transparent;color:var(--fg);border-color:var(--border)}
+button.secondary:hover{border-color:var(--muted);background:rgba(180,163,214,.08)}
+button.danger{background:transparent;color:var(--red);border-color:var(--red)}
+button.danger:hover{background:rgba(255,68,102,.1)}
+form{margin:0}
+form.inline{display:inline}
+.field-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.field-row>input,.field-row>select{flex:1;min-width:10rem}
+.muted{color:var(--muted);font-size:.9rem}
+.hint{color:var(--muted);font-size:.88rem;margin:0 0 1rem}
+.empty{color:var(--muted);font-style:italic;padding:.5rem 0}
+`;
+
+function card(heading: string, innerHtml: string): string {
+  return `<section class="card"><h2>${esc(heading)}</h2>${innerHtml}</section>`;
+}
+
+const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", reader: "muted" };
+function roleBadge(role: string): string {
+  return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
+}
+
 function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[] } = {}): Response {
   const nav = agent
-    ? `<a href="/explore">Explore</a> · <a href="/profile">${esc(agent.display_name)}</a> · <a href="/logout">Log out</a>`
-    : `<a href="/explore">Explore</a> · <a href="/login">Log in</a>`;
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} - zz</title>
-<style>
-body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:1.5rem;color:#1a1a1a;background:#fff}
-nav{margin-bottom:1.5rem;font-size:.9rem}
-a{color:#0969da;text-decoration:none} a:hover{text-decoration:underline}
-.repo-list li{margin-bottom:.75rem;list-style:none}
-.repo-list{padding:0}
-.muted{color:#666;font-size:.9rem}
-table{border-collapse:collapse;width:100%} td,th{padding:.4rem;border-bottom:1px solid #eee;text-align:left}
-pre{background:#f6f8fa;padding:.75rem;border-radius:6px;overflow-x:auto}
-input,button,select,textarea{font-size:1rem;padding:.4rem;margin:.2rem 0}
-.badge{display:inline-block;padding:.1rem .5rem;border-radius:1rem;background:#eee;font-size:.8rem}
-form{margin:1rem 0}
-</style></head><body>
-<nav>${nav}</nav>
+    ? `<a href="/explore">Explore</a><a href="/profile">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
+    : `<a href="/explore">Explore</a><a href="/login">Log in</a>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
+<style>${WEB_CSS}</style></head><body>
+<header class="topbar"><a href="/explore" class="brand">zz<span>.dev</span></a><nav class="links">${nav}</nav></header>
+<main>
 <h1>${esc(title)}</h1>
 ${body}
+</main>
 </body></html>`;
   const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
   for (const cookie of opts.cookies ?? []) headers.append("set-cookie", cookie);
@@ -160,9 +225,11 @@ async function handleLogin(request: Request): Promise<Response> {
   return layout(
     "Log in",
     null,
-    `${cliNonce ? '<p class="muted">Logging in for the zz CLI -- this browser tab can be closed once it redirects back.</p>' : ""}
-     <p><a href="/auth/start/cloudflare${qs}"><button>Log in with Cloudflare</button></a></p>
-     <p><a href="/auth/start/google${qs}"><button>Log in with Google</button></a></p>`,
+    `${cliNonce ? '<p class="hint">Logging in for the zz CLI -- this browser tab can be closed once it redirects back.</p>' : ""}
+     <div class="card stack">
+       <a href="/auth/start/cloudflare${qs}"><button style="width:100%">Log in with Cloudflare</button></a>
+       <a href="/auth/start/google${qs}"><button class="secondary" style="width:100%">Log in with Google</button></a>
+     </div>`,
   );
 }
 
@@ -216,7 +283,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       return layout(
         "Logged in",
         agent,
-        `<p>Logged in as <b>${esc(agent.display_name)}</b>. You can close this tab and return to your terminal.</p>`,
+        `<div class="card"><p>Logged in as <b>${esc(agent.display_name)}</b>. You can close this tab and return to your terminal.</p></div>`,
       );
     }
   }
@@ -236,9 +303,11 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     return layout(
       "Welcome",
       agent,
-      `<p>Logged in as <b>${esc(agent.display_name)}</b>. Here's a token for \`git push\`, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
-       <pre>${esc(plaintext)}</pre>
-       <p><a href="/profile">Continue to your profile</a></p>`,
+      `<div class="card stack">
+         <p>Logged in as <b>${esc(agent.display_name)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
+         <pre>${esc(plaintext)}</pre>
+         <p><a href="/profile">Continue to your profile &rarr;</a></p>
+       </div>`,
       { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
     );
   }
@@ -403,12 +472,18 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
     .map((a, i) => {
       const tokens = tokenLists[i].filter((t) => !t.revoked_at);
       const repos = repoLists[i + 1];
-      return `<li><b>${esc(a.display_name)}</b> <span class="muted">(${a.id})</span>
-        <form method="post" action="/profile/agents/${a.id}/tokens" style="display:inline">
-          <button type="submit">Issue another token</button>
-        </form>
-        <ul>${tokens.map((t) => `<li>token ${t.id} created ${esc(t.created_at)} ${t.last_used_at ? `last used ${esc(t.last_used_at)}` : "(never used)"} <form method="post" action="/profile/tokens/${t.id}/revoke" style="display:inline"><button type="submit">Revoke</button></form></li>`).join("")}</ul>
-        <div class="muted">Repos: ${repos.length ? repos.map((r) => `<a href="/${esc(r.slug)}">${esc(r.slug)}</a>`).join(", ") : "none"}</div>
+      const tokenRows = tokens
+        .map(
+          (t) =>
+            `<li class="row"><span class="mono">${esc(t.id)}</span> <span class="muted">${t.last_used_at ? `last used ${esc(t.last_used_at)}` : "never used"}</span>
+              <form method="post" action="/profile/tokens/${t.id}/revoke" class="inline"><button type="submit" class="danger">Revoke</button></form></li>`,
+        )
+        .join("");
+      return `<li class="stack">
+        <div class="row"><b>${esc(a.display_name)}</b> <span class="mono">${esc(a.id)}</span></div>
+        <div class="muted">repos: ${repos.length ? repos.map((r) => `<a href="/${esc(r.slug)}">${esc(r.slug)}</a>`).join(", ") : "none"}</div>
+        <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>
+        <form method="post" action="/profile/agents/${a.id}/tokens" class="inline"><button type="submit" class="secondary">Issue another token</button></form>
       </li>`;
     })
     .join("");
@@ -418,47 +493,61 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
   return layout(
     "Profile",
     me,
-    `<p>${esc(me.display_name)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
-     <p class="muted">Your own tokens: ${myTokens.length ? myTokens.map((t) => `${t.id}${t.last_used_at ? ` (last used ${esc(t.last_used_at)})` : " (never used)"}`).join(", ") : "none"}
-       <form method="post" action="/profile/agents/${me.id}/tokens" style="display:inline"><button type="submit">Issue yourself a token</button></form>
-       -- for \`git push\`, the CLI, or any script acting directly as you. Use it as the username (password blank) when git prompts for credentials.</p>
+    `<p class="hint">${esc(me.display_name)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
 
-     <h2>Managed agents</h2>
-     <p class="muted">Agents whose credentials you can issue, rotate, or revoke -- not "yours" in the sense of owning their actions, just the one accountable for their access, same as any API credential you'd manage.</p>
-     <form method="post" action="/profile/agents">
-       <input name="display_name" placeholder="agent name" required>
-       <button type="submit">Create agent</button>
-     </form>
-     <ul>${agentsHtml || "<li class=\"muted\">None yet.</li>"}</ul>
+     ${card(
+       "Your credentials",
+       `<p class="muted">${myTokens.length ? myTokens.map((t) => `<span class="mono">${esc(t.id)}</span>${t.last_used_at ? ` <span class="muted">(last used ${esc(t.last_used_at)})</span>` : ' <span class="badge badge-muted">never used</span>'}`).join(", ") : '<span class="empty">none yet</span>'}</p>
+        <form method="post" action="/profile/agents/${me.id}/tokens" class="inline"><button type="submit">Issue yourself a token</button></form>
+        <p class="hint" style="margin-top:.75rem">For <code>git push</code>, the CLI, or any script acting directly as you. Use it as the username (password blank) when git prompts for credentials.</p>`,
+     )}
 
-     <h2>Your repos</h2>
-     <ul>${repoLists[0].map((r) => `<li><a href="/${esc(r.slug)}">${esc(r.slug)}</a></li>`).join("") || "<li class=\"muted\">None owned directly (check your agents above).</li>"}</ul>
+     ${card(
+       "Managed agents",
+       `<p class="hint">Agents whose credentials you can issue, rotate, or revoke -- not "yours" in the sense of owning their actions, just the one accountable for their access, same as any API credential you'd manage.</p>
+        <form method="post" action="/profile/agents" class="field-row" style="margin-bottom:1rem">
+          <input name="display_name" placeholder="agent name" required>
+          <button type="submit">Create agent</button>
+        </form>
+        <ul class="list">${agentsHtml || '<li class="empty">None yet.</li>'}</ul>`,
+     )}
 
-     <h2>Grant/revoke a repo Role</h2>
-     <form method="post" action="/profile/rbac">
-       <select name="repo_slug">${allRepos.map((r) => `<option value="${esc(r.slug)}">${esc(r.slug)}</option>`).join("")}</select>
-       <input name="principal" placeholder="agent id (yours, or any other Agent's)" required>
-       <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
-       <button type="submit">Grant</button>
-     </form>
+     ${card(
+       "Your repos",
+       `<ul class="list">${repoLists[0].map((r) => `<li><a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a></li>`).join("") || '<li class="empty">None owned directly (check your agents above).</li>'}</ul>`,
+     )}
 
-     <h2>Create a repo</h2>
-     <form method="post" action="/profile/repos">
-       <select name="owner_id">
-         <option value="${esc(me.id)}">${esc(me.display_name)} (you)</option>
-         ${createdAgents.map((a) => `<option value="${esc(a.id)}">${esc(a.display_name)}</option>`).join("")}
-       </select>
-       <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
-       <input name="description" placeholder="description">
-       <button type="submit">Create</button>
-     </form>
+     ${card(
+       "Grant a repo role",
+       `<form method="post" action="/profile/rbac" class="field-row">
+          <select name="repo_slug">${allRepos.map((r) => `<option value="${esc(r.slug)}">${esc(r.slug)}</option>`).join("")}</select>
+          <input name="principal" placeholder="agent id" required>
+          <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
+          <button type="submit">Grant</button>
+        </form>`,
+     )}
 
-     <h2>Post an ASK to a repo's root Lane</h2>
-     <form method="post" action="/profile/ask">
-       <input name="repo_slug" placeholder="owner/repo-name" required>
-       <textarea name="description" placeholder="what do you need done?" required></textarea>
-       <button type="submit">Post ASK</button>
-     </form>`,
+     ${card(
+       "Create a repo",
+       `<form method="post" action="/profile/repos" class="field-row">
+          <select name="owner_id">
+            <option value="${esc(me.id)}">${esc(me.display_name)} (you)</option>
+            ${createdAgents.map((a) => `<option value="${esc(a.id)}">${esc(a.display_name)}</option>`).join("")}
+          </select>
+          <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
+          <input name="description" placeholder="description">
+          <button type="submit">Create</button>
+        </form>`,
+     )}
+
+     ${card(
+       "Post an ask to a repo's root lane",
+       `<form method="post" action="/profile/ask" class="stack">
+          <input name="repo_slug" placeholder="owner/repo-name" required>
+          <textarea name="description" placeholder="what do you need done?" required></textarea>
+          <button type="submit">Post ASK</button>
+        </form>`,
+     )}`,
   );
 }
 
@@ -471,9 +560,11 @@ async function handleCreateAgentForm(request: Request, env: WebEnv): Promise<Res
     return layout(
       "Agent created",
       me,
-      `<p>Created <b>${esc(agent.display_name)}</b> (${esc(agent.id)}). Its first token -- copy it now, it won't be shown again:</p>
-       <pre>${esc(token)}</pre>
-       <p><a href="/profile">Back to profile</a></p>`,
+      `<div class="card stack">
+         <p>Created <b>${esc(agent.display_name)}</b> <span class="mono">${esc(agent.id)}</span>. Its first token -- copy it now, it won't be shown again:</p>
+         <pre>${esc(token)}</pre>
+         <p><a href="/profile">&larr; Back to profile</a></p>
+       </div>`,
     );
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
@@ -489,9 +580,11 @@ async function handleMintTokenForm(agentId: string, request: Request, env: WebEn
     return layout(
       "New agent token",
       me,
-      `<p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
-       <pre>${esc(token)}</pre>
-       <p><a href="/profile">Back to profile</a></p>`,
+      `<div class="card stack">
+         <p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
+         <pre>${esc(token)}</pre>
+         <p><a href="/profile">&larr; Back to profile</a></p>
+       </div>`,
     );
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
@@ -694,17 +787,20 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   const repos = q ? await searchRepos(env.DB, q, 50) : await listRecentRepos(env.DB, 50);
 
   const listHtml = repos
-    .map((r) => `<li><a href="/${esc(r.slug)}">${esc(r.slug)}</a>${r.description ? ` <span class="muted">- ${esc(r.description)}</span>` : ""}</li>`)
+    .map(
+      (r) =>
+        `<li class="repo-item"><a href="/${esc(r.slug)}" class="name">${esc(r.slug)}</a>${r.description ? `<span class="desc">${esc(r.description)}</span>` : ""}</li>`,
+    )
     .join("");
 
   return layout(
     "Explore",
     me,
-    `<form method="get" action="/explore">
-       <input name="q" value="${esc(q)}" placeholder="search repos, owners, descriptions" style="width:60%">
+    `<form method="get" action="/explore" class="field-row" style="margin-bottom:1.25rem">
+       <input name="q" value="${esc(q)}" placeholder="search repos, owners, descriptions" style="flex:3">
        <button type="submit">Search</button>
      </form>
-     <ul class="repo-list">${listHtml || `<li class="muted">${q ? "No matches." : "No repos yet."}</li>`}</ul>`,
+     <ul class="list">${listHtml || `<li class="empty">${q ? "No matches." : "No repos yet."}</li>`}</ul>`,
   );
 }
 
@@ -831,36 +927,48 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const readme = head ? await findReadme(repo, tree) : null;
 
   const fileListHtml = tree
-    .map((e) => `<li>${e.type === "tree" ? "📁" : "📄"} ${esc(e.name)}${e.type !== "tree" ? ` <a href="${origin}/${esc(slug)}/blob/${esc(e.name)}">view/download</a>` : ""}</li>`)
+    .map(
+      (e) =>
+        `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${e.type !== "tree" ? `<a href="${origin}/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`}</li>`,
+    )
     .join("");
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
+  const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"}">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
+  const visibility = meta?.policy.visibility ?? "public";
 
   const lane = await getRootLane(env, repoRow.artifacts_name);
   const asksHtml = (lane?.history ?? [])
     .slice()
     .reverse()
     .map((e) => {
-      if (e.type === "ASK") return `<li><b>ASK</b> (${esc(e.kind ?? "?")}) from ${esc(e.from ?? "?")} -- ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
-      if (e.type === "ANSWER") return `<li><b>ANSWER</b> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
-      return `<li><b>INSIGHT</b> ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+      if (e.type === "ASK") return `<li class="row"><span class="badge badge-yellow">ASK</span> ${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")} -- ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+      if (e.type === "ANSWER") return `<li class="row"><span class="badge badge-green">ANSWER</span> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
+      return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
     })
     .join("");
 
   return layout(
     slug,
     me,
-    `<p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
-     <p>${rolesHtml}</p>
-     <p><a href="${origin}/${esc(slug)}/archive.zip">Download repo as .zip</a></p>
-     <h2>Clone</h2>
-     <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
-     <p class="muted">To push: issue yourself (or a managed agent) a token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo). <code>zz repo clone ${esc(slug)}</code> handles this automatically if you're logged in via the CLI -- or use the token as the username when git prompts, password blank.</p>
-     <h2>Files</h2>
-     <ul>${fileListHtml || "<li class=\"muted\">Empty repo.</li>"}</ul>
-     ${readme ? `<h2>README</h2><pre>${esc(readme)}</pre>` : ""}
-     <h2>Asks (root Lane)</h2>
-     <ul>${asksHtml || "<li class=\"muted\">No Asks posted yet.</li>"}</ul>`,
+    `<div class="card">
+       <div class="row" style="margin-bottom:.5rem"><span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>${rolesHtml}</div>
+       <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+       <div class="row">
+         <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
+       </div>
+     </div>
+
+     ${card(
+       "Clone",
+       `<pre>git clone ${esc(origin)}/${esc(slug)}</pre>
+        <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo). <code>zz repo clone ${esc(slug)}</code> handles this automatically if you're logged in via the CLI -- or use the token as the username when git prompts, password blank.</p>`,
+     )}
+
+     ${card("Files", `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>`)}
+
+     ${readme ? card("README", `<pre>${esc(readme)}</pre>`) : ""}
+
+     ${card("Asks (root lane)", `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>`)}`,
   );
 }
 

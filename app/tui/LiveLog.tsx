@@ -9,11 +9,12 @@ import React, { useMemo, useState } from "react";
 import { Box, Text, useInput, useStdin } from "ink";
 import { ASK_SCOPE } from "../engine/lane.js";
 import type { FlatEvent } from "./types.js";
+import { YELLOW, GREEN, CYAN, MUTED, PINK } from "./theme.js";
 
-function describe(e: FlatEvent): string {
-  if (e.entry.type === "ASK") return `ASK   ${e.entry.kind} from ${e.entry.from}`;
-  if (e.entry.type === "ANSWER") return `ANSWER ${e.entry.action} (${e.entry.ask}) from ${e.entry.from}`;
-  return `NOTE  ${e.entry.kind}: ${e.entry.text}`;
+function eventParts(e: FlatEvent): { label: string; color: string; rest: string } {
+  if (e.entry.type === "ASK") return { label: "ASK", color: YELLOW, rest: `${e.entry.kind} from ${e.entry.from}` };
+  if (e.entry.type === "ANSWER") return { label: "ANSWER", color: GREEN, rest: `${e.entry.action} (${e.entry.ask}) from ${e.entry.from}` };
+  return { label: "NOTE", color: CYAN, rest: `${e.entry.kind}: ${e.entry.text}` };
 }
 
 function kindOf(e: FlatEvent): string | null {
@@ -69,23 +70,33 @@ export function LiveLog({ events, maxRows, scrollOffset }: { events: FlatEvent[]
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        filter: repo=[{repoFilter}](r) lane=[{laneFilter}](L) kind=[{kindFilter}](t) role=[{scope}](s) -- {offset > 0 ? `${offset} line(s) back from live (End to catch up)` : `showing ${shown.length}/${filtered.length}, live`}
+      <Text color={MUTED}>
+        filter: repo=[<Text color={repoFilter === "all" ? MUTED : PINK}>{repoFilter}</Text>](r) lane=[<Text color={laneFilter === "all" ? MUTED : PINK}>{laneFilter}</Text>](L) kind=[
+        <Text color={kindFilter === "all" ? MUTED : PINK}>{kindFilter}</Text>](t) role=[<Text color={scope === "all" ? MUTED : PINK}>{scope}</Text>](s) --{" "}
+        {offset > 0 ? `${offset} line(s) back from live (End to catch up)` : `showing ${shown.length}/${filtered.length}, live`}
       </Text>
       {shown.length === 0 ? (
-        <Text dimColor>(nothing matches)</Text>
+        <Text color={MUTED}>(nothing matches)</Text>
       ) : (
-        shown.map((e, i) => (
-          <Box key={i}>
-            <Box width={22}>
-              <Text dimColor>{e.repo}</Text>
+        shown.map((e, i) => {
+          const { label, color, rest } = eventParts(e);
+          return (
+            <Box key={i}>
+              <Box width={22}>
+                <Text color={MUTED}>{e.repo}</Text>
+              </Box>
+              <Box width={20}>
+                <Text color={MUTED}>{e.laneId}</Text>
+              </Box>
+              <Box width={8}>
+                <Text bold color={color}>
+                  {label}
+                </Text>
+              </Box>
+              <Text wrap="truncate-end">{rest}</Text>
             </Box>
-            <Box width={20}>
-              <Text dimColor>{e.laneId}</Text>
-            </Box>
-            <Text wrap="truncate-end">{describe(e)}</Text>
-          </Box>
-        ))
+          );
+        })
       )}
     </Box>
   );
