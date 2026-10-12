@@ -17,6 +17,9 @@ import { work } from "./commands/work.js";
 import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
+import { login } from "./commands/login.js";
+import { agentCreate, agentToken, agentList } from "./commands/agent.js";
+import { repoCreate, repoList, repoGrant, repoAsk } from "./commands/repo.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -159,6 +162,69 @@ program
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .action(async (opts: { agent?: string; repos?: string[] }) => {
     await review({ agent: opts.agent, repos: opts.repos });
+  });
+
+program
+  .command("login")
+  .description("log in to the remote (Cloudflare) backend -- opens a browser, waits for you to finish, saves a token to ~/.zz/credentials.json. Same identity model either way: a human login and an agent's bearer token are both just an Agent's credential.")
+  .option("--api-base <url>", "override the Worker URL (default: ~/.zz/credentials.json's, or the built-in default)")
+  .action(async (opts: { apiBase?: string }) => {
+    await login({ apiBase: opts.apiBase });
+  });
+
+const agentCmd = program.command("agent").description("manage Agents on the remote backend -- full parity with /profile's agent section");
+
+agentCmd
+  .command("create <name>")
+  .description("create a new peer Agent (any already-authenticated Agent can do this -- see git-compatibility docs for the identity model)")
+  .action(async (name: string) => {
+    await agentCreate(name);
+  });
+
+agentCmd
+  .command("token <agent-id>")
+  .description("mint a bearer token for an Agent -- yourself, or one you created (practical bootstrap, not a general override)")
+  .action(async (agentId: string) => {
+    await agentToken(agentId);
+  });
+
+agentCmd
+  .command("list")
+  .description("list yourself and the Agents you've created")
+  .action(async () => {
+    await agentList();
+  });
+
+const repoCmd = program.command("repo").description("manage repos on the remote backend -- full parity with /profile and /explore");
+
+repoCmd
+  .command("create <name>")
+  .description("create a repo, owned by you or an Agent you created")
+  .option("--description <text>", "repo description")
+  .option("--owner <agent-id>", "owning Agent id (default: you)")
+  .action(async (name: string, opts: { description?: string; owner?: string }) => {
+    await repoCreate(name, { description: opts.description, ownerId: opts.owner });
+  });
+
+repoCmd
+  .command("list [query]")
+  .description("list recent repos, or search by name/owner/description if a query is given")
+  .action(async (query?: string) => {
+    await repoList(query);
+  });
+
+repoCmd
+  .command("grant <owner/repo> <principal> <role>")
+  .description("grant an Agent (by id) a repo Role -- owner, maintainer, contributor, or reader. Needs Owner on the repo yourself.")
+  .action(async (slug: string, principal: string, role: string) => {
+    await repoGrant(slug, principal, role);
+  });
+
+repoCmd
+  .command("ask <owner/repo> <description>")
+  .description("post a work Ask to a repo's root Lane")
+  .action(async (slug: string, description: string) => {
+    await repoAsk(slug, description);
   });
 
 program.parseAsync(process.argv);

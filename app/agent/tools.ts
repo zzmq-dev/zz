@@ -289,13 +289,14 @@ const laneProposeTool: ToolDef = {
       origin_lane: { type: "string", description: "The lane id this one originates from, if any" },
       origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
+      id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the root Lane a repo\'s Ladder root rung anchors to.' },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
   },
-  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor }) {
+  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id }) {
     const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? (repo as string), lane: origin_lane as string } : undefined;
     return proposeLane(repo as string, {
-      id: shortId("lane"),
+      id: (id as string) ?? shortId("lane"),
       repo: repo as string,
       name: name as string,
       objective: objective as string,

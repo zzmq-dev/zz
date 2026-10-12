@@ -316,6 +316,17 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   if (!repo) throw new ApiError(404, "no such repo");
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
   await stub.configure(repo.artifacts_name);
+  // The "_repo" root Lane isn't the same thing as the Ladder's "_repo"
+  // root rung (ensureMeta/writeRung territory) -- it's a real Lane,
+  // which doCreateRepo never bootstrapped (confirmed live: posting an
+  // ask to a repo created through the web/API threw "no such lane:
+  // _repo"). Lazily create it here, the same bootstrap
+  // demo/greenfield.ts's local flow always did, so this self-heals for
+  // every repo already created before this fix too, not just new ones.
+  const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: "_repo" });
+  if (!existingLane) {
+    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: "_repo", name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_id });
+  }
   await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.id, payload: { description } });
 }
 
