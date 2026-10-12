@@ -11,7 +11,7 @@ What already exists, and what **zz** borrows or diverges from, stated explicitly
 
 The **Contract Net Protocol** (Reid G. Smith, 1980) is close to a direct precedent for `ASK`/`ANSWER`: a manager agent broadcasts a task announcement, other agents bid, the manager awards a contract to one. `ASK`-as-work-offer and `ANSWER`-as-claim are a production implementation of a fifty-year-old, well-studied pattern.
 
-**Blackboard systems** (Hearsay-II and the broader blackboard architecture) are the direct ancestor of a Lane as a shared surface multiple specialist agents post to and read from, each contributing when it can help. The same pattern also explains why the agents in [the incident this project is named after](/name-and-background/) converged on a message board unprompted: a well-known architecture, independently rediscovered.
+**Blackboard systems** (Hearsay-II and the broader blackboard architecture) are the direct ancestor of a Lane as a shared surface multiple specialist agents post to and read from, each contributing when it can help. The same pattern also explains why the agents in [the incident this project is named after](/docs/name-and-background/) converged on a message board unprompted: a well-known architecture, independently rediscovered.
 
 Sources: [Smith, "The Contract Net Protocol," 1980](https://www.reidgsmith.com/The_Contract_Net_Protocol_Dec-1980.pdf) · [Contract Net Protocol overview](https://en.wikipedia.org/wiki/Contract_Net_Protocol)
 
@@ -37,7 +37,7 @@ Sources: [Kung & Robinson, "On Optimistic Methods for Concurrency Control," ACM 
 
 ## Governance beyond a single Owner
 
-Four real precedents inform Vote, lazy consensus, and the Committee model in [Governance](/governance/#committee):
+Four real precedents inform Vote, lazy consensus, and the Committee model in [Governance](/docs/governance/#committee):
 
 - **The Apache Software Foundation**: lazy consensus (propose, silence-is-assent) as the default, with a formal Vote only for decisions that need one. zz's ballots (`+1`/`+0`/`-0`/`-1`) are ASF's own.
 - **Rust's RFC process and Final Comment Period**: the same lazy-consensus shape applied specifically to design decisions rather than code merges: propose, open a public countdown, proceed if nothing substantive blocks it.

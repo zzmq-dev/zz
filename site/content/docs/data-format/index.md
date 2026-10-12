@@ -5,11 +5,11 @@ description: "What Maintainer agents store, and the .zz/ directory."
 ---
 # Data format
 
-Three layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`), and repo-level metadata (description, policy, Role grants) on a dedicated `zz-meta` orphan branch. Nothing in the DO layer should be the only copy of anything that matters. See [Architecture](/architecture/) on portability.
+Three layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`), and repo-level metadata (description, policy, Role grants) on a dedicated `zz-meta` orphan branch. Nothing in the DO layer should be the only copy of anything that matters. See [Architecture](/docs/architecture/) on portability.
 
 ## Why `.zz/` and not git notes -- and why repo metadata is neither
 
-Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files, visible on any host and diffable like anything else -- that's still right for Lane/changeset/decision history, which belongs alongside the code it's about. (The Ladder itself is the one exception: it's carried in git notes after all, since its anchors are commits and blobs rather than paths -- see [the remote backend](/remote-backend/) for why.)
+Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files, visible on any host and diffable like anything else -- that's still right for Lane/changeset/decision history, which belongs alongside the code it's about. (The Ladder itself is the one exception: it's carried in git notes after all, since its anchors are commits and blobs rather than paths -- see [the remote backend](/docs/remote-backend/) for why.)
 
 Repo-level metadata (description, policy, Role grants) is different: it isn't *about* any particular commit, it changes on its own schedule, and every write to it would otherwise be a commit cluttering the repo's real history. It lives on its own orphan branch, `zz-meta`, instead -- same portability guarantee (travels with `git clone -b zz-meta`), without the noise.
 
@@ -55,7 +55,7 @@ lanes.db      # checkpointed export of the DO's live Lane/Ask/Answer state
 
 ## `roles.json`
 
-Repo-level Role grants -- the coarse layer (see [Governance](/governance/)): a repo's Owner/Maintainer status applies across every Lane in it, unlike a Lane's own `coordinators`/`maintainers`, which is the fine-grained, per-Lane Claim.
+Repo-level Role grants -- the coarse layer (see [Governance](/docs/governance/)): a repo's Owner/Maintainer status applies across every Lane in it, unlike a Lane's own `coordinators`/`maintainers`, which is the fine-grained, per-Lane Claim.
 
 ```json
 {
@@ -110,7 +110,7 @@ An **account** is a human, created on first login (Cloudflare or Google OAuth --
 }
 ```
 
-Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked, the way a Contributor earns it in one area long before being trusted in another. `min_trust_for_fast_path` in `policy.yaml` is checked against the topic a Changeset's scope falls under.
+Scored per topic: an [Agent](/docs/nouns/#agent) earns trust in the areas it's worked, the way a Contributor earns it in one area long before being trusted in another. `min_trust_for_fast_path` in `policy.yaml` is checked against the topic a Changeset's scope falls under.
 
 ## `lanes/<lane-id>.json`
 
@@ -135,11 +135,11 @@ Scored per topic: an [Agent](/nouns/#agent) earns trust in the areas it's worked
 }
 ```
 
-`origin` is the Lane that created this one, the one it rolls up into when it completes. `related_lanes` covers every Lane descended from it at any depth, with each entry carrying that Lane's own `origin` too, so the full structure is reconstructable from any single Lane's record without walking the tree. A Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how a top-level Lane (one with no `origin` of its own) ends up tracking every Lane descended from it, no matter how deep. See [Lanes and Ladders](/lanes-and-ladders/#origin-and-related-lanes) for the worked example.
+`origin` is the Lane that created this one, the one it rolls up into when it completes. `related_lanes` covers every Lane descended from it at any depth, with each entry carrying that Lane's own `origin` too, so the full structure is reconstructable from any single Lane's record without walking the tree. A Coordinator reports a new related Lane to its own origin's Coordinator, which reports it to its own origin in turn, all the way up, which is how a top-level Lane (one with no `origin` of its own) ends up tracking every Lane descended from it, no matter how deep. See [Lanes and Ladders](/docs/lanes-and-ladders/#origin-and-related-lanes) for the worked example.
 
-An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
+An `INSIGHT` is the lightest-weight history entry: no claim, no review, no state transition, just a captured observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), and attributed to whoever noticed it. It's what the [Ladder](/docs/nouns/#ladder) draws on to carry tacit knowledge (what to watch out for, what worked) alongside the structural record of what happened. See [Lanes and Ladders](/docs/lanes-and-ladders/#how-a-ladder-works) for the mechanics.
 
-A Lane fanning out across many dependents at once (a [cascade](/lanes-and-ladders/#cascades), at scale) is just a `related_lanes` list with more entries, most referencing a different `repo` than its own. `trigger.kind` stays `manual`, with a `reason` explaining why:
+A Lane fanning out across many dependents at once (a [cascade](/docs/lanes-and-ladders/#cascades), at scale) is just a `related_lanes` list with more entries, most referencing a different `repo` than its own. `trigger.kind` stays `manual`, with a `reason` explaining why:
 
 ```json
 {

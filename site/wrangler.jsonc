@@ -7,14 +7,20 @@
   },
   "routes": [
     // zzbin.dev stays live (not torn down as part of this migration --
-    // that's a separate decision). The new split: zzmq.dev's bare root
-    // serves this same landing page (an exact-path route, not a
-    // custom_domain -- custom_domain claims a whole hostname
-    // exclusively, but zzmq.dev/* elsewhere belongs to the zz-maintainer
-    // worker, so this has to be a classic route scoped to just "/"),
-    // and the rest of the docs site moves to docs.zzmq.dev.
+    // that's a separate decision). Single-origin split on zzmq.dev:
+    // this worker owns the bare root ("/", the landing page) and
+    // everything under /docs/*; zz-maintainer owns the rest (/explore,
+    // /login, /<owner>/<repo>, ...) via its own zzmq.dev/* route.
+    // Both are classic routes, not custom_domain (custom_domain claims
+    // a whole hostname exclusively, which doesn't work when two
+    // workers share one zone by path) -- Cloudflare resolves the more
+    // specific pattern over the wildcard.
     { "pattern": "zzbin.dev", "custom_domain": true },
     { "pattern": "zzmq.dev/", "zone_name": "zzmq.dev" },
-    { "pattern": "docs.zzmq.dev", "custom_domain": true }
+    // "/docs/*" doesn't match "/docs" with no trailing slash -- the
+    // exact route below covers that so the _redirects rule (which
+    // sends it to /docs/overview/) actually gets a chance to run.
+    { "pattern": "zzmq.dev/docs", "zone_name": "zzmq.dev" },
+    { "pattern": "zzmq.dev/docs/*", "zone_name": "zzmq.dev" }
   ]
 }

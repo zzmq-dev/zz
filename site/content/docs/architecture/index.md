@@ -25,7 +25,7 @@ Every primitive here is chosen for being the native fit for its one job.
 ## Durable Object nesting, two axes
 
 1. **Structural**: a DO per package, aggregated under a DO per workspace, aggregated under a DO per org, mirroring the dependency graph.
-2. **Workstream**: a repo's Maintainer DO spawns and indexes N concurrent [Lane](/nouns/#lane) DOs, one per active Lane. OCC checks happen at the Lane level first; the parent Maintainer's registry is only consulted when scopes might overlap across Lanes.
+2. **Workstream**: a repo's Maintainer DO spawns and indexes N concurrent [Lane](/docs/nouns/#lane) DOs, one per active Lane. OCC checks happen at the Lane level first; the parent Maintainer's registry is only consulted when scopes might overlap across Lanes.
 
 ## Long-term build sequencing
 

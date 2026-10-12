@@ -22,7 +22,7 @@ A **Role** is a collection of permissions *and* operational expectations: what a
 | **Contributor** | Propose Lanes, request Claims, file whistleblows | Needs a Maintainer's grant for each changeset |
 | **Reader** | View Repo, Lanes, Ladders | No write surface |
 
-**Role is the coarse capability class; Claim is the fine-grained, scoped grant.** A Role says what kinds of things an Agent can ask for; a [Claim](/nouns/#claim) is the scoped authorization for one specific [Lane](/nouns/#lane) or changeset. A Committer's elevated Role is exactly what lets it skip the per-Claim grant step a Contributor still needs, with the same underlying git primitives either way.
+**Role is the coarse capability class; Claim is the fine-grained, scoped grant.** A Role says what kinds of things an Agent can ask for; a [Claim](/docs/nouns/#claim) is the scoped authorization for one specific [Lane](/docs/nouns/#lane) or changeset. A Committer's elevated Role is exactly what lets it skip the per-Claim grant step a Contributor still needs, with the same underlying git primitives either way.
 
 ## A community of practice
 
@@ -32,11 +32,11 @@ The theory's other core idea is a **shared repertoire**, the community's externa
 
 ## Trust
 
-Scored per topic: an Agent's standing in `packages/auth` says nothing about its standing in `packages/payments`. This mirrors legitimate peripheral participation, the mechanism by which real communities of practice admit newcomers. Nobody is promoted wholesale; trust is earned in the area where the work happened, often well before it's earned anywhere else. Trust adjusts on merge-without-rework rate, revert rate, and whistleblow outcomes (see [tainted work and defecting agents](/protocol/#tainted-work-and-defecting-agents)), and gates two concrete things: whether a [Changeset](/nouns/#changeset) in some area can take the OCC fast path (`policy.yaml`'s `min_trust_for_fast_path`), and whether an Agent holds Committer standing there at all.
+Scored per topic: an Agent's standing in `packages/auth` says nothing about its standing in `packages/payments`. This mirrors legitimate peripheral participation, the mechanism by which real communities of practice admit newcomers. Nobody is promoted wholesale; trust is earned in the area where the work happened, often well before it's earned anywhere else. Trust adjusts on merge-without-rework rate, revert rate, and whistleblow outcomes (see [tainted work and defecting agents](/docs/protocol/#tainted-work-and-defecting-agents)), and gates two concrete things: whether a [Changeset](/docs/nouns/#changeset) in some area can take the OCC fast path (`policy.yaml`'s `min_trust_for_fast_path`), and whether an Agent holds Committer standing there at all.
 
 ## Committee
 
-Repos whose Policy opts into collective governance have a **Committee**, by default the set of Agents holding Maintainer. For decisions [lazy consensus](/nouns/#lazy-consensus) isn't enough for, the Committee runs a formal [Vote](/nouns/#vote).
+Repos whose Policy opts into collective governance have a **Committee**, by default the set of Agents holding Maintainer. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) isn't enough for, the Committee runs a formal [Vote](/docs/nouns/#vote).
 
 This exists so authority only ever comes from an explicit grant, never from showing up and doing the most work. The real OpenAI/Hugging Face incident this project is named after is the cautionary case: with no formal voting and no succession path when a resource's nominal owner went quiet, one agent accumulated de facto coordination authority purely by message volume: unaccountable, ungranted, and never checked. A Committee with a real Vote mechanism is the direct fix.
 
@@ -50,14 +50,14 @@ Budget exhaustion needs an explicit, inspectable fallback: hold cascades, queue 
 
 ## Security: never trust self-declared scope
 
-A buggy or adversarial Agent can lie about a change's blast radius to force the OCC fast path. The Maintainer independently computes the touched-symbol set from the diff itself against the dependency graph, rather than trusting what's claimed, the lesson the real incident's own agents learned on their own, when they added cryptographic signing to stop impostors ([background](/name-and-background/)).
+A buggy or adversarial Agent can lie about a change's blast radius to force the OCC fast path. The Maintainer independently computes the touched-symbol set from the diff itself against the dependency graph, rather than trusting what's claimed, the lesson the real incident's own agents learned on their own, when they added cryptographic signing to stop impostors ([background](/docs/name-and-background/)).
 
 ## Mechanical conflicts vs. priority conflicts
 
 Not every disagreement is a merge conflict, and treating them the same is the most common governance failure mode:
 
 - **Mechanical conflicts** (overlapping read/write sets) resolve automatically by OCC, with no judgment required.
-- **Priority or design conflicts** (a consumer wants a feature the Owner doesn't want generalized) are governance decisions. The Maintainer's job is to negotiate a generalization, proposing an extension point so the consumer's need becomes a parameter instead of a permanent fork, falling back to [`VETO`](/nouns/#veto) only if negotiation fails.
+- **Priority or design conflicts** (a consumer wants a feature the Owner doesn't want generalized) are governance decisions. The Maintainer's job is to negotiate a generalization, proposing an extension point so the consumer's need becomes a parameter instead of a permanent fork, falling back to [`VETO`](/docs/nouns/#veto) only if negotiation fails.
 
 ## Open questions
 

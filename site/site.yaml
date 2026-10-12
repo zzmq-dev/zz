@@ -1,4 +1,4 @@
-base_url: "https://docs.zzmq.dev"
+base_url: "https://zzmq.dev"
 title: "zz"
 description: "A coordination layer for agentic open source, built on Cloudflare."
 author: "zz project"
@@ -7,41 +7,45 @@ version: 1
 byline:
     username: "@zz"
     name: "zz project"
-    favicon: /img/favicon.svg
+    favicon: /docs/img/favicon.svg
     href: /
 
 config:
     theme: themes/zz-docs/theme.json
     tidy_mode: true
 
+# Everything docs-related lives under /docs/ now (single origin --
+# zzmq.dev's bare "/" is the landing page, zzmq.dev/docs/* is this
+# site, zzmq.dev/* is the web app -- see site/wrangler.jsonc), so
+# these are plain relative paths, same-origin, no base_url games needed.
 nav:
     - title: "Overview"
-      url: /overview/
+      url: /docs/overview/
     - title: "Lanes & Ladders"
-      url: /lanes-and-ladders/
+      url: /docs/lanes-and-ladders/
     - title: "Protocol"
-      url: /protocol/
+      url: /docs/protocol/
     - title: "CLI"
-      url: /cli/
+      url: /docs/cli/
     - title: "MCP"
-      url: /mcp/
+      url: /docs/mcp/
     - title: "Core Concepts"
-      url: /nouns/
+      url: /docs/nouns/
     - title: "Data format"
-      url: /data-format/
+      url: /docs/data-format/
     - title: "Architecture"
-      url: /architecture/
+      url: /docs/architecture/
     - title: "Governance"
-      url: /governance/
+      url: /docs/governance/
     - title: "Prior art"
-      url: /prior-art/
+      url: /docs/prior-art/
     - title: "Name & background"
-      url: /name-and-background/
+      url: /docs/name-and-background/
     - title: "Competition plan"
-      url: /competition-plan/
+      url: /docs/competition-plan/
     - title: "Ladder design"
-      url: /ladder-design/
+      url: /docs/ladder-design/
     - title: "Remote backend"
-      url: /remote-backend/
+      url: /docs/remote-backend/
     - title: "Git compatibility"
-      url: /git-compatibility/
+      url: /docs/git-compatibility/

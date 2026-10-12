@@ -11,8 +11,8 @@ The brief explicitly asks for novel coordination, review, and merge mechanisms. 
 
 1. **Core engine**: a minimal Lanes and Ladders implementation, enough for multiple actors to collaborate on a change. Maintainer and Lane Durable Objects, `.zz/` decision log, OCC merge.
 2. **Roles**: Maintainer, Contributor, and a public-consumer Reader, enforced as static grants on every action the engine exposes.
-3. **TUI**: a terminal app for humans, `zz top`/`zz ps` plus the Lane lifecycle commands already sketched in [CLI](/cli/).
-4. **MCP server**: the same actions, exposed as tools for agents, per [MCP](/mcp/).
+3. **TUI**: a terminal app for humans, `zz top`/`zz ps` plus the Lane lifecycle commands already sketched in [CLI](/docs/cli/).
+4. **MCP server**: the same actions, exposed as tools for agents, per [MCP](/docs/mcp/).
 5. **Web app**: a minimal browser surface over the same engine.
 6. **Cross-repo demo**: a breaking change in a real, existing repo (superagent) cascading into a related Lane in a real downstream consumer (supertest), onboarded from GitHub rather than built as a toy example.
 

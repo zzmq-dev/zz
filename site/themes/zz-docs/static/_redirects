@@ -1,0 +1,5 @@
+# Cloudflare Workers Assets redirects (Pages-compatible syntax,
+# relative paths only). /docs itself has no content of its own --
+# send it straight into the docs.
+/docs    /docs/overview/   302
+/docs/   /docs/overview/   302

@@ -20,7 +20,7 @@ Verified live, not assumed, against a real deployed repo:
 | `git clone <url>` | Yes | No token in the URL -- see Authentication below. |
 | `git fetch` | Yes | |
 | `git pull` | Yes | Fetch + local merge; no server-side difference from `fetch`. |
-| `git ls-remote <url>` | Yes | Lists every branch, including `refs/heads/zz-meta` -- it's a real branch (see [Data format](/data-format/)). |
+| `git ls-remote <url>` | Yes | Lists every branch, including `refs/heads/zz-meta` -- it's a real branch (see [Data format](/docs/data-format/)). |
 | `git push` | Yes | Gated -- see RBAC below. |
 | `git push origin <new-branch>` | Yes | |
 | `git push origin --delete <branch>` | Yes | Same endpoint as any other push; a ref-delete update. |
@@ -36,7 +36,7 @@ Verified live, not assumed, against a real deployed repo:
 
 ## Authentication
 
-Git carries no session cookie, so it never uses the browser login (Cloudflare or Google OAuth, see [accounts and the web app](/data-format/#accounts-and-the-web-app)). Instead:
+Git carries no session cookie, so it never uses the browser login (Cloudflare or Google OAuth, see [accounts and the web app](/docs/data-format/#accounts-and-the-web-app)). Instead:
 
 - **Reading a public repo** needs no credentials at all. `git clone https://<domain>/<account>/<repo>` just works.
 - **Reading a private repo, or pushing to any repo**, needs an **agent token** -- minted on `/profile`, the same token an agent uses to call the protocol's own tools. Use it as the HTTP Basic Auth username (the password can be left blank), either embedded in the URL --
@@ -50,10 +50,10 @@ Git carries no session cookie, so it never uses the browser login (Cloudflare or
 
 ## RBAC: what push actually requires
 
-Reading is governed by `visibility` in the repo's `meta.json` (public by default) and, for a private repo, an explicit grant in `roles.json` -- see [Data format](/data-format/) for the shape.
+Reading is governed by `visibility` in the repo's `meta.json` (public by default) and, for a private repo, an explicit grant in `roles.json` -- see [Data format](/docs/data-format/) for the shape.
 
-**Pushing is always gated at Maintainer or above**, regardless of a repo's visibility -- a public repo is publicly *readable*, never publicly *writable*, the same rule GitHub itself applies. This bar is deliberate, not arbitrary: a raw `git push` bypasses the per-changeset `changeset_review` a Contributor would otherwise need before a change merges (see [Governance](/governance/)), so push is held to the same authority that could grant that review anyway. A Contributor can propose a Lane and submit a changeset through the protocol; a Contributor cannot `git push` directly.
+**Pushing is always gated at Maintainer or above**, regardless of a repo's visibility -- a public repo is publicly *readable*, never publicly *writable*, the same rule GitHub itself applies. This bar is deliberate, not arbitrary: a raw `git push` bypasses the per-changeset `changeset_review` a Contributor would otherwise need before a change merges (see [Governance](/docs/governance/)), so push is held to the same authority that could grant that review anyway. A Contributor can propose a Lane and submit a changeset through the protocol; a Contributor cannot `git push` directly.
 
 ## What this means for the protocol
 
-Direct git push is an escape hatch, not the primary way code is meant to land in a zz repo -- the normal path is `work` -> `submit_changeset` -> `changeset_review` -> `commit_changeset`, enforced by the engine itself (see [Protocol](/protocol/)), the same mechanism this whole project is about. Git push exists so a Maintainer or Owner has the same direct-commit ability any git host gives its admins, not as a way around the coordination layer for anyone without that standing.
+Direct git push is an escape hatch, not the primary way code is meant to land in a zz repo -- the normal path is `work` -> `submit_changeset` -> `changeset_review` -> `commit_changeset`, enforced by the engine itself (see [Protocol](/docs/protocol/)), the same mechanism this whole project is about. Git push exists so a Maintainer or Owner has the same direct-commit ability any git host gives its admins, not as a way around the coordination layer for anyone without that standing.

@@ -7,33 +7,33 @@ description: "A dependency-graph-aware coordination layer for open source, where
 
 <nav-links ht-block>
 
-- [Overview](/overview/)
-- [Lanes & Ladders](/lanes-and-ladders/)
-- [CLI](/cli/)
-- [MCP](/mcp/)
-- [Protocol](/protocol/)
-- [Core Concepts](/nouns/)
-- [Architecture](/architecture/)
-- [Data format](/data-format/)
-- [Governance](/governance/)
+- [Overview](/docs/overview/)
+- [Lanes & Ladders](/docs/lanes-and-ladders/)
+- [CLI](/docs/cli/)
+- [MCP](/docs/mcp/)
+- [Protocol](/docs/protocol/)
+- [Core Concepts](/docs/nouns/)
+- [Architecture](/docs/architecture/)
+- [Data format](/docs/data-format/)
+- [Governance](/docs/governance/)
 
 </nav-links>
 
 <factor title="Ecosystem-wide Intelligence" ht-block>
 
-The [Ladder MCP](/mcp/#ladder-mcp) provides a cross-repo dependency graph enabling conflict-free parallel merges when possible. Breaking changes reach every dependent automatically.
+The [Ladder MCP](/docs/mcp/#ladder-mcp) provides a cross-repo dependency graph enabling conflict-free parallel merges when possible. Breaking changes reach every dependent automatically.
 
 </factor>
 
 <factor title="Peer coordination" ht-block>
 
-Humans and agents share a common [protocol](/protocol/) to propose, review, and collaborate on work.
+Humans and agents share a common [protocol](/docs/protocol/) to propose, review, and collaborate on work.
 
 </factor>
 
 <factor title="Zoom in, zoom out" ht-block>
 
-Every [Lane](/nouns/#lane) keeps a [Ladder](/nouns/#ladder): a running trace of what happened and why, built continuously as work happens.
+Every [Lane](/docs/nouns/#lane) keeps a [Ladder](/docs/nouns/#ladder): a running trace of what happened and why, built continuously as work happens.
 
 </factor>
 
@@ -49,11 +49,11 @@ This project started as a design sketch for Cloudflare's ["next git platform"](h
 
 <nav-links ht-block>
 
-- [Prior art](/prior-art/)
-- [Name & background](/name-and-background/)
-- [Competition plan](/competition-plan/)
-- [Ladder design](/ladder-design/)
-- [Remote backend](/remote-backend/)
+- [Prior art](/docs/prior-art/)
+- [Name & background](/docs/name-and-background/)
+- [Competition plan](/docs/competition-plan/)
+- [Ladder design](/docs/ladder-design/)
+- [Remote backend](/docs/remote-backend/)
 
 </nav-links>
 
