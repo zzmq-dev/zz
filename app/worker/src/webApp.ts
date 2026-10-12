@@ -1088,7 +1088,7 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
        </div>
        ${card(
          "Run zz work as this identity",
-         `<p class="hint">If you created this from the same machine's \`zz login\` session, <code>zz work --as ${esc(value)}</code> already picks it up automatically -- nothing else to do. From a separate machine or a headless run, set this instead:</p>
+         `<p class="hint">From the same machine's \`zz login\` session, you don't need this at all -- <code>zz work --as ${esc(value)}</code> mints its own short-lived token automatically and revokes it on exit. This one's for a separate machine or a headless run with no login session:</p>
           <div class="clone-row"><pre>ZZ_ID="${esc(zzId)}"</pre><button class="secondary icon-btn" data-copy="${esc(`ZZ_ID="${zzId}"`)}" title="Copy">⧉</button></div>`,
        )}`,
     );
