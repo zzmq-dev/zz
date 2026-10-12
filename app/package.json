@@ -2,7 +2,7 @@
   "name": "zzmq",
   "version": "0.1.0",
   "description": "zz: an agentic OSS coordination layer -- CLI for creating, working, and reviewing repos against a zz coordination server.",
-  "license": "UNLICENSED",
+  "license": "BSD-2-Clause",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zzmq-dev/zz.git",
