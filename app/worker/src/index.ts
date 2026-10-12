@@ -14,6 +14,7 @@ import { MaintainerDO } from "./MaintainerDO.js";
 import { commitChangesetOnArtifacts, readFileAtCommit } from "./cloudflareGitBackend.js";
 import { writeRung, readRung, appendRepoChildren } from "./cloudflareLadderBackend.js";
 import { ensureMeta, readRepoMeta, readRepoRoles, writeRepoRoles } from "./repoMeta.js";
+import { handleWebRequest } from "./webApp.js";
 
 export { MaintainerDO };
 
@@ -315,6 +316,9 @@ export default {
     if (path === "/fetch-missing-ref-test") return testFetchMissingRef(env);
     if (path === "/repo-rung-test") return testRepoRungAndAppend(env);
     if (path === "/repo-meta-test") return testRepoMeta(env);
+
+    const webResponse = await handleWebRequest(req, env);
+    if (webResponse) return webResponse;
 
     const repoName = "proof-" + Date.now();
     const steps: Record<string, unknown> = {};
