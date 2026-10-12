@@ -43,3 +43,5 @@ nav:
       url: /ladder-design/
     - title: "Remote backend"
       url: /remote-backend/
+    - title: "Git compatibility"
+      url: /git-compatibility/
