@@ -428,23 +428,79 @@ async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRo
   return { repoRow, meta, roles };
 }
 
+// Git has no session cookie -- it authenticates over Basic Auth on
+// the smart-HTTP request itself. The credential is an agent token
+// (the same ones minted on /profile; there's no separate "account
+// token" concept -- a human who wants to push directly just creates
+// an agent for themselves, e.g. "my-laptop", and uses its token,
+// exactly like /profile's existing mint flow already supports).
+// Accepted in either Basic Auth slot (username or password) since
+// convention varies by git client/credential helper/URL form --
+// GitHub's own convention is the token as username with a blank
+// password, so that's checked first, but either works here.
+function parseBasicAuth(request: Request): { username: string; password: string } | null {
+  const header = request.headers.get("authorization");
+  if (!header?.startsWith("Basic ")) return null;
+  try {
+    const decoded = atob(header.slice(6));
+    const idx = decoded.indexOf(":");
+    if (idx === -1) return null;
+    return { username: decoded.slice(0, idx), password: decoded.slice(idx + 1) };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<string | null> {
+  const basic = parseBasicAuth(request);
+  if (!basic) return null;
+  const candidate = basic.username || basic.password;
+  if (!candidate) return null;
+  const token = await findActiveAgentToken(env.DB, hashAgentToken(candidate));
+  if (!token) return null;
+  await touchAgentToken(env.DB, token.id);
+  return `agent:${token.agent_id}`;
+}
+
 // Public repos (the default, and everything created so far): open to
 // anyone, same as today. Private repos: this was never actually
 // enforced before -- handleRepoPage/handleBlob/handleArchive rendered
 // content to anyone who knew the URL regardless of meta.json's
 // policy.visibility. Fixed here: a private repo needs an explicit
-// grant (any role, including "reader") for the signed-in principal or
-// one of their agents. Git CLI requests (the proxy below) carry no
-// session cookie at all, so this always denies them for a private
-// repo -- cloning a private repo isn't wired up yet, only browsing it
-// while logged in; a real fast-follow, not silently pretended to work.
+// grant (any role, including "reader") for the signed-in principal,
+// one of their agents, or (for git CLI requests, which carry no
+// session cookie) the agent resolved from a Basic Auth token.
 async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnType<typeof readRepoMeta>>, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
   if (meta?.policy.visibility !== "private") return true;
+  const principals: string[] = [];
   const account = await getCurrentAccount(request, env);
-  if (!account) return false;
-  const myAgents = await listAgentsForAccount(env.DB, account.id);
-  const principals = [`account:${account.id}`, ...myAgents.map((a) => `agent:${a.id}`)];
+  if (account) {
+    principals.push(`account:${account.id}`);
+    const myAgents = await listAgentsForAccount(env.DB, account.id);
+    principals.push(...myAgents.map((a) => `agent:${a.id}`));
+  }
+  const gitPrincipal = await resolveGitAuthPrincipal(request, env);
+  if (gitPrincipal) principals.push(gitPrincipal);
+  if (principals.length === 0) return false;
   return principals.some((p) => (roles?.grants ?? []).some((g) => g.principal === p));
+}
+
+// Push always requires real, resolved authentication -- never
+// anonymous, even on a public repo (same as GitHub: public means
+// publicly readable, not publicly writable). Gated at Maintainer or
+// above, same bar as granting a changeset_review -- matching
+// governance.md's own model (Contributor "needs a Maintainer's grant
+// for each changeset"; a raw push bypasses that per-changeset review
+// entirely, so it's deliberately held to the same authority that
+// could grant the review anyway, not opened to every Contributor).
+async function canPushRepo(request: Request, env: WebEnv, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
+  const principal = await resolveGitAuthPrincipal(request, env);
+  if (!principal) return false;
+  return repoAtLeast(repoRoleFor(roles, principal), "maintainer");
+}
+
+function needGitAuthResponse(): Response {
+  return new Response("authentication required\n", { status: 401, headers: { "www-authenticate": 'Basic realm="zz"' } });
 }
 
 async function handleRepoPage(account: Account | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
@@ -473,6 +529,7 @@ async function handleRepoPage(account: Account | null, slug: string, request: Re
      <p><a href="${origin}/${esc(slug)}/archive.zip">Download repo as .zip</a></p>
      <h2>Clone</h2>
      <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
+     <p class="muted">To push: mint an agent token on <a href="/profile">your profile</a> (needs at least Maintainer on this repo), then use it as the username -- <code>git clone https://&lt;token&gt;@${esc(origin.replace("https://", ""))}/${esc(slug)}</code> -- or let git prompt you and paste it in as the password.</p>
      <h2>Files</h2>
      <ul>${fileListHtml || "<li class=\"muted\">Empty repo.</li>"}</ul>
      ${readme ? `<h2>README</h2><pre>${esc(readme)}</pre>` : ""}`,
@@ -505,61 +562,93 @@ async function handleArchive(slug: string, request: Request, env: WebEnv): Promi
   return new Response(zipped, { headers: { "content-type": "application/zip", "content-disposition": `attachment; filename="${ctx.repoRow.slug.replace("/", "-")}.zip"` } });
 }
 
-// --- Git smart-HTTP proxy, so `git clone <origin>/<slug>` works with
-// no credential ever visible to the client at all. Cloudflare
-// Artifacts' remote is already a real git-smart-HTTP server; this
-// just forwards info/refs and git-upload-pack to it with a
-// short-lived, server-side-only read token injected as Basic Auth via
-// base64 (never URL-embedded, so none of the clone-URL encoding
-// problem applies here). Read-only: git-receive-pack (push) isn't
-// proxied -- pushing still goes through commit_changeset.
+// --- Git smart-HTTP proxy, so the full range of git operations --
+// clone, fetch, AND push -- work against `<origin>/<slug>` with no
+// credential ever visible in a URL. Cloudflare Artifacts' remote is
+// already a real git-smart-HTTP server; this forwards info/refs,
+// git-upload-pack (fetch/clone), and git-receive-pack (push) to it,
+// injecting a short-lived, server-side-only token as Basic Auth via
+// base64 (never URL-embedded, so the earlier clone-URL encoding bug
+// doesn't apply here). To push: mint an agent token on /profile, hold
+// at least Maintainer on the repo, and use the token as the username
+// in `git clone https://<token>@<origin>/<slug>` (or let git prompt
+// for username/password and enter it there -- see canPushRepo/
+// resolveGitAuthPrincipal above for the exact credential rules).
+
+type GitService = "git-upload-pack" | "git-receive-pack";
 
 function stripHopByHopHeaders(headers: Headers): Headers {
   const copy = new Headers(headers);
   // fetch() already transparently decodes a gzipped upstream body, but
   // leaves the original content-encoding/content-length headers in
   // place -- forwarding them verbatim would tell the git client the
-  // body is still gzipped when it isn't, corrupting the clone.
+  // body is still gzipped when it isn't, corrupting the clone/push.
   copy.delete("content-encoding");
   copy.delete("content-length");
   copy.delete("transfer-encoding");
   return copy;
 }
 
+/** True if the request is authorized for `service`; false AND the caller should 401 (no credentials offered yet, invite the client to send some); throws a Response to return a 404 (credentials offered but insufficient -- don't distinguish "wrong creds" from "doesn't exist"). */
+async function checkGitServiceAccess(service: GitService, request: Request, env: WebEnv, ctx: { meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> }): Promise<"ok" | "need-auth" | "denied"> {
+  if (service === "git-receive-pack") {
+    if (await canPushRepo(request, env, ctx.roles)) return "ok";
+    return request.headers.get("authorization") ? "denied" : "need-auth";
+  }
+  if (await canReadRepo(request, env, ctx.meta, ctx.roles)) return "ok";
+  const isPrivate = ctx.meta?.policy.visibility === "private";
+  return isPrivate && !request.headers.get("authorization") ? "need-auth" : "denied";
+}
+
 async function handleGitInfoRefs(slug: string, request: Request, env: WebEnv): Promise<Response> {
   const service = new URL(request.url).searchParams.get("service");
-  if (service !== "git-upload-pack") return new Response("only clone/fetch is proxied here (no push)", { status: 400 });
+  if (service !== "git-upload-pack" && service !== "git-receive-pack") return new Response("unsupported service", { status: 400 });
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+
+  const access = await checkGitServiceAccess(service, request, env, ctx);
+  if (access === "need-auth") return needGitAuthResponse();
+  if (access === "denied") return new Response("not found", { status: 404 });
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
-  const token = await repo.createToken("read", 120);
+  const token = await repo.createToken(service === "git-receive-pack" ? "write" : "read", 120);
   const info = await repo.info();
   const tokenPlaintext = typeof token === "string" ? token : token.plaintext;
-  const upstream = await fetch(`${info.remote}/info/refs?service=git-upload-pack`, {
+  const upstream = await fetch(`${info.remote}/info/refs?service=${service}`, {
     headers: { authorization: `Basic ${btoa(`x-token-auth:${tokenPlaintext}`)}` },
   });
   return new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
 }
 
-async function handleGitUploadPack(slug: string, request: Request, env: WebEnv): Promise<Response> {
+async function handleGitPack(service: GitService, slug: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+
+  const access = await checkGitServiceAccess(service, request, env, ctx);
+  if (access === "need-auth") return needGitAuthResponse();
+  if (access === "denied") return new Response("not found", { status: 404 });
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
-  const token = await repo.createToken("read", 120);
+  const token = await repo.createToken(service === "git-receive-pack" ? "write" : "read", 120);
   const info = await repo.info();
   const tokenPlaintext = typeof token === "string" ? token : token.plaintext;
   const headers: Record<string, string> = {
     authorization: `Basic ${btoa(`x-token-auth:${tokenPlaintext}`)}`,
-    "content-type": request.headers.get("content-type") ?? "application/x-git-upload-pack-request",
+    "content-type": request.headers.get("content-type") ?? `application/x-${service}-request`,
   };
   const gitProtocol = request.headers.get("git-protocol");
   if (gitProtocol) headers["git-protocol"] = gitProtocol;
-  const upstream = await fetch(`${info.remote}/git-upload-pack`, { method: "POST", headers, body: request.body });
-  return new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
+  const upstream = await fetch(`${info.remote}/${service}`, { method: "POST", headers, body: request.body });
+  const response = new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
+
+  if (service === "git-receive-pack" && upstream.ok) {
+    // A push just changed `main` out from under D1's cached
+    // `updated_at` (and possibly the repo's description/activity
+    // ordering on /explore) -- bump it so the index doesn't go stale.
+    // Best-effort: a failure here shouldn't fail the push itself.
+    await env.DB.prepare("UPDATE repos SET updated_at = ? WHERE id = ?").bind(new Date().toISOString(), ctx.repoRow.id).run().catch(() => {});
+  }
+  return response;
 }
 
 // --- Dispatch ---
@@ -605,7 +694,11 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/git-upload-pack$/);
-    if (m) return handleGitUploadPack(`${m[1]}/${m[2]}`, request, env);
+    if (m) return handleGitPack("git-upload-pack", `${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/git-receive-pack$/);
+    if (m) return handleGitPack("git-receive-pack", `${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)$/);
