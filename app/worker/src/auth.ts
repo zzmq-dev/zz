@@ -16,7 +16,6 @@
 // the cloudflare provider's own comment for why that endpoint isn't
 // used here).
 import { createHash, randomBytes } from "node:crypto";
-import type { Account } from "./accountsDb.js";
 
 export interface OAuthEnv {
   CF_OAUTH_CLIENT_ID?: string;
@@ -194,8 +193,4 @@ export function readBearerToken(request: Request): string | null {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return null;
   return header.slice("Bearer ".length);
-}
-
-export function principalFor(entity: { kind: "account"; account: Account } | { kind: "agent"; agentId: string }): string {
-  return entity.kind === "account" ? `account:${entity.account.id}` : `agent:${entity.agentId}`;
 }

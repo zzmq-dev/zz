@@ -24,14 +24,14 @@ export interface RepoPolicy {
 export interface RepoMeta {
   description: string;
   policy: RepoPolicy;
-  owner: { type: "account" | "agent"; id: string };
+  owner_id: string; // bare agent id -- every principal is an Agent, human or synthetic, no type tag (see governance.md)
   created_at: string;
 }
 
 export type RbacRole = "owner" | "maintainer" | "contributor" | "reader";
 
 export interface RoleGrant {
-  principal: string; // "account:<id>" | "agent:<id>"
+  principal: string; // bare agent id
   role: RbacRole;
   granted_by: string;
   at: string;
@@ -121,18 +121,18 @@ export async function readRepoRoles(remote: string, token: { plaintext: string }
 }
 
 /** Creates the zz-meta branch with default meta.json/roles.json if it doesn't exist yet -- lazy bootstrap, called on repo creation or first web view of a pre-existing repo. No-op if meta.json already exists. */
-export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; owner: { type: "account" | "agent"; id: string } }): Promise<void> {
+export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; ownerId: string }): Promise<void> {
   const existing = await readRepoMeta(remote, token);
   if (existing) return;
 
   const meta: RepoMeta = {
     description: defaults.description,
     policy: { require_changeset_review: false, visibility: "public" },
-    owner: defaults.owner,
+    owner_id: defaults.ownerId,
     created_at: new Date().toISOString(),
   };
   const roles: RepoRoles = {
-    grants: [{ principal: `${defaults.owner.type}:${defaults.owner.id}`, role: "owner", granted_by: "system", at: meta.created_at }],
+    grants: [{ principal: defaults.ownerId, role: "owner", granted_by: "system", at: meta.created_at }],
   };
   await writeMetaFiles(remote, token, [
     { path: "meta.json", content: JSON.stringify(meta, null, 2) },
@@ -155,7 +155,7 @@ export async function writeRepoMeta(remote: string, token: { plaintext: string }
 // finer-grained use; a repo-level grant here has no scope to check.
 const RBAC_RANK: Record<RbacRole, number> = { reader: 0, contributor: 1, maintainer: 2, owner: 3 };
 
-/** Highest repo-level Role a principal ("account:<id>" or "agent:<id>") holds, or "reader" (view-only) if ungranted -- the default for a public repo. */
+/** Highest repo-level Role an Agent (by id) holds, or "reader" (view-only) if ungranted -- the default for a public repo. */
 export function repoRoleFor(roles: RepoRoles | null, principal: string): RbacRole {
   if (!roles) return "reader";
   let best: RbacRole = "reader";

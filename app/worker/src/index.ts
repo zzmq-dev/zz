@@ -256,11 +256,11 @@ async function testRepoMeta(env: Env): Promise<Response> {
     using repo = await env.ARTIFACTS.get(repoName);
     const token = await repo.createToken("write", 3600);
 
-    await ensureMeta(remote, token, { description: "a test repo", owner: { type: "account", id: "acct-test" } });
+    await ensureMeta(remote, token, { description: "a test repo", ownerId: "acct-test" });
     steps.ensuredOnce = await readRepoMeta(remote, token);
 
     // Idempotency: calling ensureMeta again must not clobber the existing meta.json.
-    await ensureMeta(remote, token, { description: "SHOULD NOT APPEAR", owner: { type: "account", id: "acct-other" } });
+    await ensureMeta(remote, token, { description: "SHOULD NOT APPEAR", ownerId: "acct-other" });
     steps.ensuredTwice = await readRepoMeta(remote, token);
 
     const rolesBefore = await readRepoRoles(remote, token);
@@ -344,7 +344,7 @@ export default {
       // token for that one permission -- or it may not, API tokens and
       // OAuth access tokens aren't always interchangeable. Checking
       // directly rather than assuming either way.)
-      const row = await env.DB.prepare("SELECT access_token_enc FROM account_identities WHERE provider = 'cloudflare' ORDER BY created_at DESC LIMIT 1").first<{ access_token_enc: string }>();
+      const row = await env.DB.prepare("SELECT access_token_enc FROM agent_identities WHERE provider = 'cloudflare' ORDER BY created_at DESC LIMIT 1").first<{ access_token_enc: string }>();
       if (!row) return new Response("no cloudflare identity stored yet", { status: 404 });
       const accessToken = await decryptSecret(env, row.access_token_enc);
       const [userinfoResp, apiUserResp] = await Promise.all([

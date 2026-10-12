@@ -1,8 +1,18 @@
 // The public web app: explore/search, a GitHub-like repo page, login
-// (Cloudflare + Google OAuth), and a profile page for managing agents,
-// tokens, repo RBAC, and posting an ASK to any repo's root Lane.
-// Added as routes on the existing zz-maintainer Worker rather than a
-// second service, given the time budget (see the approved plan).
+// (Cloudflare + Google OAuth), a profile page, and a JSON /api/* layer
+// so the CLI (`zz login`, `zz agent`, `zz repo`) has full parity with
+// the web UI -- everything doable in the browser is doable from a
+// terminal or by an agent with no browser at all. Added as routes on
+// the existing zz-maintainer Worker rather than a second service,
+// given the time budget (see the approved plan).
+//
+// One identity model throughout: there is no "account" distinct from
+// "agent" -- per governance.md, every participant, human or
+// synthetic, is an Agent, and none is inherently superior to another.
+// `created_by` is provenance for the profile page's display only,
+// never an authority relationship; all real authority is a repo-level
+// Role grant (roles.json on that repo's zz-meta branch), the same
+// mechanism for every Agent.
 //
 // Every self-referential link uses `new URL(request.url).origin`,
 // never a hardcoded domain -- the domain (zzbin.dev today) can change
@@ -15,30 +25,32 @@ import type { MaintainerDO } from "./MaintainerDO.js";
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
 // why a module-level import of these resolves wrong).
 import {
-  type Account,
   type Agent,
   type RepoRow,
-  createAccount,
   createAgent,
+  createAgentIdentity,
   createAgentToken,
-  createIdentity,
+  createCliLoginSession,
   createSession,
   deleteSession,
   findActiveAgentToken,
-  findIdentity,
-  getAccount,
+  findAgentIdentity,
+  fulfillCliLoginSession,
   getAgent,
+  getAgentToken,
   getRepoBySlug,
   getValidSession,
-  listAgentsForAccount,
+  listAgentsCreatedBy,
   listRecentRepos,
   listReposOwnedBy,
   listTokensForAgent,
-  refreshAccountProfile,
+  pollAndConsumeCliLoginSession,
+  refreshAgentProfile,
   revokeAgentToken,
   searchRepos,
   shortId,
   touchAgentToken,
+  touchRepoUpdatedAt,
   updateIdentityTokens,
   upsertRepo,
 } from "./accountsDb.js";
@@ -50,6 +62,7 @@ import {
   exchangeCodeForIdentity,
   generateAgentToken,
   hashAgentToken,
+  readBearerToken,
   readSessionCookie,
   sessionCookieHeader,
   type OAuthEnv,
@@ -69,9 +82,9 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function layout(title: string, account: Account | null, body: string): Response {
-  const nav = account
-    ? `<a href="/explore">Explore</a> · <a href="/profile">${esc(account.display_name)}</a> · <a href="/logout">Log out</a>`
+function layout(title: string, agent: Agent | null, body: string): Response {
+  const nav = agent
+    ? `<a href="/explore">Explore</a> · <a href="/profile">${esc(agent.display_name)}</a> · <a href="/logout">Log out</a>`
     : `<a href="/explore">Explore</a> · <a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} - zz</title>
 <style>
@@ -94,85 +107,234 @@ ${body}
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
-function redirect(url: string, extraHeaders: Record<string, string> = {}): Response {
-  return new Response(null, { status: 302, headers: { location: url, ...extraHeaders } });
+// Takes `cookies` as a real array, appended individually -- joining
+// multiple Set-Cookie values with ", " into one header line is NOT
+// valid (unlike most headers, Set-Cookie can't be comma-combined;
+// cookie values can contain commas themselves). Confirmed live: doing
+// that once silently dropped everything but the first cookie, which
+// broke zz_cli_nonce riding alongside zz_oauth_state.
+function redirect(url: string, opts: { cookies?: string[] } = {}): Response {
+  const headers = new Headers({ location: url });
+  for (const cookie of opts.cookies ?? []) headers.append("set-cookie", cookie);
+  return new Response(null, { status: 302, headers });
+}
+
+function json(data: unknown, status = 200): Response {
+  return Response.json(data, { status });
+}
+
+class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 // --- Auth ---
 
-async function getCurrentAccount(request: Request, env: WebEnv): Promise<Account | null> {
+/** Session cookie (browser) OR bearer token (CLI, bots, git -- see resolveGitAuthPrincipal) -- same identity model either way, just two ways to present a credential for the same kind of entity. */
+async function resolveRequestAgent(request: Request, env: WebEnv): Promise<Agent | null> {
   const sessionId = readSessionCookie(request);
-  if (!sessionId) return null;
-  const session = await getValidSession(env.DB, sessionId);
-  if (!session) return null;
-  return getAccount(env.DB, session.account_id);
+  if (sessionId) {
+    const session = await getValidSession(env.DB, sessionId);
+    if (session) return getAgent(env.DB, session.agent_id);
+  }
+  const bearer = readBearerToken(request);
+  if (bearer) {
+    const token = await findActiveAgentToken(env.DB, hashAgentToken(bearer));
+    if (token) {
+      await touchAgentToken(env.DB, token.id);
+      return getAgent(env.DB, token.agent_id);
+    }
+  }
+  return null;
 }
 
-async function handleLogin(): Promise<Response> {
+async function handleLogin(request: Request): Promise<Response> {
+  const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
+  const qs = cliNonce ? `?cli_nonce=${encodeURIComponent(cliNonce)}` : "";
   return layout(
     "Log in",
     null,
-    `<p><a href="/auth/start/cloudflare"><button>Log in with Cloudflare</button></a></p>
-     <p><a href="/auth/start/google"><button>Log in with Google</button></a></p>`,
+    `${cliNonce ? '<p class="muted">Logging in for the zz CLI -- this browser tab can be closed once it redirects back.</p>' : ""}
+     <p><a href="/auth/start/cloudflare${qs}"><button>Log in with Cloudflare</button></a></p>
+     <p><a href="/auth/start/google${qs}"><button>Log in with Google</button></a></p>`,
   );
 }
 
 async function handleAuthStart(provider: Provider, request: Request, env: WebEnv): Promise<Response> {
+  const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
   const state = shortId("state");
   const url = buildAuthorizeUrl(provider, env, state);
-  return redirect(url, { "set-cookie": `zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600` });
+  const cookies = [`zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`];
+  if (cliNonce) cookies.push(`zz_cli_nonce=${cliNonce}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
+  return redirect(url, { cookies });
 }
 
 async function handleAuthCallback(provider: Provider, request: Request, env: WebEnv): Promise<Response> {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const cookieState = request.headers.get("cookie")?.match(/zz_oauth_state=([^;]+)/)?.[1];
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieState = cookieHeader.match(/zz_oauth_state=([^;]+)/)?.[1];
+  const cliNonce = cookieHeader.match(/zz_cli_nonce=([^;]+)/)?.[1];
   if (!code || !state || state !== cookieState) {
     return new Response("OAuth state mismatch or missing code -- please try logging in again.", { status: 400 });
   }
 
   const identity = await exchangeCodeForIdentity(provider, env, code);
-  let existing = await findIdentity(env.DB, provider, identity.subject);
+  const existing = await findAgentIdentity(env.DB, provider, identity.subject);
   const expiresAt = identity.expiresInSeconds ? new Date(Date.now() + identity.expiresInSeconds * 1000).toISOString() : null;
   const accessTokenEnc = await encryptSecret(env, identity.accessToken);
   const refreshTokenEnc = identity.refreshToken ? await encryptSecret(env, identity.refreshToken) : null;
 
-  let account: Account;
+  let agent: Agent;
   if (existing) {
-    account = (await getAccount(env.DB, existing.account_id))!;
+    agent = (await getAgent(env.DB, existing.agent_id))!;
     await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
-    await refreshAccountProfile(env.DB, account.id, identity.displayName, identity.email);
+    await refreshAgentProfile(env.DB, agent.id, identity.displayName, identity.email);
   } else {
-    account = await createAccount(env.DB, identity.displayName, identity.email);
-    await createIdentity(env.DB, account.id, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
+    agent = await createAgent(env.DB, identity.displayName, identity.email, null);
+    await createAgentIdentity(env.DB, agent.id, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
   }
 
-  const session = await createSession(env.DB, account.id, 60 * 60 * 24 * 30);
-  return redirect("/profile", { "set-cookie": sessionCookieHeader(session.id, 60 * 60 * 24 * 30) });
+  const session = await createSession(env.DB, agent.id, 60 * 60 * 24 * 30);
+
+  // CLI bridge: a `zz login` browser tab carries a nonce through as a
+  // cookie; fulfill it with a fresh bearer token so the waiting CLI
+  // process can pick it up on its next poll. The web session above is
+  // independent -- this tab also ends up logged in normally if left open.
+  if (cliNonce) {
+    const plaintext = generateAgentToken();
+    await createAgentToken(env.DB, agent.id, hashAgentToken(plaintext));
+    const fulfilled = await fulfillCliLoginSession(env.DB, cliNonce, agent.id, plaintext);
+    if (fulfilled) {
+      return layout(
+        "Logged in",
+        agent,
+        `<p>Logged in as <b>${esc(agent.display_name)}</b>. You can close this tab and return to your terminal.</p>`,
+      );
+    }
+  }
+
+  return redirect("/profile", { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
 }
 
 async function handleLogout(request: Request, env: WebEnv): Promise<Response> {
   const sessionId = readSessionCookie(request);
   if (sessionId) await deleteSession(env.DB, sessionId);
-  return redirect("/explore", { "set-cookie": clearSessionCookieHeader() });
+  return redirect("/explore", { cookies: [clearSessionCookieHeader()] });
 }
 
-// --- Profile ---
+// --- CLI login bridge (JSON) ---
+
+async function handleApiLoginStart(request: Request, env: WebEnv): Promise<Response> {
+  const nonce = shortId("nonce");
+  await createCliLoginSession(env.DB, nonce);
+  const origin = new URL(request.url).origin;
+  return json({ nonce, url: `${origin}/login?cli_nonce=${nonce}` });
+}
+
+async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Response> {
+  const nonce = new URL(request.url).searchParams.get("nonce");
+  if (!nonce) return json({ error: "missing ?nonce=" }, 400);
+  const result = await pollAndConsumeCliLoginSession(env.DB, nonce);
+  if (!result) return json({ status: "pending" });
+  const agent = await getAgent(env.DB, result.agentId);
+  return json({ status: "ready", token: result.token, agent: { id: result.agentId, display_name: agent?.display_name ?? result.agentId } });
+}
+
+// --- Shared core logic (used by both HTML forms and the JSON API) ---
+
+async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): Promise<Agent> {
+  if (!displayName.trim()) throw new ApiError(400, "display_name is required");
+  return createAgent(env.DB, displayName.trim(), null, creator.id);
+}
+
+/** Minting a token for an agent is allowed for the agent itself (re-authenticating with an existing token/session) or whoever created it -- a practical bootstrap allowance (a brand-new agent has no credential yet, so someone has to issue its first one), not a general override. */
+async function requireTokenMintAuthority(env: WebEnv, actor: Agent, targetAgentId: string): Promise<Agent> {
+  const target = await getAgent(env.DB, targetAgentId);
+  if (!target) throw new ApiError(404, "no such agent");
+  if (target.id !== actor.id && target.created_by !== actor.id) throw new ApiError(403, "you can only mint tokens for yourself or an agent you created");
+  return target;
+}
+
+async function doMintToken(env: WebEnv, actor: Agent, targetAgentId: string): Promise<{ agent: Agent; token: string }> {
+  const target = await requireTokenMintAuthority(env, actor, targetAgentId);
+  const plaintext = generateAgentToken();
+  await createAgentToken(env.DB, target.id, hashAgentToken(plaintext));
+  return { agent: target, token: plaintext };
+}
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
+}
+
+/** The repo URL's owner segment: an Agent's real email if it has one (literal, not slugified -- per direct instruction), else a slugified display name. Driven by data (does this Agent have an email?), not by a type tag -- there is no "human vs bot" branch here, any Agent could plausibly have an email if it ever links an OAuth identity. */
+function ownerUrlSegment(agent: Agent): string {
+  return agent.email ?? slugify(agent.display_name);
+}
+
+async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null): Promise<RepoRow> {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "repo name must match [A-Za-z0-9._-]+");
+  const artifactsName = shortId("repo");
+  const slug = `${ownerUrlSegment(owner)}/${slugify(name)}`;
+
+  const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
+  using repo = await env.ARTIFACTS.get(artifactsName);
+  const token = await repo.createToken("write", 3600);
+  // commit_changeset (and anything else that anchors to a commit) needs
+  // a parent to diff against -- a brand new repo has none, so seed one.
+  await createInitialCommit(created.remote, token, [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }], { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
+  await ensureMeta(created.remote, token, { description: description ?? "", ownerId: owner.id });
+  return upsertRepo(env.DB, { slug, artifactsName, description, ownerId: owner.id });
+}
+
+async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("write", 3600);
+  const info = await artifactsRepo.info();
+
+  const roles = await readRepoRoles(info.remote, token);
+  // No more "or any agent I created" indirection -- peers means the
+  // ACTOR's own standing is what's checked, full stop, same as every
+  // other RBAC check in this codebase (canReadRepo/canPushRepo).
+  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+
+  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
+  nextGrants.push({ principal, role, granted_by: actor.id, at: new Date().toISOString() });
+  await writeRepoRoles(info.remote, token, { grants: nextGrants });
+}
+
+async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
+  await stub.configure(repo.artifacts_name);
+  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.id, payload: { description } });
+}
+
+// --- Profile (HTML) ---
 
 async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
 
-  const agents = await listAgentsForAccount(env.DB, account.id);
-  const ownRepos = await listReposOwnedBy(env.DB, "account", account.id);
-  const agentRepoLists = await Promise.all(agents.map((a) => listReposOwnedBy(env.DB, "agent", a.id)));
-  const agentTokenLists = await Promise.all(agents.map((a) => listTokensForAgent(env.DB, a.id)));
+  const createdAgents = await listAgentsCreatedBy(env.DB, me.id);
+  const allSelf = [me, ...createdAgents];
+  const repoLists = await Promise.all(allSelf.map((a) => listReposOwnedBy(env.DB, a.id)));
+  const tokenLists = await Promise.all(createdAgents.map((a) => listTokensForAgent(env.DB, a.id)));
+  const myTokens = (await listTokensForAgent(env.DB, me.id)).filter((t) => !t.revoked_at);
 
-  const agentsHtml = agents
+  const agentsHtml = createdAgents
     .map((a, i) => {
-      const tokens = agentTokenLists[i].filter((t) => !t.revoked_at);
-      const repos = agentRepoLists[i];
+      const tokens = tokenLists[i].filter((t) => !t.revoked_at);
+      const repos = repoLists[i + 1];
       return `<li><b>${esc(a.display_name)}</b> <span class="muted">(${a.id})</span>
         <form method="post" action="/profile/agents/${a.id}/tokens" style="display:inline">
           <button type="submit">New token</button>
@@ -183,36 +345,39 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
     })
     .join("");
 
-  const allRepos = [...ownRepos, ...agentRepoLists.flat()];
+  const allRepos = repoLists.flat();
 
   return layout(
     "Profile",
-    account,
-    `<p>${esc(account.display_name)} ${account.email ? `&lt;${esc(account.email)}&gt;` : ""}</p>
+    me,
+    `<p>${esc(me.display_name)} ${me.email ? `&lt;${esc(me.email)}&gt;` : ""}</p>
+     <p class="muted">Your own tokens: ${myTokens.length ? myTokens.map((t) => `${t.id}${t.last_used_at ? ` (last used ${esc(t.last_used_at)})` : " (never used)"}`).join(", ") : "none"}
+       <form method="post" action="/profile/agents/${me.id}/tokens" style="display:inline"><button type="submit">New token for yourself</button></form>
+       -- used by \`zz login\`/the CLI, or any script acting directly as you.</p>
 
-     <h2>Agents</h2>
+     <h2>Agents you created</h2>
      <form method="post" action="/profile/agents">
        <input name="display_name" placeholder="agent name" required>
        <button type="submit">Create agent</button>
      </form>
-     <ul>${agentsHtml || "<li class=\"muted\">No agents yet.</li>"}</ul>
+     <ul>${agentsHtml || "<li class=\"muted\">None yet.</li>"}</ul>
 
      <h2>Your repos</h2>
-     <ul>${ownRepos.map((r) => `<li><a href="/${esc(r.slug)}">${esc(r.slug)}</a></li>`).join("") || "<li class=\"muted\">None owned directly (check your agents above).</li>"}</ul>
+     <ul>${repoLists[0].map((r) => `<li><a href="/${esc(r.slug)}">${esc(r.slug)}</a></li>`).join("") || "<li class=\"muted\">None owned directly (check your agents above).</li>"}</ul>
 
      <h2>Grant/revoke a repo Role</h2>
      <form method="post" action="/profile/rbac">
        <select name="repo_slug">${allRepos.map((r) => `<option value="${esc(r.slug)}">${esc(r.slug)}</option>`).join("")}</select>
-       <input name="principal" placeholder="account:acct-xxxx or agent:agent-xxxx" required>
+       <input name="principal" placeholder="agent id (yours, or any other Agent's)" required>
        <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
        <button type="submit">Grant</button>
      </form>
 
      <h2>Create a repo</h2>
      <form method="post" action="/profile/repos">
-       <select name="owner">
-         <option value="account:${esc(account.id)}">${esc(account.display_name)} (you)</option>
-         ${agents.map((a) => `<option value="agent:${esc(a.id)}">${esc(a.display_name)}</option>`).join("")}
+       <select name="owner_id">
+         <option value="${esc(me.id)}">${esc(me.display_name)} (you)</option>
+         ${createdAgents.map((a) => `<option value="${esc(a.id)}">${esc(a.display_name)}</option>`).join("")}
        </select>
        <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
        <input name="description" placeholder="description">
@@ -221,148 +386,190 @@ async function handleProfile(request: Request, env: WebEnv): Promise<Response> {
 
      <h2>Post an ASK to a repo's root Lane</h2>
      <form method="post" action="/profile/ask">
-       <input name="repo_slug" placeholder="account/repo-name" required>
+       <input name="repo_slug" placeholder="owner/repo-name" required>
        <textarea name="description" placeholder="what do you need done?" required></textarea>
        <button type="submit">Post ASK</button>
      </form>`,
   );
 }
 
-async function handleCreateAgent(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
+async function handleCreateAgentForm(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
   const form = await request.formData();
-  const displayName = String(form.get("display_name") ?? "").trim();
-  if (displayName) await createAgent(env.DB, account.id, displayName);
-  return redirect("/profile");
-}
-
-async function handleMintToken(agentId: string, request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
-  const agent = await getAgent(env.DB, agentId);
-  if (!agent || agent.account_id !== account.id) return new Response("not your agent", { status: 403 });
-
-  const plaintext = generateAgentToken();
-  await createAgentToken(env.DB, agentId, hashAgentToken(plaintext));
-  return layout(
-    "New agent token",
-    account,
-    `<p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
-     <pre>${esc(plaintext)}</pre>
-     <p><a href="/profile">Back to profile</a></p>`,
-  );
-}
-
-async function handleRevokeToken(tokenId: string, request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
-  // Ownership check happens implicitly: revoking someone else's token id
-  // just does nothing useful to them since it's keyed by id, but a
-  // stricter check (join through agent -> account) is a reasonable
-  // fast-follow if this profile page gets real traffic.
-  await revokeAgentToken(env.DB, tokenId);
-  return redirect("/profile");
-}
-
-async function handleRbacGrant(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
-  const form = await request.formData();
-  const repoSlug = String(form.get("repo_slug") ?? "");
-  const principal = String(form.get("principal") ?? "");
-  const role = String(form.get("role") ?? "reader") as RbacRole;
-
-  const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) return new Response("no such repo", { status: 404 });
-
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("write", 3600);
-  const info = await artifactsRepo.info();
-
-  const roles = await readRepoRoles(info.remote, token);
-  const actingPrincipal = `account:${account.id}`;
-  // The human account's own grants, PLUS override authority on any
-  // agent it owns (so a human can always correct their own agent's
-  // RBAC decisions, per the explicit design: agents are "ultimately
-  // attached to a human account who can override them").
-  const myAgents = await listAgentsForAccount(env.DB, account.id);
-  const actingAsOneOf = [actingPrincipal, ...myAgents.map((a) => `agent:${a.id}`)];
-  const myRole = actingAsOneOf.reduce<RbacRole>((best, p) => {
-    const r = repoRoleFor(roles, p);
-    return repoAtLeast(r, best) ? r : best;
-  }, "reader");
-  if (!repoAtLeast(myRole, "owner")) return new Response(`${actingPrincipal} is not an Owner of ${repoSlug}`, { status: 403 });
-
-  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
-  nextGrants.push({ principal, role, granted_by: actingPrincipal, at: new Date().toISOString() });
-  await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  return redirect("/profile");
-}
-
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "user";
-}
-
-async function handleCreateRepo(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
-  const form = await request.formData();
-  const [ownerType, ownerId] = String(form.get("owner") ?? "").split(":") as ["account" | "agent", string];
-  const name = String(form.get("name") ?? "").trim();
-  const description = String(form.get("description") ?? "").trim() || null;
-  if (!name || (ownerType !== "account" && ownerType !== "agent")) return new Response("bad request", { status: 400 });
-  if (ownerType === "agent") {
-    const agent = await getAgent(env.DB, ownerId);
-    if (!agent || agent.account_id !== account.id) return new Response("not your agent", { status: 403 });
-  } else if (ownerId !== account.id) {
-    return new Response("not your account", { status: 403 });
+  try {
+    await doCreateAgent(env, me, String(form.get("display_name") ?? ""));
+  } catch (err) {
+    if (!(err instanceof ApiError)) throw err;
   }
+  return redirect("/profile");
+}
 
-  // Owner-segment: an account's real email address, literal (not
-  // slugified) -- per direct instruction, not a mangled slug of it.
-  // Falls back to a slugified display name only if the account somehow
-  // has no email (shouldn't happen post-login now that both providers
-  // return one, but accounts created before that fix might still lack
-  // one). Agents have no email at all, so an agent-owned repo still
-  // uses its slugified display name -- it's the agent's own visible
-  // identity on the platform, not a stand-in for its owning human's.
-  const ownerDisplayName = ownerType === "account" ? account.display_name : (await getAgent(env.DB, ownerId))!.display_name;
-  const ownerSegment = ownerType === "account" ? account.email ?? slugify(account.display_name) : slugify(ownerDisplayName);
-  const artifactsName = shortId("repo");
-  const slug = `${ownerSegment}/${slugify(name)}`;
+async function handleMintTokenForm(agentId: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  try {
+    const { agent, token } = await doMintToken(env, me, agentId);
+    return layout(
+      "New agent token",
+      me,
+      `<p>Token for <b>${esc(agent.display_name)}</b> -- copy it now, it won't be shown again:</p>
+       <pre>${esc(token)}</pre>
+       <p><a href="/profile">Back to profile</a></p>`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+}
 
-  const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
-  using repo = await env.ARTIFACTS.get(artifactsName);
-  const token = await repo.createToken("write", 3600);
-  // commit_changeset (and anything else that anchors to a commit) needs
-  // a parent to diff against -- a brand new repo has none, so seed one.
-  await createInitialCommit(created.remote, token, [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }], { name: ownerDisplayName, email: `${ownerId}@zz.local` });
-  await ensureMeta(created.remote, token, { description: description ?? "", owner: { type: ownerType, id: ownerId } });
-  await upsertRepo(env.DB, { slug, artifactsName, description, ownerType, ownerId });
+async function handleRevokeTokenForm(tokenId: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const token = await getAgentToken(env.DB, tokenId);
+  if (token) {
+    const owner = await getAgent(env.DB, token.agent_id);
+    if (owner && (owner.id === me.id || owner.created_by === me.id)) await revokeAgentToken(env.DB, tokenId);
+  }
+  return redirect("/profile");
+}
 
-  return redirect(`/${slug}`);
+async function handleRbacGrantForm(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  try {
+    await doRbacGrant(env, me, String(form.get("repo_slug") ?? ""), String(form.get("principal") ?? ""), String(form.get("role") ?? "reader") as RbacRole);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect("/profile");
+}
+
+async function handleCreateRepoForm(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  const ownerId = String(form.get("owner_id") ?? "");
+  const owner = ownerId === me.id ? me : await getAgent(env.DB, ownerId);
+  if (!owner || (owner.id !== me.id && owner.created_by !== me.id)) return new Response("not yours to create repos as", { status: 403 });
+  try {
+    const repo = await doCreateRepo(env, owner, String(form.get("name") ?? "").trim(), String(form.get("description") ?? "").trim() || null);
+    return redirect(`/${repo.slug}`);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
 }
 
 async function handleAskForm(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
-  if (!account) return redirect("/login");
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
   const form = await request.formData();
-  const repoSlug = String(form.get("repo_slug") ?? "");
-  const description = String(form.get("description") ?? "");
-  const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) return new Response("no such repo", { status: 404 });
-
-  const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
-  await stub.configure(repo.artifacts_name);
-  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: `account:${account.id}`, payload: { description } });
+  try {
+    await doPostAsk(env, me, String(form.get("repo_slug") ?? ""), String(form.get("description") ?? ""));
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
   return redirect("/profile");
+}
+
+// --- JSON API (same core logic, bearer-token or session authenticated, for the CLI and any script) ---
+
+async function requireApiAgent(request: Request, env: WebEnv): Promise<Agent> {
+  const agent = await resolveRequestAgent(request, env);
+  if (!agent) throw new ApiError(401, "authentication required (Authorization: Bearer <token>)");
+  return agent;
+}
+
+async function withApi(fn: () => Promise<Response>): Promise<Response> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ApiError) return json({ error: err.message }, err.status);
+    throw err;
+  }
+}
+
+async function handleApiMe(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => json(await requireApiAgent(request, env)));
+}
+
+async function handleApiCreateAgent(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { display_name?: string };
+    const agent = await doCreateAgent(env, me, body.display_name ?? "");
+    return json(agent, 201);
+  });
+}
+
+async function handleApiListAgents(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    return json({ you: me, created: await listAgentsCreatedBy(env.DB, me.id) });
+  });
+}
+
+async function handleApiMintToken(agentId: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const { agent, token } = await doMintToken(env, me, agentId);
+    return json({ agent, token }, 201);
+  });
+}
+
+async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { name?: string; description?: string; owner_id?: string };
+    const owner = !body.owner_id || body.owner_id === me.id ? me : await getAgent(env.DB, body.owner_id);
+    if (!owner || (owner.id !== me.id && owner.created_by !== me.id)) throw new ApiError(403, "not yours to create repos as");
+    const repo = await doCreateRepo(env, owner, (body.name ?? "").trim(), body.description?.trim() || null);
+    return json(repo, 201);
+  });
+}
+
+async function handleApiListRepos(request: Request, env: WebEnv): Promise<Response> {
+  const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+  const repos = q ? await searchRepos(env.DB, q, 50) : await listRecentRepos(env.DB, 50);
+  return json({ repos });
+}
+
+async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const ctx = await getRepoAccessContext(slug, env);
+    if (!ctx) throw new ApiError(404, "no such repo");
+    return json({ repo: ctx.repoRow, meta: ctx.meta, roles: ctx.roles });
+  });
+}
+
+async function handleApiRbacGrant(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { principal?: string; role?: RbacRole };
+    if (!body.principal || !body.role) throw new ApiError(400, "principal and role are required");
+    await doRbacGrant(env, me, slug, body.principal, body.role);
+    return json({ ok: true });
+  });
+}
+
+async function handleApiPostAsk(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { description?: string };
+    if (!body.description) throw new ApiError(400, "description is required");
+    await doPostAsk(env, me, slug, body.description);
+    return json({ ok: true });
+  });
 }
 
 // --- Explore (list + search, one route) ---
 
 async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
-  const account = await getCurrentAccount(request, env);
+  const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   const repos = q ? await searchRepos(env.DB, q, 50) : await listRecentRepos(env.DB, 50);
 
@@ -372,7 +579,7 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
 
   return layout(
     "Explore",
-    account,
+    me,
     `<form method="get" action="/explore">
        <input name="q" value="${esc(q)}" placeholder="search repos, owners, descriptions" style="width:60%">
        <button type="submit">Search</button>
@@ -415,29 +622,25 @@ async function walkTreeForZip(repo: ArtifactsRepo, treeHash: string, prefix: str
 // `env.ARTIFACTS.get()` happens in each handler afterward for the
 // actual content read -- an extra token mint per request, traded for
 // every read path (page, blob, archive, the git proxy below) sharing
-// one access-control check instead of four separate ones that could
-// drift out of sync.
+// one access-control check instead of several that could drift out
+// of sync.
 async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> } | null> {
   const repoRow = await getRepoBySlug(env.DB, slug);
   if (!repoRow) return null;
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const token = await repo.createToken("read", 300);
   const info = await repo.info();
-  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: { type: repoRow.owner_type, id: repoRow.owner_id } });
+  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", ownerId: repoRow.owner_id });
   const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
   return { repoRow, meta, roles };
 }
 
 // Git has no session cookie -- it authenticates over Basic Auth on
-// the smart-HTTP request itself. The credential is an agent token
-// (the same ones minted on /profile; there's no separate "account
-// token" concept -- a human who wants to push directly just creates
-// an agent for themselves, e.g. "my-laptop", and uses its token,
-// exactly like /profile's existing mint flow already supports).
-// Accepted in either Basic Auth slot (username or password) since
-// convention varies by git client/credential helper/URL form --
-// GitHub's own convention is the token as username with a blank
-// password, so that's checked first, but either works here.
+// the smart-HTTP request itself, resolving to the same bearer-token
+// path the JSON API uses (requireApiAgent/resolveRequestAgent), just
+// read from the Basic Auth slot instead of an Authorization: Bearer
+// header. GitHub's own convention is the token as username with a
+// blank password, so that's checked first, but either slot works here.
 function parseBasicAuth(request: Request): { username: string; password: string } | null {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Basic ")) return null;
@@ -459,28 +662,20 @@ async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<s
   const token = await findActiveAgentToken(env.DB, hashAgentToken(candidate));
   if (!token) return null;
   await touchAgentToken(env.DB, token.id);
-  return `agent:${token.agent_id}`;
+  return token.agent_id;
 }
 
 // Public repos (the default, and everything created so far): open to
-// anyone, same as today. Private repos: this was never actually
-// enforced before -- handleRepoPage/handleBlob/handleArchive rendered
-// content to anyone who knew the URL regardless of meta.json's
-// policy.visibility. Fixed here: a private repo needs an explicit
-// grant (any role, including "reader") for the signed-in principal,
-// one of their agents, or (for git CLI requests, which carry no
-// session cookie) the agent resolved from a Basic Auth token.
+// anyone, same as today. Private repos: a repo needs an explicit
+// grant (any role, including "reader") for the signed-in Agent (web
+// session) or the Agent resolved from a Basic Auth / bearer token
+// (git CLI, API clients) -- one check, one principal, no "or any of
+// my agents" indirection now that every Agent's standing is its own.
 async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnType<typeof readRepoMeta>>, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
   if (meta?.policy.visibility !== "private") return true;
-  const principals: string[] = [];
-  const account = await getCurrentAccount(request, env);
-  if (account) {
-    principals.push(`account:${account.id}`);
-    const myAgents = await listAgentsForAccount(env.DB, account.id);
-    principals.push(...myAgents.map((a) => `agent:${a.id}`));
-  }
+  const me = await resolveRequestAgent(request, env);
   const gitPrincipal = await resolveGitAuthPrincipal(request, env);
-  if (gitPrincipal) principals.push(gitPrincipal);
+  const principals = [me?.id, gitPrincipal].filter((p): p is string => !!p);
   if (principals.length === 0) return false;
   return principals.some((p) => (roles?.grants ?? []).some((g) => g.principal === p));
 }
@@ -503,7 +698,7 @@ function needGitAuthResponse(): Response {
   return new Response("authentication required\n", { status: 401, headers: { "www-authenticate": 'Basic realm="zz"' } });
 }
 
-async function handleRepoPage(account: Account | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
+async function handleRepoPage(me: Agent | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
@@ -523,7 +718,7 @@ async function handleRepoPage(account: Account | null, slug: string, request: Re
 
   return layout(
     slug,
-    account,
+    me,
     `<p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
      <p>${rolesHtml}</p>
      <p><a href="${origin}/${esc(slug)}/archive.zip">Download repo as .zip</a></p>
@@ -564,32 +759,19 @@ async function handleArchive(slug: string, request: Request, env: WebEnv): Promi
 
 // --- Git smart-HTTP proxy, so the full range of git operations --
 // clone, fetch, AND push -- work against `<origin>/<slug>` with no
-// credential ever visible in a URL. Cloudflare Artifacts' remote is
-// already a real git-smart-HTTP server; this forwards info/refs,
-// git-upload-pack (fetch/clone), and git-receive-pack (push) to it,
-// injecting a short-lived, server-side-only token as Basic Auth via
-// base64 (never URL-embedded, so the earlier clone-URL encoding bug
-// doesn't apply here). To push: mint an agent token on /profile, hold
-// at least Maintainer on the repo, and use the token as the username
-// in `git clone https://<token>@<origin>/<slug>` (or let git prompt
-// for username/password and enter it there -- see canPushRepo/
-// resolveGitAuthPrincipal above for the exact credential rules).
+// credential ever visible in a URL. See git-compatibility docs page
+// for the full supported/unsupported surface.
 
 type GitService = "git-upload-pack" | "git-receive-pack";
 
 function stripHopByHopHeaders(headers: Headers): Headers {
   const copy = new Headers(headers);
-  // fetch() already transparently decodes a gzipped upstream body, but
-  // leaves the original content-encoding/content-length headers in
-  // place -- forwarding them verbatim would tell the git client the
-  // body is still gzipped when it isn't, corrupting the clone/push.
   copy.delete("content-encoding");
   copy.delete("content-length");
   copy.delete("transfer-encoding");
   return copy;
 }
 
-/** True if the request is authorized for `service`; false AND the caller should 401 (no credentials offered yet, invite the client to send some); throws a Response to return a 404 (credentials offered but insufficient -- don't distinguish "wrong creds" from "doesn't exist"). */
 async function checkGitServiceAccess(service: GitService, request: Request, env: WebEnv, ctx: { meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> }): Promise<"ok" | "need-auth" | "denied"> {
   if (service === "git-receive-pack") {
     if (await canPushRepo(request, env, ctx.roles)) return "ok";
@@ -642,11 +824,7 @@ async function handleGitPack(service: GitService, slug: string, request: Request
   const response = new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
 
   if (service === "git-receive-pack" && upstream.ok) {
-    // A push just changed `main` out from under D1's cached
-    // `updated_at` (and possibly the repo's description/activity
-    // ordering on /explore) -- bump it so the index doesn't go stale.
-    // Best-effort: a failure here shouldn't fail the push itself.
-    await env.DB.prepare("UPDATE repos SET updated_at = ? WHERE id = ?").bind(new Date().toISOString(), ctx.repoRow.id).run().catch(() => {});
+    await touchRepoUpdatedAt(env.DB, ctx.repoRow.id).catch(() => {});
   }
   return response;
 }
@@ -659,26 +837,51 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   const path = url.pathname;
   const origin = url.origin;
 
-  if (path === "/login") return handleLogin();
+  if (path === "/login") return handleLogin(request);
   if (path === "/logout") return handleLogout(request, env);
   if (path === "/auth/start/cloudflare") return handleAuthStart("cloudflare", request, env);
   if (path === "/auth/start/google") return handleAuthStart("google", request, env);
   if (path === "/auth/callback/cloudflare") return handleAuthCallback("cloudflare", request, env);
   if (path === "/auth/callback/google") return handleAuthCallback("google", request, env);
   if (path === "/profile" && request.method === "GET") return handleProfile(request, env);
-  if (path === "/profile/agents" && request.method === "POST") return handleCreateAgent(request, env);
-  if (path === "/profile/rbac" && request.method === "POST") return handleRbacGrant(request, env);
+  if (path === "/profile/agents" && request.method === "POST") return handleCreateAgentForm(request, env);
+  if (path === "/profile/rbac" && request.method === "POST") return handleRbacGrantForm(request, env);
   if (path === "/profile/ask" && request.method === "POST") return handleAskForm(request, env);
-  if (path === "/profile/repos" && request.method === "POST") return handleCreateRepo(request, env);
+  if (path === "/profile/repos" && request.method === "POST") return handleCreateRepoForm(request, env);
   {
     const m = path.match(/^\/profile\/agents\/([^/]+)\/tokens$/);
-    if (m && request.method === "POST") return handleMintToken(m[1], request, env);
+    if (m && request.method === "POST") return handleMintTokenForm(m[1], request, env);
   }
   {
     const m = path.match(/^\/profile\/tokens\/([^/]+)\/revoke$/);
-    if (m && request.method === "POST") return handleRevokeToken(m[1], request, env);
+    if (m && request.method === "POST") return handleRevokeTokenForm(m[1], request, env);
   }
   if (path === "/explore") return handleExplore(request, env);
+
+  // --- JSON API (CLI/agent parity with everything above) ---
+  if (path === "/api/login/start" && request.method === "POST") return handleApiLoginStart(request, env);
+  if (path === "/api/login/poll" && request.method === "GET") return handleApiLoginPoll(request, env);
+  if (path === "/api/me" && request.method === "GET") return handleApiMe(request, env);
+  if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
+  if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
+  if (path === "/api/repos" && request.method === "POST") return handleApiCreateRepo(request, env);
+  if (path === "/api/repos" && request.method === "GET") return handleApiListRepos(request, env);
+  {
+    const m = path.match(/^\/api\/agents\/([^/]+)\/tokens$/);
+    if (m && request.method === "POST") return handleApiMintToken(m[1], request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/roles$/);
+    if (m && request.method === "POST") return handleApiRbacGrant(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/ask$/);
+    if (m && request.method === "POST") return handleApiPostAsk(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);
+    if (m && request.method === "GET") return handleApiGetRepo(`${m[1]}/${m[2]}`, env);
+  }
 
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/archive\.zip$/);
@@ -703,8 +906,8 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)$/);
     if (m) {
-      const account = await getCurrentAccount(request, env);
-      return handleRepoPage(account, `${m[1]}/${m[2]}`, request, env, origin);
+      const me = await resolveRequestAgent(request, env);
+      return handleRepoPage(me, `${m[1]}/${m[2]}`, request, env, origin);
     }
   }
 
