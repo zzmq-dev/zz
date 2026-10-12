@@ -5,20 +5,19 @@ description: "What Maintainer agents store, and the .zz/ directory."
 ---
 # Data format
 
-Two layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), and a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`). Nothing in the DO layer should be the only copy of anything that matters. See [Architecture](/architecture/) on portability.
+Three layers: live coordination state inside Durable Objects (fast, authoritative, checkpointed), a portable, committed record inside the repo's `.zz/` directory (slow-changing, durable, travels with `git clone`), and repo-level metadata (description, policy, Role grants) on a dedicated `zz-meta` orphan branch. Nothing in the DO layer should be the only copy of anything that matters. See [Architecture](/architecture/) on portability.
 
-## Why `.zz/` and not git notes
+## Why `.zz/` and not git notes -- and why repo metadata is neither
 
-Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files, visible on any host and diffable like anything else.
+Git notes (`refs/notes/*`) require a separate command to even see, and most git hosts don't render them in a file browser. A `.zz/` directory is just tracked files, visible on any host and diffable like anything else -- that's still right for Lane/changeset/decision history, which belongs alongside the code it's about. (The Ladder itself is the one exception: it's carried in git notes after all, since its anchors are commits and blobs rather than paths -- see [the remote backend](/remote-backend/) for why.)
+
+Repo-level metadata (description, policy, Role grants) is different: it isn't *about* any particular commit, it changes on its own schedule, and every write to it would otherwise be a commit cluttering the repo's real history. It lives on its own orphan branch, `zz-meta`, instead -- same portability guarantee (travels with `git clone -b zz-meta`), without the noise.
 
 ## `.zz/` directory layout
 
 ```
 .zz/
-  policy.yaml                 # Owner-set governance policy for this repo
   tripwires.yaml              # declared Tripwires and their runbook actions
-  roles/
-    <agent-id>.json           # Role grants for this agent on this repo
   lanes/
     <lane-id>.json            # Lane metadata, coordinators, full ASK/ANSWER/VETO history
   changesets/
@@ -33,10 +32,45 @@ Git notes (`refs/notes/*`) require a separate command to even see, and most git 
 
 Cascades have no file of their own. A cascade is an ordinary Lane that happens to have many `related_lanes` entries, and it lives in `lanes/` like any other.
 
-## `policy.yaml`
+## `zz-meta` branch layout
+
+```
+meta.json     # description, policy, owner
+roles.json    # repo-level Role grants
+lanes.db      # checkpointed export of the DO's live Lane/Ask/Answer state
+```
+
+## `meta.json`
+
+```json
+{
+  "description": "a widget-manufacturing library",
+  "policy": { "require_changeset_review": true, "visibility": "public" },
+  "owner": { "type": "account", "id": "acct-1a2b3c4d" },
+  "created_at": "2026-10-12T00:00:00Z"
+}
+```
+
+`policy` is the minimal cut of the fuller `policy.yaml` sketched in an earlier draft of this doc (budget/cascade/escalation policy, below) -- `require_changeset_review` and `visibility` are what's enforced today; the rest is roadmap.
+
+## `roles.json`
+
+Repo-level Role grants -- the coarse layer (see [Governance](/governance/)): a repo's Owner/Maintainer status applies across every Lane in it, unlike a Lane's own `coordinators`/`maintainers`, which is the fine-grained, per-Lane Claim.
+
+```json
+{
+  "grants": [
+    { "principal": "account:acct-1a2b3c4d", "role": "owner", "granted_by": "system", "at": "2026-10-05T00:00:00Z" },
+    { "principal": "agent:agent-9f8e7d6c", "role": "maintainer", "granted_by": "account:acct-1a2b3c4d", "at": "2026-10-06T00:00:00Z" }
+  ]
+}
+```
+
+A principal is `"account:<id>"` or `"agent:<id>"` -- see [accounts and the web app](#accounts-and-the-web-app) below for what those are. `engine/roles.ts`'s path-scoped `RoleGrant`/`AgentRoles` (a grant scoped to a directory prefix, e.g. `packages/auth`) is a separate, finer-grained mechanism for a later pass; nothing here is scoped below the whole repo yet.
+
+## Policy roadmap (not yet enforced)
 
 ```yaml
-owner: <agent id>
 governance: single_maintainer   # single_maintainer | committee
 budget:
   monthly_cap_usd: 500
@@ -57,16 +91,11 @@ cascade:                          # not yet designed, see Lanes and Ladders
   budget_cap_usd: 2000            # separate from budget.monthly_cap_usd
 ```
 
-## `roles/<agent-id>.json`
+## Accounts and the web app
 
-```json
-{
-  "agent": "claude-4a2f",
-  "grants": [
-    { "role": "maintainer", "scope": "packages/auth", "granted_by": "owner-agent", "at": "2026-10-05T00:00:00Z" }
-  ]
-}
-```
+Accounts, agents, agent tokens, login sessions, and the cross-repo repo index that back [zzbin.dev](https://zzbin.dev)'s `/explore` and repo pages live in Cloudflare D1, not in any repo's own history -- they have no git home (a human's login identity isn't a property of any one repo). The `repos` table there is explicitly an index/cache of each repo's own `zz-meta` branch, never the only copy of a load-bearing fact, same rule as everywhere else in this doc.
+
+An **account** is a human, created on first login (Cloudflare or Google OAuth -- not GitHub). An **agent** belongs to exactly one account and authenticates with its own bearer token; it can hold repo Roles, create repos, and act as a Lane coordinator just like a human can, but its owning account can always see and override its grants.
 
 ## `trust/<agent-id>.json`
 
