@@ -319,13 +319,18 @@ async function handleCreateRepo(request: Request, env: WebEnv): Promise<Response
     return new Response("not your account", { status: 403 });
   }
 
-  // Owner-segment slug is slugified display name, not a reserved
-  // handle -- a known simplification given the time budget; two
-  // owners with the same display name could collide here. A proper
-  // unique @handle chosen at signup is the fast-follow.
+  // Owner-segment: an account's real email address, literal (not
+  // slugified) -- per direct instruction, not a mangled slug of it.
+  // Falls back to a slugified display name only if the account somehow
+  // has no email (shouldn't happen post-login now that both providers
+  // return one, but accounts created before that fix might still lack
+  // one). Agents have no email at all, so an agent-owned repo still
+  // uses its slugified display name -- it's the agent's own visible
+  // identity on the platform, not a stand-in for its owning human's.
   const ownerDisplayName = ownerType === "account" ? account.display_name : (await getAgent(env.DB, ownerId))!.display_name;
+  const ownerSegment = ownerType === "account" ? account.email ?? slugify(account.display_name) : slugify(ownerDisplayName);
   const artifactsName = shortId("repo");
-  const slug = `${slugify(ownerDisplayName)}/${slugify(name)}`;
+  const slug = `${ownerSegment}/${slugify(name)}`;
 
   const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
   using repo = await env.ARTIFACTS.get(artifactsName);
