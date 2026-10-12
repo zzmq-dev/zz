@@ -3,10 +3,30 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Explicit, not left to wrangler's default -- adding "routes" below
+  // silently disables the *.workers.dev subdomain unless this is set
+  // (confirmed live: it broke zz-maintainer.thoward37.workers.dev the
+  // moment the route was added). Keeping both live matters right now
+  // specifically because zzmq.dev's DNS isn't provisioned yet, so the
+  // new route serves nothing reachable until that's done.
+  "workers_dev": true,
+  // Left on the old *.workers.dev URI deliberately -- the Cloudflare and
+  // Google OAuth app registrations (their own dashboards, not anything
+  // in this repo) still only allow that redirect URI. Flip these to
+  // https://zzmq.dev/auth/callback/{cloudflare,google} together with
+  // updating both dashboards' allowed redirect URIs, not before --
+  // changing only this side breaks login immediately.
   "vars": {
     "CF_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/cloudflare",
     "GOOGLE_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/google"
   },
+  "routes": [
+    // Exact root ("/") belongs to the docs worker's landing page (see
+    // site/wrangler.jsonc) -- everything else on zzmq.dev, including
+    // /explore, is this worker. Cloudflare resolves the more specific
+    // route (the docs worker's exact "/" match) over this wildcard.
+    { "pattern": "zzmq.dev/*", "zone_name": "zzmq.dev" }
+  ],
   "artifacts": [
     {
       "binding": "ARTIFACTS",
