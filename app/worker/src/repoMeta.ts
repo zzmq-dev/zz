@@ -24,7 +24,7 @@ export interface RepoPolicy {
 export interface RepoMeta {
   description: string;
   policy: RepoPolicy;
-  owner_id: string; // bare agent id -- every principal is an Agent, human or synthetic, no type tag (see governance.md)
+  owner: string; // an Agent's username -- every principal is an Agent, human or synthetic, no type tag (see governance.md); no separate internal id (see migration 0006)
   created_at: string;
 }
 
@@ -121,18 +121,18 @@ export async function readRepoRoles(remote: string, token: { plaintext: string }
 }
 
 /** Creates the zz-meta branch with default meta.json/roles.json if it doesn't exist yet -- lazy bootstrap, called on repo creation or first web view of a pre-existing repo. No-op if meta.json already exists. */
-export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; ownerId: string }): Promise<void> {
+export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; owner: string }): Promise<void> {
   const existing = await readRepoMeta(remote, token);
   if (existing) return;
 
   const meta: RepoMeta = {
     description: defaults.description,
     policy: { require_changeset_review: false, visibility: "public" },
-    owner_id: defaults.ownerId,
+    owner: defaults.owner,
     created_at: new Date().toISOString(),
   };
   const roles: RepoRoles = {
-    grants: [{ principal: defaults.ownerId, role: "owner", granted_by: "system", at: meta.created_at }],
+    grants: [{ principal: defaults.owner, role: "owner", granted_by: "system", at: meta.created_at }],
   };
   await writeMetaFiles(remote, token, [
     { path: "meta.json", content: JSON.stringify(meta, null, 2) },

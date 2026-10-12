@@ -9,11 +9,10 @@ import { apiFetch } from "../lib/api.js";
 import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
 
 interface RepoRow {
-  id: string;
   slug: string;
   artifacts_name: string;
   description: string | null;
-  owner_id: string;
+  owner_username: string;
   created_at: string;
   updated_at: string;
 }
@@ -28,8 +27,8 @@ interface LaneHistoryEntry {
   at: string;
 }
 
-export async function repoCreate(name: string, opts: { description?: string; ownerId?: string }): Promise<void> {
-  const repo = await apiFetch<RepoRow>("POST", "/api/repos", { name, description: opts.description, owner_id: opts.ownerId });
+export async function repoCreate(name: string, opts: { description?: string; ownerUsername?: string }): Promise<void> {
+  const repo = await apiFetch<RepoRow>("POST", "/api/repos", { name, description: opts.description, owner_username: opts.ownerUsername });
   console.log(`Created ${repo.slug}`);
 }
 

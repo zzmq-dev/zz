@@ -1,23 +1,25 @@
-// D1 query helpers for the unified agents/tokens/sessions/repos model
-// -- see migrations/0002_unify_agents.sql for the schema and why
-// there's one identity table, not an accounts-owns-agents hierarchy.
-// repoMeta.ts's header covers why `repos` is an index/cache, not the
-// source of truth (agents/tokens/sessions have no git home, so D1
-// *is* authoritative for those).
+// D1 query helpers for the agents/tokens/sessions/repos model --
+// migration 0002's header covers why there's one identity table, not
+// an accounts-owns-agents hierarchy; migration 0006's header covers
+// why `username`/`slug` are the real primary keys (agents.id and
+// repos.id used to exist as separate opaque ids -- removed once both
+// were confirmed unique and immutable, which is all a surrogate key
+// would have bought you). repoMeta.ts's header covers why `repos` is
+// an index/cache, not the source of truth (agents/tokens/sessions
+// have no git home, so D1 *is* authoritative for those).
 import { randomBytes } from "node:crypto";
 
 export interface Agent {
-  id: string;
+  username: string; // the real primary key -- a human's real email; a managed agent's "<creator's username>[<name>]" (see computeUsername)
   display_name: string;
   email: string | null;
-  username: string; // the public URL segment (/<username>) -- frozen at creation, never recomputed from display_name (see createAgent)
   created_at: string;
-  created_by: string | null; // provenance only, never an authority relationship
+  created_by: string | null; // provenance only (another agent's username), never an authority relationship
 }
 
 export interface AgentIdentity {
   id: string;
-  agent_id: string;
+  agent_username: string;
   provider: "cloudflare" | "google";
   provider_subject: string;
   access_token_enc: string | null;
@@ -28,7 +30,7 @@ export interface AgentIdentity {
 
 export interface AgentToken {
   id: string;
-  agent_id: string;
+  agent_username: string;
   token_hash: string;
   created_at: string;
   revoked_at: string | null;
@@ -37,17 +39,16 @@ export interface AgentToken {
 
 export interface Session {
   id: string;
-  agent_id: string;
+  agent_username: string;
   created_at: string;
   expires_at: string;
 }
 
 export interface RepoRow {
-  id: string;
-  slug: string;
-  artifacts_name: string;
+  slug: string; // the real primary key -- "<owner username>/<repo name>", frozen at creation
+  artifacts_name: string; // a different system's key (Cloudflare Artifacts), not redundant with slug
   description: string | null;
-  owner_id: string;
+  owner_username: string;
   visibility: "public" | "private";
   created_at: string;
   updated_at: string;
@@ -55,7 +56,7 @@ export interface RepoRow {
 
 export interface CliLoginSession {
   nonce: string;
-  agent_id: string | null;
+  agent_username: string | null;
   token: string | null;
   created_at: string;
   consumed: number;
@@ -84,8 +85,8 @@ export async function findAgentIdentity(db: D1Database, provider: string, provid
   return db.prepare("SELECT * FROM agent_identities WHERE provider = ? AND provider_subject = ?").bind(provider, providerSubject).first<AgentIdentity>();
 }
 
-export async function getAgent(db: D1Database, id: string): Promise<Agent | null> {
-  return db.prepare("SELECT * FROM agents WHERE id = ?").bind(id).first<Agent>();
+export async function getAgent(db: D1Database, username: string): Promise<Agent | null> {
+  return db.prepare("SELECT * FROM agents WHERE username = ?").bind(username).first<Agent>();
 }
 
 /** The agent a verified email already belongs to, if any -- used to link a second OAuth provider to an EXISTING agent instead of minting a disconnected duplicate (see handleAuthCallback's header comment for the real bug this closes). */
@@ -93,11 +94,7 @@ export async function getAgentByEmail(db: D1Database, email: string): Promise<Ag
   return db.prepare("SELECT * FROM agents WHERE email = ? LIMIT 1").bind(email).first<Agent>();
 }
 
-export async function getAgentByUsername(db: D1Database, username: string): Promise<Agent | null> {
-  return db.prepare("SELECT * FROM agents WHERE username = ?").bind(username).first<Agent>();
-}
-
-/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent a managed agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. This makes "who's accountable for this identity" readable directly off the id, and is why every display surface should show `username`, never the raw `id` or `display_name`, for consistency. */
+/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent that agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. */
 async function computeUsername(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<string> {
   if (email) return uniqueUsername(db, email);
   const creator = createdBy ? await getAgent(db, createdBy) : null;
@@ -107,24 +104,24 @@ async function computeUsername(db: D1Database, displayName: string, email: strin
 
 export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
   const username = await computeUsername(db, displayName, email, createdBy);
-  const agent: Agent = { id: shortId("agent"), display_name: displayName, email, username, created_at: new Date().toISOString(), created_by: createdBy };
+  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy };
   await db
-    .prepare("INSERT INTO agents (id, display_name, email, username, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?)")
-    .bind(agent.id, agent.display_name, agent.email, agent.username, agent.created_at, agent.created_by)
+    .prepare("INSERT INTO agents (username, display_name, email, created_at, created_by) VALUES (?, ?, ?, ?, ?)")
+    .bind(agent.username, agent.display_name, agent.email, agent.created_at, agent.created_by)
     .run();
   return agent;
 }
 
 /** Refreshes display_name/email on every login, not just signup -- a provider's profile data (especially Cloudflare's, fetched via a second REST call) can be absent or wrong at signup time and correct itself later. Never clears a field the provider stops returning: only overwrites with a real, non-null value. */
-export async function refreshAgentProfile(db: D1Database, agentId: string, displayName: string, email: string | null): Promise<void> {
-  if (email) await db.prepare("UPDATE agents SET display_name = ?, email = ? WHERE id = ?").bind(displayName, email, agentId).run();
-  else await db.prepare("UPDATE agents SET display_name = ? WHERE id = ?").bind(displayName, agentId).run();
+export async function refreshAgentProfile(db: D1Database, username: string, displayName: string, email: string | null): Promise<void> {
+  if (email) await db.prepare("UPDATE agents SET display_name = ?, email = ? WHERE username = ?").bind(displayName, email, username).run();
+  else await db.prepare("UPDATE agents SET display_name = ? WHERE username = ?").bind(displayName, username).run();
 }
 
-export async function createAgentIdentity(db: D1Database, agentId: string, provider: string, providerSubject: string, tokens: { accessTokenEnc: string | null; refreshTokenEnc: string | null; expiresAt: string | null }): Promise<AgentIdentity> {
+export async function createAgentIdentity(db: D1Database, agentUsername: string, provider: string, providerSubject: string, tokens: { accessTokenEnc: string | null; refreshTokenEnc: string | null; expiresAt: string | null }): Promise<AgentIdentity> {
   const identity: AgentIdentity = {
     id: shortId("ident"),
-    agent_id: agentId,
+    agent_username: agentUsername,
     provider: provider as "cloudflare" | "google",
     provider_subject: providerSubject,
     access_token_enc: tokens.accessTokenEnc,
@@ -133,8 +130,8 @@ export async function createAgentIdentity(db: D1Database, agentId: string, provi
     created_at: new Date().toISOString(),
   };
   await db
-    .prepare("INSERT INTO agent_identities (id, agent_id, provider, provider_subject, access_token_enc, refresh_token_enc, token_expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(identity.id, identity.agent_id, identity.provider, identity.provider_subject, identity.access_token_enc, identity.refresh_token_enc, identity.token_expires_at, identity.created_at)
+    .prepare("INSERT INTO agent_identities (id, agent_username, provider, provider_subject, access_token_enc, refresh_token_enc, token_expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(identity.id, identity.agent_username, identity.provider, identity.provider_subject, identity.access_token_enc, identity.refresh_token_enc, identity.token_expires_at, identity.created_at)
     .run();
   return identity;
 }
@@ -146,10 +143,10 @@ export async function updateIdentityTokens(db: D1Database, identityId: string, t
     .run();
 }
 
-export async function createSession(db: D1Database, agentId: string, ttlSeconds: number): Promise<Session> {
+export async function createSession(db: D1Database, agentUsername: string, ttlSeconds: number): Promise<Session> {
   const now = Date.now();
-  const session: Session = { id: shortId("sess"), agent_id: agentId, created_at: new Date(now).toISOString(), expires_at: new Date(now + ttlSeconds * 1000).toISOString() };
-  await db.prepare("INSERT INTO sessions (id, agent_id, created_at, expires_at) VALUES (?, ?, ?, ?)").bind(session.id, session.agent_id, session.created_at, session.expires_at).run();
+  const session: Session = { id: shortId("sess"), agent_username: agentUsername, created_at: new Date(now).toISOString(), expires_at: new Date(now + ttlSeconds * 1000).toISOString() };
+  await db.prepare("INSERT INTO sessions (id, agent_username, created_at, expires_at) VALUES (?, ?, ?, ?)").bind(session.id, session.agent_username, session.created_at, session.expires_at).run();
   return session;
 }
 
@@ -165,14 +162,14 @@ export async function deleteSession(db: D1Database, sessionId: string): Promise<
 }
 
 /** Agents this agent created -- provenance/display only (see Agent.created_by), never an access-control boundary. */
-export async function listAgentsCreatedBy(db: D1Database, creatorId: string): Promise<Agent[]> {
-  const result = await db.prepare("SELECT * FROM agents WHERE created_by = ? ORDER BY created_at DESC").bind(creatorId).all<Agent>();
+export async function listAgentsCreatedBy(db: D1Database, creatorUsername: string): Promise<Agent[]> {
+  const result = await db.prepare("SELECT * FROM agents WHERE created_by = ? ORDER BY created_at DESC").bind(creatorUsername).all<Agent>();
   return result.results;
 }
 
-export async function createAgentToken(db: D1Database, agentId: string, tokenHash: string): Promise<AgentToken> {
-  const token: AgentToken = { id: shortId("tok"), agent_id: agentId, token_hash: tokenHash, created_at: new Date().toISOString(), revoked_at: null, last_used_at: null };
-  await db.prepare("INSERT INTO agent_tokens (id, agent_id, token_hash, created_at) VALUES (?, ?, ?, ?)").bind(token.id, token.agent_id, token.token_hash, token.created_at).run();
+export async function createAgentToken(db: D1Database, agentUsername: string, tokenHash: string): Promise<AgentToken> {
+  const token: AgentToken = { id: shortId("tok"), agent_username: agentUsername, token_hash: tokenHash, created_at: new Date().toISOString(), revoked_at: null, last_used_at: null };
+  await db.prepare("INSERT INTO agent_tokens (id, agent_username, token_hash, created_at) VALUES (?, ?, ?, ?)").bind(token.id, token.agent_username, token.token_hash, token.created_at).run();
   return token;
 }
 
@@ -190,8 +187,8 @@ export async function revokeAgentToken(db: D1Database, tokenId: string): Promise
   await db.prepare("UPDATE agent_tokens SET revoked_at = ? WHERE id = ?").bind(new Date().toISOString(), tokenId).run();
 }
 
-export async function listTokensForAgent(db: D1Database, agentId: string): Promise<AgentToken[]> {
-  const result = await db.prepare("SELECT * FROM agent_tokens WHERE agent_id = ? ORDER BY created_at DESC").bind(agentId).all<AgentToken>();
+export async function listTokensForAgent(db: D1Database, agentUsername: string): Promise<AgentToken[]> {
+  const result = await db.prepare("SELECT * FROM agent_tokens WHERE agent_username = ? ORDER BY created_at DESC").bind(agentUsername).all<AgentToken>();
   return result.results;
 }
 
@@ -199,17 +196,17 @@ export async function getAgentToken(db: D1Database, tokenId: string): Promise<Ag
   return db.prepare("SELECT * FROM agent_tokens WHERE id = ?").bind(tokenId).first<AgentToken>();
 }
 
-export async function upsertRepo(db: D1Database, row: { slug: string; artifactsName: string; description: string | null; ownerId: string }): Promise<RepoRow> {
+export async function upsertRepo(db: D1Database, row: { slug: string; artifactsName: string; description: string | null; ownerUsername: string }): Promise<RepoRow> {
   const existing = await db.prepare("SELECT * FROM repos WHERE slug = ?").bind(row.slug).first<RepoRow>();
   const now = new Date().toISOString();
   if (existing) {
-    await db.prepare("UPDATE repos SET description = ?, updated_at = ? WHERE id = ?").bind(row.description, now, existing.id).run();
+    await db.prepare("UPDATE repos SET description = ?, updated_at = ? WHERE slug = ?").bind(row.description, now, existing.slug).run();
     return { ...existing, description: row.description, updated_at: now };
   }
-  const repo: RepoRow = { id: shortId("repo"), slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_id: row.ownerId, visibility: "public", created_at: now, updated_at: now };
+  const repo: RepoRow = { slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_username: row.ownerUsername, visibility: "public", created_at: now, updated_at: now };
   await db
-    .prepare("INSERT INTO repos (id, slug, artifacts_name, description, owner_id, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .bind(repo.id, repo.slug, repo.artifacts_name, repo.description, repo.owner_id, repo.visibility, repo.created_at, repo.updated_at)
+    .prepare("INSERT INTO repos (slug, artifacts_name, description, owner_username, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .bind(repo.slug, repo.artifacts_name, repo.description, repo.owner_username, repo.visibility, repo.created_at, repo.updated_at)
     .run();
   return repo;
 }
@@ -218,41 +215,41 @@ export async function getRepoBySlug(db: D1Database, slug: string): Promise<RepoR
   return db.prepare("SELECT * FROM repos WHERE slug = ?").bind(slug).first<RepoRow>();
 }
 
-export async function updateRepoVisibility(db: D1Database, repoId: string, visibility: "public" | "private"): Promise<void> {
-  await db.prepare("UPDATE repos SET visibility = ? WHERE id = ?").bind(visibility, repoId).run();
+export async function updateRepoVisibility(db: D1Database, slug: string, visibility: "public" | "private"): Promise<void> {
+  await db.prepare("UPDATE repos SET visibility = ? WHERE slug = ?").bind(visibility, slug).run();
 }
 
-export async function touchRepoUpdatedAt(db: D1Database, repoId: string): Promise<void> {
-  await db.prepare("UPDATE repos SET updated_at = ? WHERE id = ?").bind(new Date().toISOString(), repoId).run();
+export async function touchRepoUpdatedAt(db: D1Database, slug: string): Promise<void> {
+  await db.prepare("UPDATE repos SET updated_at = ? WHERE slug = ?").bind(new Date().toISOString(), slug).run();
 }
 
-// Every repo-listing query below takes `viewerId` (null for an
+// Every repo-listing query below takes `viewerUsername` (null for an
 // anonymous visitor) and excludes private repos the viewer has no
 // repo_roles grant on -- a private repo is invisible on /explore and
 // search unless you're logged in AND have access, not just hidden from
 // its own page (that gate already existed via canReadRepo; this closes
 // the SAME gate for discovery, which previously ignored visibility
 // entirely).
-const VISIBILITY_CLAUSE = "(r.visibility = 'public' OR r.id IN (SELECT repo_id FROM repo_roles WHERE principal = ?))";
+const VISIBILITY_CLAUSE = "(r.visibility = 'public' OR r.slug IN (SELECT repo_slug FROM repo_roles WHERE principal = ?))";
 
-export async function listRecentRepos(db: D1Database, limit: number, viewerId: string | null): Promise<RepoRow[]> {
+export async function listRecentRepos(db: D1Database, limit: number, viewerUsername: string | null): Promise<RepoRow[]> {
   const result = await db
     .prepare(`SELECT * FROM repos r WHERE ${VISIBILITY_CLAUSE} ORDER BY updated_at DESC LIMIT ?`)
-    .bind(viewerId ?? "", limit)
+    .bind(viewerUsername ?? "", limit)
     .all<RepoRow>();
   return result.results;
 }
 
-export async function searchRepos(db: D1Database, query: string, limit: number, viewerId: string | null): Promise<RepoRow[]> {
+export async function searchRepos(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<RepoRow[]> {
   const like = `%${query}%`;
   const result = await db
     .prepare(
       `SELECT DISTINCT r.* FROM repos r
-       LEFT JOIN agents a ON r.owner_id = a.id
+       LEFT JOIN agents a ON r.owner_username = a.username
        WHERE (r.slug LIKE ? OR r.description LIKE ? OR a.display_name LIKE ?) AND ${VISIBILITY_CLAUSE}
        ORDER BY r.updated_at DESC LIMIT ?`,
     )
-    .bind(like, like, like, viewerId ?? "", limit)
+    .bind(like, like, like, viewerUsername ?? "", limit)
     .all<RepoRow>();
   return result.results;
 }
@@ -263,45 +260,45 @@ export interface ExploreResults {
 }
 
 /** The mixed repo+agent feed behind /explore's autocomplete -- same visibility rule as searchRepos. */
-export async function searchExplore(db: D1Database, query: string, limit: number, viewerId: string | null): Promise<ExploreResults> {
-  const [repos, agents] = await Promise.all([searchRepos(db, query, limit, viewerId), searchAgents(db, query, limit)]);
+export async function searchExplore(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<ExploreResults> {
+  const [repos, agents] = await Promise.all([searchRepos(db, query, limit, viewerUsername), searchAgents(db, query, limit)]);
   return { repos, agents };
 }
 
-export async function listReposOwnedBy(db: D1Database, ownerId: string): Promise<RepoRow[]> {
-  const result = await db.prepare("SELECT * FROM repos WHERE owner_id = ? ORDER BY updated_at DESC").bind(ownerId).all<RepoRow>();
+export async function listReposOwnedBy(db: D1Database, ownerUsername: string): Promise<RepoRow[]> {
+  const result = await db.prepare("SELECT * FROM repos WHERE owner_username = ? ORDER BY updated_at DESC").bind(ownerUsername).all<RepoRow>();
   return result.results;
 }
 
-export async function deleteRepoRow(db: D1Database, repoId: string): Promise<void> {
-  await db.prepare("DELETE FROM repo_roles WHERE repo_id = ?").bind(repoId).run();
-  await db.prepare("DELETE FROM repos WHERE id = ?").bind(repoId).run();
+export async function deleteRepoRow(db: D1Database, slug: string): Promise<void> {
+  await db.prepare("DELETE FROM repo_roles WHERE repo_slug = ?").bind(slug).run();
+  await db.prepare("DELETE FROM repos WHERE slug = ?").bind(slug).run();
 }
 
-export async function updateRepoOwner(db: D1Database, repoId: string, ownerId: string): Promise<void> {
-  await db.prepare("UPDATE repos SET owner_id = ?, updated_at = ? WHERE id = ?").bind(ownerId, new Date().toISOString(), repoId).run();
+export async function updateRepoOwner(db: D1Database, slug: string, ownerUsername: string): Promise<void> {
+  await db.prepare("UPDATE repos SET owner_username = ?, updated_at = ? WHERE slug = ?").bind(ownerUsername, new Date().toISOString(), slug).run();
 }
 
-/** Agents matching a display name/email/id prefix -- autocomplete for "who should this role/token belong to", searched across every Agent known to zz, not just ones you created. */
+/** Agents matching a display name/email/username substring -- autocomplete for "who should this role/token belong to", searched across every Agent known to zz, not just ones you created. */
 export async function searchAgents(db: D1Database, query: string, limit: number): Promise<Agent[]> {
   const like = `%${query}%`;
-  const result = await db.prepare("SELECT * FROM agents WHERE display_name LIKE ? OR email LIKE ? OR username LIKE ? OR id LIKE ? ORDER BY display_name LIMIT ?").bind(like, like, like, like, limit).all<Agent>();
+  const result = await db.prepare("SELECT * FROM agents WHERE display_name LIKE ? OR email LIKE ? OR username LIKE ? ORDER BY display_name LIMIT ?").bind(like, like, like, limit).all<Agent>();
   return result.results;
 }
 
 export interface RepoRoleRow {
-  repo_id: string;
+  repo_slug: string;
   principal: string;
   role: string;
   granted_by: string;
   at: string;
 }
 
-/** Mirrors a repo's CURRENT full grant list (roles.json, the source of truth) into the D1 cache -- replace-all for that repo_id, so the cache can never drift into showing a grant that was since revoked. */
-export async function syncRepoRoleCache(db: D1Database, repoId: string, grants: { principal: string; role: string; granted_by: string; at: string }[]): Promise<void> {
-  const writes: D1PreparedStatement[] = [db.prepare("DELETE FROM repo_roles WHERE repo_id = ?").bind(repoId)];
+/** Mirrors a repo's CURRENT full grant list (roles.json, the source of truth) into the D1 cache -- replace-all for that repo, so the cache can never drift into showing a grant that was since revoked. */
+export async function syncRepoRoleCache(db: D1Database, slug: string, grants: { principal: string; role: string; granted_by: string; at: string }[]): Promise<void> {
+  const writes: D1PreparedStatement[] = [db.prepare("DELETE FROM repo_roles WHERE repo_slug = ?").bind(slug)];
   for (const g of grants) {
-    writes.push(db.prepare("INSERT INTO repo_roles (repo_id, principal, role, granted_by, at) VALUES (?, ?, ?, ?, ?)").bind(repoId, g.principal, g.role, g.granted_by, g.at));
+    writes.push(db.prepare("INSERT INTO repo_roles (repo_slug, principal, role, granted_by, at) VALUES (?, ?, ?, ?, ?)").bind(slug, g.principal, g.role, g.granted_by, g.at));
   }
   await db.batch(writes);
 }
@@ -309,7 +306,7 @@ export async function syncRepoRoleCache(db: D1Database, repoId: string, grants: 
 /** Repos (beyond ones owned outright) a principal has any repo-level Role grant on -- the profile page's "shared with you" list. Reads the D1 cache, not roles.json directly (see migration 0004's header for why a live cross-repo scan isn't affordable here). */
 export async function listRepoRolesForAgent(db: D1Database, principal: string): Promise<(RepoRow & { role: string })[]> {
   const result = await db
-    .prepare("SELECT r.*, rr.role as role FROM repo_roles rr JOIN repos r ON r.id = rr.repo_id WHERE rr.principal = ? AND r.owner_id != ? ORDER BY r.updated_at DESC")
+    .prepare("SELECT r.*, rr.role as role FROM repo_roles rr JOIN repos r ON r.slug = rr.repo_slug WHERE rr.principal = ? AND r.owner_username != ? ORDER BY r.updated_at DESC")
     .bind(principal, principal)
     .all<RepoRow & { role: string }>();
   return result.results;
@@ -325,18 +322,18 @@ export async function listRepoRolesForAgent(db: D1Database, principal: string): 
 // code.
 
 export async function createCliLoginSession(db: D1Database, nonce: string): Promise<void> {
-  await db.prepare("INSERT INTO cli_login_sessions (nonce, agent_id, token, created_at, consumed) VALUES (?, NULL, NULL, ?, 0)").bind(nonce, new Date().toISOString()).run();
+  await db.prepare("INSERT INTO cli_login_sessions (nonce, agent_username, token, created_at, consumed) VALUES (?, NULL, NULL, ?, 0)").bind(nonce, new Date().toISOString()).run();
 }
 
-export async function fulfillCliLoginSession(db: D1Database, nonce: string, agentId: string, token: string): Promise<boolean> {
-  const result = await db.prepare("UPDATE cli_login_sessions SET agent_id = ?, token = ? WHERE nonce = ? AND consumed = 0").bind(agentId, token, nonce).run();
+export async function fulfillCliLoginSession(db: D1Database, nonce: string, agentUsername: string, token: string): Promise<boolean> {
+  const result = await db.prepare("UPDATE cli_login_sessions SET agent_username = ?, token = ? WHERE nonce = ? AND consumed = 0").bind(agentUsername, token, nonce).run();
   return (result.meta.changes ?? 0) > 0;
 }
 
 /** Returns the token once, then marks the session consumed so it can never be read again -- the whole point of the bridge is a one-time handoff. */
-export async function pollAndConsumeCliLoginSession(db: D1Database, nonce: string): Promise<{ agentId: string; token: string } | null> {
-  const row = await db.prepare("SELECT agent_id, token FROM cli_login_sessions WHERE nonce = ? AND consumed = 0").bind(nonce).first<{ agent_id: string | null; token: string | null }>();
-  if (!row?.agent_id || !row.token) return null;
+export async function pollAndConsumeCliLoginSession(db: D1Database, nonce: string): Promise<{ agentUsername: string; token: string } | null> {
+  const row = await db.prepare("SELECT agent_username, token FROM cli_login_sessions WHERE nonce = ? AND consumed = 0").bind(nonce).first<{ agent_username: string | null; token: string | null }>();
+  if (!row?.agent_username || !row.token) return null;
   await db.prepare("UPDATE cli_login_sessions SET consumed = 1 WHERE nonce = ?").bind(nonce).run();
-  return { agentId: row.agent_id, token: row.token };
+  return { agentUsername: row.agent_username, token: row.token };
 }

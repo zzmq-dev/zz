@@ -205,9 +205,9 @@ repoCmd
   .command("create <name>")
   .description("create a repo, owned by you or an Agent you created")
   .option("--description <text>", "repo description")
-  .option("--owner <agent-id>", "owning Agent id (default: you)")
+  .option("--owner <username>", "owning Agent's username (default: you)")
   .action(async (name: string, opts: { description?: string; owner?: string }) => {
-    await repoCreate(name, { description: opts.description, ownerId: opts.owner });
+    await repoCreate(name, { description: opts.description, ownerUsername: opts.owner });
   });
 
 repoCmd

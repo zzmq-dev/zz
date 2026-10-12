@@ -54,7 +54,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   const review = (await callRemoteTool(slug, "ask_post", {
     lane_id: laneId,
     kind: "changeset_review",
-    from: creds.agentId,
+    from: creds.username,
     payload: { taskDescription, files, message, summary: message },
     depends_on: [],
   })) as AskEntry;
@@ -62,7 +62,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   await callRemoteTool(slug, "ask_post", {
     lane_id: laneId,
     kind: "submit_changeset",
-    from: creds.agentId,
+    from: creds.username,
     payload: { files, message, summary: message, baseCommit },
     depends_on: [askId, review.id],
   });
@@ -70,7 +70,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   await callRemoteTool(slug, "ask_answer", {
     lane_id: laneId,
     ask_id: askId,
-    actor: creds.agentId,
+    actor: creds.username,
     action: "complete",
     payload: { summary: message },
   });

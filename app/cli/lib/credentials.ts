@@ -9,8 +9,7 @@ import { dirname, join } from "node:path";
 export interface ZzCredentials {
   apiBase: string;
   token: string;
-  agentId: string;
-  username: string;
+  username: string; // the real identity -- no separate internal id (see worker migration 0006)
 }
 
 // The deployed Worker's current URL -- the one thing in the CLI that

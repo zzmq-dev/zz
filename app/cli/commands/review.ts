@@ -64,7 +64,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   // your logged-in credential, not a separate (and easily mismatched)
   // id in ~/.zz/config.json -- a mismatch fails every remote call
   // closed via the server's anti-impersonation check.
-  const config = readConfig({ agent: options.agent ?? creds?.agentId, repos: options.repos });
+  const config = readConfig({ agent: options.agent ?? creds?.username, repos: options.repos });
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
   // Review only ever reads a changeset's payload (already embedded in
   // the ask) and posts grant/deny -- no working tree is touched, so a

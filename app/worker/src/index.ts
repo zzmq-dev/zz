@@ -256,11 +256,11 @@ async function testRepoMeta(env: Env): Promise<Response> {
     using repo = await env.ARTIFACTS.get(repoName);
     const token = await repo.createToken("write", 3600);
 
-    await ensureMeta(remote, token, { description: "a test repo", ownerId: "acct-test" });
+    await ensureMeta(remote, token, { description: "a test repo", owner: "acct-test" });
     steps.ensuredOnce = await readRepoMeta(remote, token);
 
     // Idempotency: calling ensureMeta again must not clobber the existing meta.json.
-    await ensureMeta(remote, token, { description: "SHOULD NOT APPEAR", ownerId: "acct-other" });
+    await ensureMeta(remote, token, { description: "SHOULD NOT APPEAR", owner: "acct-other" });
     steps.ensuredTwice = await readRepoMeta(remote, token);
 
     const rolesBefore = await readRepoRoles(remote, token);

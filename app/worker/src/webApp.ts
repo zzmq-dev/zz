@@ -39,7 +39,6 @@ import {
   fulfillCliLoginSession,
   getAgent,
   getAgentByEmail,
-  getAgentByUsername,
   getAgentToken,
   getRepoBySlug,
   getValidSession,
@@ -265,7 +264,7 @@ function roleBadge(role: string): string {
   return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
 }
 
-/** A text input that autocompletes against /api/agents/search as you type, so you never have to remember or paste a raw agent id -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Submits the agent's `id` (what every principal field expects) once a suggestion is clicked; typing a raw id and not picking a suggestion still works, same as before. */
+/** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */
 function agentAutocompleteField(name: string, placeholder: string, idSuffix: string): string {
   const boxId = `ac-box-${idSuffix}`;
   return `<div class="ac-wrap">
@@ -413,14 +412,14 @@ async function resolveRequestAgent(request: Request, env: WebEnv): Promise<Agent
   const sessionId = readSessionCookie(request);
   if (sessionId) {
     const session = await getValidSession(env.DB, sessionId);
-    if (session) return getAgent(env.DB, session.agent_id);
+    if (session) return getAgent(env.DB, session.agent_username);
   }
   const bearer = readBearerToken(request);
   if (bearer) {
     const token = await findActiveAgentToken(env.DB, hashAgentToken(bearer));
     if (token) {
       await touchAgentToken(env.DB, token.id);
-      return getAgent(env.DB, token.agent_id);
+      return getAgent(env.DB, token.agent_username);
     }
   }
   return null;
@@ -468,9 +467,9 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
 
   let agent: Agent;
   if (existing) {
-    agent = (await getAgent(env.DB, existing.agent_id))!;
+    agent = (await getAgent(env.DB, existing.agent_username))!;
     await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
-    await refreshAgentProfile(env.DB, agent.id, identity.displayName, identity.email);
+    await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
   } else {
     // A second OAuth provider with the SAME verified email links to
     // the agent that already owns that email instead of minting a
@@ -483,14 +482,14 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     const byEmail = identity.email ? await getAgentByEmail(env.DB, identity.email) : null;
     if (byEmail) {
       agent = byEmail;
-      await refreshAgentProfile(env.DB, agent.id, identity.displayName, identity.email);
+      await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
     } else {
       agent = await createAgent(env.DB, identity.displayName, identity.email, null);
     }
-    await createAgentIdentity(env.DB, agent.id, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
+    await createAgentIdentity(env.DB, agent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
   }
 
-  const session = await createSession(env.DB, agent.id, 60 * 60 * 24 * 30);
+  const session = await createSession(env.DB, agent.username, 60 * 60 * 24 * 30);
 
   // CLI bridge: a `zz login` browser tab carries a nonce through as a
   // cookie; fulfill it with a fresh bearer token so the waiting CLI
@@ -498,8 +497,8 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
   // independent -- this tab also ends up logged in normally if left open.
   if (cliNonce) {
     const plaintext = generateAgentToken();
-    await createAgentToken(env.DB, agent.id, hashAgentToken(plaintext));
-    const fulfilled = await fulfillCliLoginSession(env.DB, cliNonce, agent.id, plaintext);
+    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
+    const fulfilled = await fulfillCliLoginSession(env.DB, cliNonce, agent.username, plaintext);
     if (fulfilled) {
       return layout(
         "Logged in",
@@ -517,10 +516,10 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
   // I even get a token"). Only on first login (zero existing active
   // tokens) -- a token is shown-once by design, so minting one on
   // every return visit would just produce unusable, never-seen tokens.
-  const existingTokens = (await listTokensForAgent(env.DB, agent.id)).filter((t) => !t.revoked_at);
+  const existingTokens = (await listTokensForAgent(env.DB, agent.username)).filter((t) => !t.revoked_at);
   if (existingTokens.length === 0) {
     const plaintext = generateAgentToken();
-    await createAgentToken(env.DB, agent.id, hashAgentToken(plaintext));
+    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
     return layout(
       "Welcome",
       agent,
@@ -556,8 +555,8 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
   if (!nonce) return json({ error: "missing ?nonce=" }, 400);
   const result = await pollAndConsumeCliLoginSession(env.DB, nonce);
   if (!result) return json({ status: "pending" });
-  const agent = await getAgent(env.DB, result.agentId);
-  return json({ status: "ready", token: result.token, agent: { id: result.agentId, username: agent?.username ?? result.agentId } });
+  const agent = await getAgent(env.DB, result.agentUsername);
+  return json({ status: "ready", token: result.token, agent: { username: agent?.username ?? result.agentUsername } });
 }
 
 // --- Shared core logic (used by both HTML forms and the JSON API) ---
@@ -570,25 +569,24 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 // its own explicit action -- see doMintToken.
 async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): Promise<{ agent: Agent; token: string }> {
   if (!displayName.trim()) throw new ApiError(400, "display_name is required");
-  const agent = await createAgent(env.DB, displayName.trim(), null, creator.id);
+  const agent = await createAgent(env.DB, displayName.trim(), null, creator.username);
   const token = generateAgentToken();
-  await createAgentToken(env.DB, agent.id, hashAgentToken(token));
+  await createAgentToken(env.DB, agent.username, hashAgentToken(token));
   return { agent, token };
 }
 
 /** Minting a token for an agent is allowed for the agent itself (re-authenticating with an existing token/session) or whoever created it -- a practical bootstrap allowance (a brand-new agent has no credential yet, so someone has to issue its first one), not a general override. */
-/** `targetAgentId` accepts either a bare agent id or a username -- CLI/UI surfaces show only the username now (never the raw id), so a command built from what you see on screen (`zz agent token <username>`) has to actually work. */
-async function requireTokenMintAuthority(env: WebEnv, actor: Agent, targetAgentId: string): Promise<Agent> {
-  const target = (await getAgent(env.DB, targetAgentId)) ?? (await getAgentByUsername(env.DB, targetAgentId));
+async function requireTokenMintAuthority(env: WebEnv, actor: Agent, targetUsername: string): Promise<Agent> {
+  const target = await getAgent(env.DB, targetUsername);
   if (!target) throw new ApiError(404, "no such agent");
-  if (target.id !== actor.id && target.created_by !== actor.id) throw new ApiError(403, "you can only mint tokens for yourself or an agent you created");
+  if (target.username !== actor.username && target.created_by !== actor.username) throw new ApiError(403, "you can only mint tokens for yourself or an agent you created");
   return target;
 }
 
-async function doMintToken(env: WebEnv, actor: Agent, targetAgentId: string): Promise<{ agent: Agent; token: string }> {
-  const target = await requireTokenMintAuthority(env, actor, targetAgentId);
+async function doMintToken(env: WebEnv, actor: Agent, targetUsername: string): Promise<{ agent: Agent; token: string }> {
+  const target = await requireTokenMintAuthority(env, actor, targetUsername);
   const plaintext = generateAgentToken();
-  await createAgentToken(env.DB, target.id, hashAgentToken(plaintext));
+  await createAgentToken(env.DB, target.username, hashAgentToken(plaintext));
   return { agent: target, token: plaintext };
 }
 
@@ -658,10 +656,10 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   const readmeContent = `# ${name}\n\n${description ?? ""}\n`;
   const files = [{ path: "README.md", content: readmeContent }];
   if (license) files.push({ path: "LICENSE", content: license.text(owner.display_name, new Date().getFullYear()) });
-  const sha = await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
-  await ensureMeta(created.remote, token, { description: description ?? "", ownerId: owner.id });
-  const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerId: owner.id });
-  await syncRepoRoleCache(env.DB, row.id, [{ principal: owner.id, role: "owner", granted_by: "system", at: row.created_at }]);
+  const sha = await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.username}@zz.local` });
+  await ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username });
+  const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
+  await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
 
   const readmeFirstLine = (readmeContent.split("\n").find((l) => l.trim()) ?? "").replace(/^#+\s*/, "").trim();
   const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, sha, readmeFirstLine, license });
@@ -672,12 +670,10 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   return row;
 }
 
-async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principalInput: string, role: RbacRole): Promise<void> {
+async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  const target = await resolveAgent(env, principalInput);
-  if (!target) throw new ApiError(404, `no such agent "${principalInput}"`);
-  const principal = target.id;
+  if (!(await getAgent(env.DB, principal))) throw new ApiError(404, `no such agent "${principal}"`);
 
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
@@ -687,15 +683,15 @@ async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principa
   // No more "or any agent I created" indirection -- peers means the
   // ACTOR's own standing is what's checked, full stop, same as every
   // other RBAC check in this codebase (canReadRepo/canPushRepo).
-  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
 
   const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
-  nextGrants.push({ principal, role, granted_by: actor.id, at: new Date().toISOString() });
+  nextGrants.push({ principal, role, granted_by: actor.username, at: new Date().toISOString() });
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
+  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
 }
 
-/** Removes one grant by its exact stored `principal` value (never resolved through resolveAgent first -- unlike doRbacGrant, this has to be able to remove a grant whose principal doesn't correspond to any current agent at all, e.g. a stale one written before principals were consistently stored as ids). */
+/** Removes one grant by its exact stored `principal` value -- doesn't require it to resolve to a current agent, so a stale/orphaned grant can still be cleaned up. */
 async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
@@ -703,10 +699,10 @@ async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, princi
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
   const roles = await readRepoRoles(info.remote, token);
-  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
+  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
 }
 
 async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visibility: "public" | "private"): Promise<void> {
@@ -717,30 +713,30 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   const info = await artifactsRepo.info();
   const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
-  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
-  await updateRepoVisibility(env.DB, repo.id, visibility);
+  await updateRepoVisibility(env.DB, repo.slug, visibility);
 }
 
 /** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
-async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerId: string): Promise<void> {
+async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerUsername: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  const newOwner = await resolveAgent(env, newOwnerId);
+  const newOwner = await getAgent(env.DB, newOwnerUsername);
   if (!newOwner) throw new ApiError(404, "no such agent");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
   const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
-  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
 
-  await writeRepoMeta(info.remote, token, { ...meta, owner_id: newOwner.id });
-  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== newOwner.id);
-  nextGrants.push({ principal: newOwner.id, role: "owner", granted_by: actor.id, at: new Date().toISOString() });
+  await writeRepoMeta(info.remote, token, { ...meta, owner: newOwner.username });
+  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== newOwner.username);
+  nextGrants.push({ principal: newOwner.username, role: "owner", granted_by: actor.username, at: new Date().toISOString() });
   await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.id, nextGrants);
-  await updateRepoOwner(env.DB, repo.id, newOwner.id);
+  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
+  await updateRepoOwner(env.DB, repo.slug, newOwner.username);
 }
 
 async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promise<void> {
@@ -750,20 +746,9 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   const token = await artifactsRepo.createToken("read", 120);
   const info = await artifactsRepo.info();
   const roles = await readRepoRoles(info.remote, token);
-  if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   await env.ARTIFACTS.delete(repo.artifacts_name);
-  await deleteRepoRow(env.DB, repo.id);
-}
-
-/** Resolves a bare agent id (what roles.json's `principal` field always stores -- that has to stay a stable, immutable key, never a display string) to that Agent's `username`, for the one place ids should ever reach a person: display. Falls back to the raw id only for a grant whose agent record is gone (shouldn't normally happen, but shouldn't crash the page either). */
-async function usernameFor(env: WebEnv, agentId: string): Promise<string> {
-  const a = await getAgent(env.DB, agentId);
-  return a?.username ?? agentId;
-}
-
-/** The inverse direction: every surface that lets someone name an agent (grant a role, transfer ownership, mint a token) shows and accepts only usernames now -- whatever's typed or picked from autocomplete needs to resolve back to a real Agent the same way, trying a bare id first (still valid, just never shown) then falling back to username. */
-async function resolveAgent(env: WebEnv, idOrUsername: string): Promise<Agent | null> {
-  return (await getAgent(env.DB, idOrUsername)) ?? (await getAgentByUsername(env.DB, idOrUsername));
+  await deleteRepoRow(env.DB, repo.slug);
 }
 
 function doStub(env: WebEnv, artifactsName: string) {
@@ -857,13 +842,13 @@ interface ClaimableWorkItem {
   ask: AskEntry;
 }
 
-async function getClaimableForViewer(env: WebEnv, viewerId: string): Promise<ClaimableWorkItem[]> {
-  const repos = await listRecentRepos(env.DB, 200, viewerId);
+async function getClaimableForViewer(env: WebEnv, viewerUsername: string): Promise<ClaimableWorkItem[]> {
+  const repos = await listRecentRepos(env.DB, 200, viewerUsername);
   const out: ClaimableWorkItem[] = [];
   for (const repo of repos) {
     const lanes = await getAllLanes(env, repo.artifacts_name);
     for (const lane of lanes) {
-      for (const ask of claimableAsks(lane, viewerId)) {
+      for (const ask of claimableAsks(lane, viewerUsername)) {
         out.push({ repoSlug: repo.slug, laneId: lane.id, ask });
       }
     }
@@ -876,14 +861,14 @@ async function doClaimAsk(env: WebEnv, actor: Agent, repoSlug: string, laneId: s
   if (!repo) throw new ApiError(404, "no such repo");
   const stub = doStub(env, repo.artifacts_name);
   await stub.configure(repo.artifacts_name);
-  await stub.callTool("ask_claim", { repo: repo.artifacts_name, lane_id: laneId, ask_id: askId, actor: actor.id });
+  await stub.callTool("ask_claim", { repo: repo.artifacts_name, lane_id: laneId, ask_id: askId, actor: actor.username });
 }
 
 async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
 
-  const items = await getClaimableForViewer(env, me.id);
+  const items = await getClaimableForViewer(env, me.username);
   const rows = items
     .map(
       (it) => `<li class="stack">
@@ -963,9 +948,9 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   // every repo already created before this fix too, not just new ones.
   const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: "_repo" });
   if (!existingLane) {
-    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: "_repo", name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_id });
+    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: "_repo", name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
   }
-  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.id, payload: { description } });
+  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.username, payload: { description } });
 }
 
 // --- Agent profile: /<username> is BOTH the public view (anyone) and
@@ -979,15 +964,15 @@ interface RepoWithRole extends RepoRow {
 
 async function handleAgentPage(username: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
-  const pageAgent = await getAgentByUsername(env.DB, username);
+  const pageAgent = await getAgent(env.DB, username);
   if (!pageAgent) return new Response("no such agent", { status: 404 });
 
-  if (me && me.id === pageAgent.id) return renderOwnProfile(me, env);
+  if (me && me.username === pageAgent.username) return renderOwnProfile(me, env);
   return renderPublicProfile(pageAgent, request, env);
 }
 
 async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
-  const owned = await listReposOwnedBy(env.DB, agent.id);
+  const owned = await listReposOwnedBy(env.DB, agent.username);
   const visible: RepoRow[] = [];
   for (const r of owned) {
     const ctx = await getRepoAccessContext(r.slug, env);
@@ -1004,9 +989,9 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
 }
 
 async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
-  const createdAgents = await listAgentsCreatedBy(env.DB, me.id);
+  const createdAgents = await listAgentsCreatedBy(env.DB, me.username);
   const allSelf = [me, ...createdAgents];
-  const tokenLists = await Promise.all(allSelf.map((a) => listTokensForAgent(env.DB, a.id)));
+  const tokenLists = await Promise.all(allSelf.map((a) => listTokensForAgent(env.DB, a.username)));
 
   // One flat, unified list across you and every agent you manage --
   // no more "your tokens" vs "managed agents' tokens" as two separate
@@ -1021,7 +1006,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
     )
     .join("");
 
-  const [ownedRepos, sharedRepos] = await Promise.all([listReposOwnedBy(env.DB, me.id), listRepoRolesForAgent(env.DB, me.id)]);
+  const [ownedRepos, sharedRepos] = await Promise.all([listReposOwnedBy(env.DB, me.username), listRepoRolesForAgent(env.DB, me.username)]);
   const repoRows: { repo: RepoRow; role: string }[] = [...ownedRepos.map((r) => ({ repo: r, role: "owner" })), ...sharedRepos.map((r) => ({ repo: r as RepoWithRole, role: (r as RepoWithRole).role }))];
 
   return layout(
@@ -1083,15 +1068,17 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   );
 }
 
-/** A single value covers both the earlier two actions (mint a token for an existing agent, or create a brand-new managed agent and mint its first token) -- matches the unified "+" modal: an id of an agent you already manage mints; anything else creates. */
+/** A single value covers both the earlier two actions (mint a token for an existing agent, or create a brand-new managed agent and mint its first token) -- matches the unified "+" modal: the username of an agent you already manage mints; anything else creates. */
 async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const form = await request.formData();
   const value = String(form.get("agent") ?? "").trim();
   try {
-    const existing = await resolveAgent(env, value);
-    const { agent, token } = existing ? await doMintToken(env, me, existing.id) : await doCreateAgent(env, me, value);
+    const existing = await getAgent(env.DB, value);
+    const { agent, token } = existing ? await doMintToken(env, me, existing.username) : await doCreateAgent(env, me, value);
+    const origin = new URL(request.url).origin;
+    const credsJson = JSON.stringify({ apiBase: origin, token, username: agent.username }, null, 2);
     return layout(
       "New token",
       me,
@@ -1099,7 +1086,12 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
          <p>Token for <b class="mono">${esc(agent.username)}</b> -- copy it now, it won't be shown again:</p>
          <pre>${esc(token)}</pre>
          <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
-       </div>`,
+       </div>
+       ${card(
+         "Run zz work as this identity",
+         `<p class="hint">\`zz login\` is OAuth-only and writes your own session -- to run <code>zz work</code>/<code>zz review</code> as ${esc(agent.username)} from a separate terminal, save this as a credentials file and point <code>ZZ_CREDENTIALS</code> at its path:</p>
+          <div class="clone-row"><pre>${esc(credsJson)}</pre><button class="secondary icon-btn" data-copy="${esc(credsJson)}" title="Copy">⧉</button></div>`,
+       )}`,
     );
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
@@ -1112,8 +1104,8 @@ async function handleRevokeTokenForm(tokenId: string, request: Request, env: Web
   if (!me) return redirect("/login");
   const token = await getAgentToken(env.DB, tokenId);
   if (token) {
-    const owner = await getAgent(env.DB, token.agent_id);
-    if (owner && (owner.id === me.id || owner.created_by === me.id)) await revokeAgentToken(env.DB, tokenId);
+    const owner = await getAgent(env.DB, token.agent_username);
+    if (owner && (owner.username === me.username || owner.created_by === me.username)) await revokeAgentToken(env.DB, tokenId);
   }
   return redirect(`/${me.username}`);
 }
@@ -1241,11 +1233,11 @@ async function handleApiCreateAgent(request: Request, env: WebEnv): Promise<Resp
 async function handleApiListAgents(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    return json({ you: me, created: await listAgentsCreatedBy(env.DB, me.id) });
+    return json({ you: me, created: await listAgentsCreatedBy(env.DB, me.username) });
   });
 }
 
-/** Autocomplete backing for any "which agent" field (add-token, grant-role, transfer-ownership) -- searches every Agent known to zz, not just ones the caller created. The server-side authority check for what you're actually trying to DO with the chosen agent (mint a token, grant a role) still applies at the real action endpoint; this just helps you find the right id. */
+/** Autocomplete backing for any "which agent" field (add-token, grant-role, transfer-ownership) -- searches every Agent known to zz, not just ones the caller created. The server-side authority check for what you're actually trying to DO with the chosen agent (mint a token, grant a role) still applies at the real action endpoint; this just helps you find the right username. */
 async function handleApiSearchAgents(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     await requireApiAgent(request, env);
@@ -1255,10 +1247,10 @@ async function handleApiSearchAgents(request: Request, env: WebEnv): Promise<Res
   });
 }
 
-async function handleApiMintToken(agentId: string, request: Request, env: WebEnv): Promise<Response> {
+async function handleApiMintToken(username: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const { agent, token } = await doMintToken(env, me, agentId);
+    const { agent, token } = await doMintToken(env, me, username);
     return json({ agent, token }, 201);
   });
 }
@@ -1266,9 +1258,9 @@ async function handleApiMintToken(agentId: string, request: Request, env: WebEnv
 async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const body = (await request.json()) as { name?: string; description?: string; owner_id?: string; license?: string };
-    const owner = !body.owner_id || body.owner_id === me.id ? me : await getAgent(env.DB, body.owner_id);
-    if (!owner || (owner.id !== me.id && owner.created_by !== me.id)) throw new ApiError(403, "not yours to create repos as");
+    const body = (await request.json()) as { name?: string; description?: string; owner_username?: string; license?: string };
+    const owner = !body.owner_username || body.owner_username === me.username ? me : await getAgent(env.DB, body.owner_username);
+    if (!owner || (owner.username !== me.username && owner.created_by !== me.username)) throw new ApiError(403, "not yours to create repos as");
     const repo = await doCreateRepo(env, owner, (body.name ?? "").trim(), body.description?.trim() || null, body.license ?? null);
     return json(repo, 201);
   });
@@ -1277,7 +1269,7 @@ async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Respo
 async function handleApiListRepos(request: Request, env: WebEnv): Promise<Response> {
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   const viewer = await resolveRequestAgent(request, env);
-  const repos = q ? await searchRepos(env.DB, q, 50, viewer?.id ?? null) : await listRecentRepos(env.DB, 50, viewer?.id ?? null);
+  const repos = q ? await searchRepos(env.DB, q, 50, viewer?.username ?? null) : await listRecentRepos(env.DB, 50, viewer?.username ?? null);
   return json({ repos });
 }
 
@@ -1308,11 +1300,11 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // rules (coordinators/maintainers/ASK_SCOPE) server-side, the same as
 // it does called from the web app or MaintainerDO's existing routes.
 // The one thing checked here: args.actor/args.from, when present,
-// must equal the authenticated caller's own id -- otherwise a valid
-// token for Agent A could act as Agent B just by naming it in the
-// payload, which no tool-level check catches (they trust the caller-
-// supplied actor/from field completely, same as the local CLI always
-// has).
+// must equal the authenticated caller's own username -- otherwise a
+// valid token for Agent A could act as Agent B just by naming it in
+// the payload, which no tool-level check catches (they trust the
+// caller-supplied actor/from field completely, same as the local CLI
+// always has).
 async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -1320,7 +1312,7 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     if (!repo) throw new ApiError(404, "no such repo");
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     for (const field of ["actor", "from"]) {
-      if (field in body && body[field] !== me.id) throw new ApiError(403, `${field} must be your own agent id (${me.id}) -- a token only acts as the agent it belongs to`);
+      if (field in body && body[field] !== me.username) throw new ApiError(403, `${field} must be your own username (${me.username}) -- a token only acts as the agent it belongs to`);
     }
     const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
     await stub.configure(repo.artifacts_name);
@@ -1359,13 +1351,13 @@ async function handleApiExploreSearch(request: Request, env: WebEnv): Promise<Re
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
   if (!q) return json({ repos: [], agents: [] });
-  return json(await searchExplore(env.DB, q, 8, me?.id ?? null));
+  return json(await searchExplore(env.DB, q, 8, me?.username ?? null));
 }
 
 async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  const repos = q ? await searchRepos(env.DB, q, 50, me?.id ?? null) : await listRecentRepos(env.DB, 50, me?.id ?? null);
+  const repos = q ? await searchRepos(env.DB, q, 50, me?.username ?? null) : await listRecentRepos(env.DB, 50, me?.username ?? null);
 
   const listHtml = repos
     .map(
@@ -1430,7 +1422,7 @@ async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRo
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const token = await repo.createToken("read", 300);
   const info = await repo.info();
-  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", ownerId: repoRow.owner_id });
+  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
   const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
   return { repoRow, meta, roles };
 }
@@ -1462,7 +1454,7 @@ async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<s
   const token = await findActiveAgentToken(env.DB, hashAgentToken(candidate));
   if (!token) return null;
   await touchAgentToken(env.DB, token.id);
-  return token.agent_id;
+  return token.agent_username;
 }
 
 // Public repos (the default, and everything created so far): open to
@@ -1475,7 +1467,7 @@ async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnTy
   if (meta?.policy.visibility !== "private") return true;
   const me = await resolveRequestAgent(request, env);
   const gitPrincipal = await resolveGitAuthPrincipal(request, env);
-  const principals = [me?.id, gitPrincipal].filter((p): p is string => !!p);
+  const principals = [me?.username, gitPrincipal].filter((p): p is string => !!p);
   if (principals.length === 0) return false;
   return principals.some((p) => (roles?.grants ?? []).some((g) => g.principal === p));
 }
@@ -1518,13 +1510,9 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     )
     .join("");
 
-  const rolesHtml = (
-    await Promise.all(
-      (roles?.grants ?? []).map(async (g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"} mono">${esc(await usernameFor(env, g.principal))}: ${esc(g.role)}</span>`),
-    )
-  ).join(" ");
+  const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"} mono">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
   const visibility = meta?.policy.visibility ?? "public";
-  const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.id), "owner");
+  const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
 
   const [lanes, ladder] = await Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
   const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
@@ -1619,13 +1607,12 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
   const { meta, roles } = ctx;
-  if (!repoAtLeast(repoRoleFor(roles, me.id), "owner")) return new Response("Owners only", { status: 403 });
+  if (!repoAtLeast(repoRoleFor(roles, me.username), "owner")) return new Response("Owners only", { status: 403 });
 
-  const roleRows = (
-    await Promise.all(
-      (roles?.grants ?? []).map(
-        async (g) => `<li class="row">
-        <span class="mono">${esc(await usernameFor(env, g.principal))}</span>
+  const roleRows = (roles?.grants ?? [])
+    .map(
+      (g) => `<li class="row">
+        <span class="mono">${esc(g.principal)}</span>
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
@@ -1639,9 +1626,8 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
           <button type="submit" class="danger">Revoke</button>
         </form>
       </li>`,
-      ),
     )
-  ).join("");
+    .join("");
 
   const visibility = meta?.policy.visibility ?? "public";
 
@@ -1784,7 +1770,7 @@ async function handleGitPack(service: GitService, slug: string, request: Request
   const response = new Response(upstream.body, { status: upstream.status, headers: stripHopByHopHeaders(upstream.headers) });
 
   if (service === "git-receive-pack" && upstream.ok) {
-    await touchRepoUpdatedAt(env.DB, ctx.repoRow.id).catch(() => {});
+    await touchRepoUpdatedAt(env.DB, ctx.repoRow.slug).catch(() => {});
   }
   return response;
 }
@@ -1801,7 +1787,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   // But a client that DOES percent-encode them anyway (confirmed live:
   // `encodeURIComponent` on a bracketed username, which some CLI/API
   // call sites reasonably reach for) would otherwise 404 forever,
-  // since every lookup below (getRepoBySlug, getAgentByUsername, ...)
+  // since every lookup below (getRepoBySlug, getAgent, ...)
   // compares against the literal, undecoded form stored in D1.
   // Decoding here once means every route matches either form the same
   // way, instead of every individual call site needing to know which
