@@ -52,6 +52,7 @@ import {
   refreshAgentProfile,
   revokeAgentToken,
   searchAgents,
+  searchExplore,
   searchRepos,
   shortId,
   syncRepoRoleCache,
@@ -59,6 +60,7 @@ import {
   touchRepoUpdatedAt,
   updateIdentityTokens,
   updateRepoOwner,
+  updateRepoVisibility,
   upsertRepo,
 } from "./accountsDb.js";
 import {
@@ -76,8 +78,11 @@ import {
   type Provider,
 } from "./auth.js";
 import { ensureMeta, readRepoMeta, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole } from "./repoMeta.js";
-import { LICENSES, LICENSE_ORDER } from "./licenses.js";
+import { LICENSES, LICENSE_ORDER, type LicenseOption } from "./licenses.js";
 import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
+import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
+import { claimableAsks } from "../../engine/workqueue.js";
+import type { AskEntry, HistoryEntry, Lane } from "../../engine/types.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -89,6 +94,59 @@ export interface WebEnv extends OAuthEnv {
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// A deliberately small markdown-to-HTML renderer for README display --
+// not a CommonMark implementation, just headers/bold/italic/inline and
+// fenced code/links/lists/paragraphs, which covers the overwhelming
+// majority of real READMEs. Safe by construction rather than by
+// sanitizing afterward: the source is HTML-escaped FIRST, so every
+// regex below only ever adds tags around already-inert text -- a
+// README containing a literal `<script>` can never produce one, since
+// by the time any regex runs it's already the harmless text
+// "&lt;script&gt;". Code block/inline-code contents are stashed before
+// the other passes run so bold/italic/header markup never reaches
+// inside them.
+function renderMarkdown(src: string): string {
+  let html = esc(src);
+
+  const codeBlocks: string[] = [];
+  html = html.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
+    const idx = codeBlocks.push(`<pre><code>${code}</code></pre>`) - 1;
+    return `\u0000CB${idx}\u0000`;
+  });
+
+  const inlineCode: string[] = [];
+  html = html.replace(/`([^`\n]+)`/g, (_m, code) => {
+    const idx = inlineCode.push(`<code>${code}</code>`) - 1;
+    return `\u0000IC${idx}\u0000`;
+  });
+
+  html = html
+    .replace(/^###### (.*)$/gm, "<h6>$1</h6>")
+    .replace(/^##### (.*)$/gm, "<h5>$1</h5>")
+    .replace(/^#### (.*)$/gm, "<h4>$1</h4>")
+    .replace(/^### (.*)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.*)$/gm, "<h1>$1</h1>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/\*([^*\n]+)\*/g, "<i>$1</i>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(?:^[-*] .*(?:\n|$))+/gm, (block) => `<ul>${block.trim().split("\n").map((l) => `<li>${l.replace(/^[-*] /, "")}</li>`).join("")}</ul>\n`);
+
+  html = html
+    .split(/\n{2,}/)
+    .map((block) => {
+      const trimmed = block.trim();
+      if (!trimmed) return "";
+      if (/^<(h[1-6]|ul)/.test(trimmed) || /^\u0000CB\d+\u0000$/.test(trimmed)) return trimmed;
+      return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+    })
+    .join("\n");
+
+  html = html.replace(/\u0000IC(\d+)\u0000/g, (_m, i) => inlineCode[Number(i)]);
+  html = html.replace(/\u0000CB(\d+)\u0000/g, (_m, i) => codeBlocks[Number(i)]);
+  return html;
 }
 
 // A bold, dark design system -- a muted purple backdrop with a handful
@@ -178,6 +236,22 @@ select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;b
 .align-right{text-align:right}
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
+h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
+.clone-row{display:flex;gap:.5rem;align-items:stretch}
+.clone-row pre{flex:1;min-width:0;margin:0}
+.log-feed{font-family:var(--mono);font-size:.85rem;line-height:1.8}
+.log-line{white-space:nowrap;overflow-x:auto}
+.log-line .t-ask{color:var(--yellow);font-weight:600}
+.log-line .t-answer{color:var(--green);font-weight:600}
+.log-line .t-insight{color:var(--cyan);font-weight:600}
+.md h1,.md h2,.md h3{margin:1rem 0 .5rem}
+.md h1:first-child,.md h2:first-child,.md h3:first-child{margin-top:0}
+.md p{margin:.6rem 0}
+.md ul{margin:.4rem 0;padding-left:1.4rem}
+.md a{color:var(--cyan)}
+.md pre{margin:.6rem 0}
+.md code{font-family:var(--mono);background:var(--code-bg);padding:.1rem .35rem;border-radius:4px;font-size:.88em}
+.md pre code{background:none;padding:0}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -244,17 +318,60 @@ function zzAutocomplete(inputEl, listEl, url) {
 document.querySelectorAll('[data-autocomplete]').forEach(function (el) {
   zzAutocomplete(el, document.getElementById(el.dataset.autocomplete), el.dataset.acUrl);
 });
+
+function zzExploreSearch(inputEl, listEl) {
+  var t;
+  function addItem(variant, label, href) {
+    var item = document.createElement('div');
+    item.className = 'ac-item';
+    var badge = document.createElement('span');
+    badge.className = 'badge badge-' + variant;
+    badge.style.marginRight = '.5rem';
+    badge.textContent = variant === 'pink' ? 'repo' : 'user';
+    item.appendChild(badge);
+    item.appendChild(document.createTextNode(label));
+    item.onclick = function () { window.location.href = href; };
+    listEl.appendChild(item);
+  }
+  inputEl.addEventListener('input', function () {
+    clearTimeout(t);
+    var q = inputEl.value.trim();
+    if (!q) { listEl.hidden = true; listEl.innerHTML = ''; return; }
+    t = setTimeout(function () {
+      fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { repos: [], agents: [] }; }).then(function (data) {
+        listEl.innerHTML = '';
+        (data.repos || []).forEach(function (r) { addItem('pink', r.slug, '/' + r.slug); });
+        (data.agents || []).forEach(function (a) { addItem('cyan', a.display_name, '/' + a.username); });
+        listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0;
+      });
+    }, 200);
+  });
+  inputEl.addEventListener('blur', function () { setTimeout(function () { listEl.hidden = true; }, 150); });
+}
+document.querySelectorAll('[data-explore-search]').forEach(function (el) {
+  zzExploreSearch(el, document.getElementById(el.dataset.exploreSearch));
+});
+
+document.querySelectorAll('[data-copy]').forEach(function (btn) {
+  var original = btn.textContent;
+  btn.addEventListener('click', function () {
+    navigator.clipboard.writeText(btn.dataset.copy).then(function () {
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = original; }, 1200);
+    });
+  });
+});
 `;
 
-function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[] } = {}): Response {
+function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string } = {}): Response {
   const nav = agent
-    ? `<a href="/explore">Explore</a><a href="/${esc(agent.username)}">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
-    : `<a href="/explore">Explore</a><a href="/login">Log in</a>`;
+    ? `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/${esc(agent.username)}">${esc(agent.display_name)}</a><a href="/logout">Log out</a>`
+    : `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
 <header class="topbar"><a href="/explore" class="brand">zz<span>.dev</span></a><nav class="links">${nav}</nav></header>
 <main>
-<h1>${esc(title)}</h1>
+<h1>${esc(title)}${opts.titleHtml ?? ""}</h1>
 ${body}
 </main>
 <script>${WEB_JS}</script>
@@ -483,6 +600,43 @@ function ownerUrlSegment(agent: Agent): string {
   return agent.username;
 }
 
+// A new repo's Ladder is bootstrapped mechanically, never via an LLM
+// call -- repo creation has to stay fast and free, and "fold in a
+// summary" (the one case ladder_write_rung's own CUMULATIVE_SUMMARY_KINDS
+// handling calls a model) only triggers when a rung ALREADY has a
+// summary to fold against, which a brand-new repo never does. These
+// mechanical summaries match exactly what agent/tools.ts's own
+// mechanicalFileChangeRung already falls back to for large commits
+// ("added."), not a new convention.
+function buildInitialLadderRungs(opts: { description: string | null; ownerName: string; sha: string; readmeFirstLine: string; license: LicenseOption | null }): Rung[] {
+  const at = new Date().toISOString();
+  const source = (title: string) => [{ kind: "commit" as const, ref: opts.sha, title, author: opts.ownerName, at }];
+
+  const readmeRung: Rung = { path: "README.md", kind: "file", summary: opts.readmeFirstLine || "Project README.", sources: source("Initial commit"), children: [] };
+  const licenseRung: Rung | null = opts.license ? { path: "LICENSE", kind: "file", summary: `${opts.license.name} license.`, sources: source("Initial commit"), children: [] } : null;
+
+  const changesetRung: Rung = {
+    path: `changesets/${opts.sha.slice(0, 7)}`,
+    kind: "changeset",
+    summary: `Initial commit: added README.md${opts.license ? ", LICENSE" : ""}.`,
+    sources: source("Initial commit"),
+    children: [
+      { path: "README.md", kind: "filechange", summary: "added.", sources: source("Initial commit"), children: [] },
+      ...(opts.license ? [{ path: "LICENSE", kind: "filechange" as const, summary: "added.", sources: source("Initial commit"), children: [] }] : []),
+    ],
+  };
+
+  const repoRung: Rung = {
+    path: REPO_RUNG_PATH,
+    kind: "repo",
+    summary: `${opts.description?.trim() || "No description."} Contains README.md${opts.license ? ` and a ${opts.license.name} LICENSE` : ""}.`,
+    sources: source("Initial commit"),
+    children: [],
+  };
+
+  return [repoRung, readmeRung, ...(licenseRung ? [licenseRung] : []), changesetRung];
+}
+
 async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null, licenseKey: string | null): Promise<RepoRow> {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "repo name must match [A-Za-z0-9._-]+");
   const artifactsName = shortId("repo");
@@ -494,12 +648,20 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   const token = await repo.createToken("write", 3600);
   // commit_changeset (and anything else that anchors to a commit) needs
   // a parent to diff against -- a brand new repo has none, so seed one.
-  const files = [{ path: "README.md", content: `# ${name}\n\n${description ?? ""}\n` }];
+  const readmeContent = `# ${name}\n\n${description ?? ""}\n`;
+  const files = [{ path: "README.md", content: readmeContent }];
   if (license) files.push({ path: "LICENSE", content: license.text(owner.display_name, new Date().getFullYear()) });
-  await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
+  const sha = await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.id}@zz.local` });
   await ensureMeta(created.remote, token, { description: description ?? "", ownerId: owner.id });
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerId: owner.id });
   await syncRepoRoleCache(env.DB, row.id, [{ principal: owner.id, role: "owner", granted_by: "system", at: row.created_at }]);
+
+  const readmeFirstLine = (readmeContent.split("\n").find((l) => l.trim()) ?? "").replace(/^#+\s*/, "").trim();
+  const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, sha, readmeFirstLine, license });
+  const stub = doStub(env, artifactsName);
+  await stub.configure(artifactsName);
+  await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
+
   return row;
 }
 
@@ -533,6 +695,7 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
   if (!repoAtLeast(repoRoleFor(roles, actor.id), "owner")) throw new ApiError(403, `${actor.id} is not an Owner of ${repoSlug}`);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
+  await updateRepoVisibility(env.DB, repo.id, visibility);
 }
 
 /** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
@@ -568,49 +731,31 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   await deleteRepoRow(env.DB, repo.id);
 }
 
-interface LaneHistoryEntry {
-  id?: string;
-  type: "ASK" | "ANSWER" | "INSIGHT";
-  kind?: string;
-  from?: string;
-  action?: string;
-  ask?: string;
-  payload?: unknown;
-  at: string;
-}
-
-interface LaneSnapshot {
-  id: string;
-  status: string;
-  coordinators: string[];
-  history: LaneHistoryEntry[];
-}
-
 function doStub(env: WebEnv, artifactsName: string) {
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(artifactsName));
   return stub;
 }
 
-/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). */
-async function getRootLane(env: WebEnv, artifactsName: string): Promise<LaneSnapshot | null> {
+/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). Real `Lane` objects throughout (not a trimmed display type): claimableAsks (engine/workqueue.ts) needs the real shape (coordinators AND maintainers), and the DO already hands back exactly that. */
+async function getRootLane(env: WebEnv, artifactsName: string): Promise<Lane | null> {
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
-  return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: "_repo" })) as LaneSnapshot | null;
+  return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: "_repo" })) as Lane | null;
 }
 
-/** Every Lane in the repo, for the "Lanes" tab -- the full flattened cross-lane protocol feed (the "Protocol" tab) is derived from these same objects' `.history`, not a second fetch. */
-async function getAllLanes(env: WebEnv, artifactsName: string): Promise<LaneSnapshot[]> {
+/** Every Lane in the repo, for the "Lanes" tab -- the full flattened cross-lane protocol feed (the "Protocol" tab) and the Work page's claimable-asks query are both derived from these same objects, not a second fetch. */
+async function getAllLanes(env: WebEnv, artifactsName: string): Promise<Lane[]> {
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
-  return (await stub.callTool("lane_list", { repo: artifactsName })) as LaneSnapshot[];
+  return (await stub.callTool("lane_list", { repo: artifactsName })) as Lane[];
 }
 
 interface ProtocolEvent {
   laneId: string;
-  entry: LaneHistoryEntry;
+  entry: HistoryEntry;
 }
 
-function flattenProtocol(lanes: LaneSnapshot[]): ProtocolEvent[] {
+function flattenProtocol(lanes: Lane[]): ProtocolEvent[] {
   const events = lanes.flatMap((lane) => lane.history.map((entry) => ({ laneId: lane.id, entry })));
   return events.sort((a, b) => (a.entry.at < b.entry.at ? 1 : -1));
 }
@@ -660,6 +805,113 @@ function renderLadderNode(node: LadderNode, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
   return [self, ...node.children.map((c) => renderLadderNode(c, depth + 1))].join("");
+}
+
+// --- Work: every claimable Ask across every repo the viewer can see,
+// mirroring `zz work`'s own claimableAcrossRepos query -- same pure
+// engine function (engine/workqueue.ts's claimableAsks), just fed Lane
+// objects fetched via callTool instead of a local Backend. A repo a
+// human never set up `~/.zz/config.json` for is still visible here
+// (and vice versa): this reads from the same viewer-aware repo listing
+// /explore uses (private repos excluded unless the viewer has a
+// role), not a client-side config file.
+
+interface ClaimableWorkItem {
+  repoSlug: string;
+  laneId: string;
+  ask: AskEntry;
+}
+
+async function getClaimableForViewer(env: WebEnv, viewerId: string): Promise<ClaimableWorkItem[]> {
+  const repos = await listRecentRepos(env.DB, 200, viewerId);
+  const out: ClaimableWorkItem[] = [];
+  for (const repo of repos) {
+    const lanes = await getAllLanes(env, repo.artifacts_name);
+    for (const lane of lanes) {
+      for (const ask of claimableAsks(lane, viewerId)) {
+        out.push({ repoSlug: repo.slug, laneId: lane.id, ask });
+      }
+    }
+  }
+  return out;
+}
+
+async function doClaimAsk(env: WebEnv, actor: Agent, repoSlug: string, laneId: string, askId: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  const stub = doStub(env, repo.artifacts_name);
+  await stub.configure(repo.artifacts_name);
+  await stub.callTool("ask_claim", { repo: repo.artifacts_name, lane_id: laneId, ask_id: askId, actor: actor.id });
+}
+
+async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+
+  const items = await getClaimableForViewer(env, me.id);
+  const rows = items
+    .map(
+      (it) => `<li class="stack">
+        <div class="row"><a href="/${esc(it.repoSlug)}" class="mono" style="color:var(--pink)">${esc(it.repoSlug)}</a><span class="badge badge-muted">${esc(it.laneId)}</span><span class="badge badge-yellow">${esc(it.ask.kind)}</span></div>
+        <div class="muted">${esc(JSON.stringify(it.ask.payload ?? {}))}</div>
+        <form method="post" action="/work/claim" class="inline">
+          <input type="hidden" name="repo_slug" value="${esc(it.repoSlug)}">
+          <input type="hidden" name="lane_id" value="${esc(it.laneId)}">
+          <input type="hidden" name="ask_id" value="${esc(it.ask.id)}">
+          <button type="submit">Claim</button>
+        </form>
+      </li>`,
+    )
+    .join("");
+
+  return layout(
+    "Work",
+    me,
+    `<p class="hint">Every open Ask across every repo you can see that you're permitted to act on -- the same query \`zz work\` runs, just for a human clicking instead of an agent looping.</p>
+     <ul class="list">${rows || '<li class="empty">Nothing claimable right now.</li>'}</ul>`,
+  );
+}
+
+function workInstructions(repoSlug: string, laneId: string, askId: string, ask: AskEntry): string {
+  if (ask.kind === "changeset_review") {
+    return `<pre>zz review --repos ${esc(repoSlug)}</pre>
+      <p class="hint">Walks you through every changeset_review Ask you can approve, one at a time -- approve, request changes, or skip.</p>`;
+  }
+  return `<pre>zz repo clone ${esc(repoSlug)}
+cd ${esc(repoSlug.split("/").pop() ?? "repo")}
+# ...edit files...
+git add &lt;the files you changed&gt;
+zz repo submit ${esc(repoSlug)} ${esc(laneId)} ${esc(askId)} --message "what you did"</pre>
+    <p class="hint">Posts your changes for review and marks this Ask complete -- the same protocol sequence a scripted agent follows (changeset_review + submit_changeset, then a Maintainer's \`zz review\` and a coordinator's \`zz work\` merge it), just with content you wrote instead of generated.</p>`;
+}
+
+async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  const repoSlug = String(form.get("repo_slug") ?? "");
+  const laneId = String(form.get("lane_id") ?? "");
+  const askId = String(form.get("ask_id") ?? "");
+  try {
+    await doClaimAsk(env, me, repoSlug, laneId, askId);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  const lanes = repo ? await getAllLanes(env, repo.artifacts_name) : [];
+  const resolvedAsk = lanes.find((l) => l.id === laneId)?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
+
+  return layout(
+    "Claimed",
+    me,
+    `<div class="card stack">
+       <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane <span class="mono">${esc(laneId)}</span>).</p>
+       ${resolvedAsk ? workInstructions(repoSlug, laneId, askId, resolvedAsk) : '<p class="hint">Could not load this Ask\'s details -- check the repo page\'s Asks tab.</p>'}
+       <p><a href="/work">&larr; Back to Work</a></p>
+     </div>`,
+  );
 }
 
 async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
@@ -979,7 +1231,8 @@ async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Respo
 
 async function handleApiListRepos(request: Request, env: WebEnv): Promise<Response> {
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  const repos = q ? await searchRepos(env.DB, q, 50) : await listRecentRepos(env.DB, 50);
+  const viewer = await resolveRequestAgent(request, env);
+  const repos = q ? await searchRepos(env.DB, q, 50, viewer?.id ?? null) : await listRecentRepos(env.DB, 50, viewer?.id ?? null);
   return json({ repos });
 }
 
@@ -1057,10 +1310,17 @@ async function handleApiPostAsk(slug: string, request: Request, env: WebEnv): Pr
 
 // --- Explore (list + search, one route) ---
 
+async function handleApiExploreSearch(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+  if (!q) return json({ repos: [], agents: [] });
+  return json(await searchExplore(env.DB, q, 8, me?.id ?? null));
+}
+
 async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  const repos = q ? await searchRepos(env.DB, q, 50) : await listRecentRepos(env.DB, 50);
+  const repos = q ? await searchRepos(env.DB, q, 50, me?.id ?? null) : await listRecentRepos(env.DB, 50, me?.id ?? null);
 
   const listHtml = repos
     .map(
@@ -1072,10 +1332,13 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   return layout(
     "Explore",
     me,
-    `<form method="get" action="/explore" class="field-row" style="margin-bottom:1.25rem">
-       <input name="q" value="${esc(q)}" placeholder="search repos, owners, descriptions" style="flex:3">
-       <button type="submit">Search</button>
-     </form>
+    `<div class="ac-wrap" style="margin-bottom:1.25rem">
+       <form method="get" action="/explore" class="field-row">
+         <input name="q" value="${esc(q)}" placeholder="search repos and users" autocomplete="off" data-explore-search="explore-ac-box" style="flex:3">
+         <button type="submit">Search</button>
+       </form>
+       <div id="explore-ac-box" class="ac-list" hidden></div>
+     </div>
      <ul class="list">${listHtml || `<li class="empty">${q ? "No matches." : "No repos yet."}</li>`}</ul>`,
   );
 }
@@ -1223,7 +1486,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .map((e) => {
       if (e.type === "ASK") return `<li class="row"><span class="badge badge-yellow">ASK</span> ${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")} -- ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
       if (e.type === "ANSWER") return `<li class="row"><span class="badge badge-green">ANSWER</span> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
-      return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+      return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${esc(e.text)} <span class="muted">${esc(e.at)}</span></li>`;
     })
     .join("");
 
@@ -1231,30 +1494,37 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .map((l) => `<li class="row"><span class="mono">${esc(l.id)}</span> <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord: ${esc(l.coordinators?.join(", ") ?? "")}</span></li>`)
     .join("");
 
-  const protocolHtml = flattenProtocol(lanes)
-    .slice(0, 100)
+  // "Activity" -- the closest thing a static page has to the CLI's own
+  // activity feed: there's no server-side record of raw tool-call
+  // traffic (the TUI's activity tab reads a live process's in-memory
+  // LogBuffer, which only exists while `zz work` is actually running),
+  // so this is the full persisted protocol trail instead, styled as a
+  // dense log feed rather than badge-decorated rows to read the way a
+  // live feed does.
+  const logFeedHtml = flattenProtocol(lanes)
+    .slice(0, 150)
     .map(({ laneId, entry: e }) => {
-      const badge = e.type === "ASK" ? "badge-yellow" : e.type === "ANSWER" ? "badge-green" : "badge-cyan";
-      const rest = e.type === "ASK" ? `${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")}` : e.type === "ANSWER" ? `${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")}` : esc(JSON.stringify(e.payload ?? {}));
-      return `<li class="row"><span class="badge ${badge}">${esc(e.type)}</span> <span class="muted">${esc(laneId)}</span> ${rest} <span class="muted">${esc(e.at)}</span></li>`;
+      const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
+      const rest = e.type === "ASK" ? `${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")}` : e.type === "ANSWER" ? `${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")}` : esc(e.text);
+      return `<div class="log-line"><span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}&nbsp;&nbsp;<span class="muted">${esc(e.at)}</span></div>`;
     })
     .join("");
 
-  const activityHtml = commits
+  const commitsHtml = commits
     .map((c) => `<li class="row"><span class="mono">${esc(c.hash.slice(0, 8))}</span> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
     .join("");
 
   const fileTabs = [
-    readme ? { id: "readme", label: "README", html: `<pre>${esc(readme)}</pre>` } : null,
+    readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme)}</div>` } : null,
     { id: "ladder", label: "Ladder", html: `<ul class="list">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>` },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
+    { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>` },
   ].filter((t): t is { id: string; label: string; html: string } => t !== null);
 
   const activityTabs = [
-    { id: "activity", label: "Activity", html: `<ul class="list">${activityHtml || '<li class="empty">No commits yet.</li>'}</ul>` },
+    { id: "activity", label: "Activity", html: `<div class="log-feed">${logFeedHtml || '<div class="empty">No activity yet.</div>'}</div>` },
     { id: "asks", label: "Asks", html: `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>` },
     { id: "lanes", label: "Lanes", html: `<ul class="list">${lanesHtml || '<li class="empty">No Lanes yet.</li>'}</ul>` },
-    { id: "protocol", label: "Protocol", html: `<ul class="list">${protocolHtml || '<li class="empty">No protocol activity yet.</li>'}</ul>` },
   ];
 
   const tabGroup = (groupId: string, tabs: { id: string; label: string; html: string }[]): string => `
@@ -1263,28 +1533,34 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       ${tabs.map((t, i) => `<div id="${groupId}-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
     </div>`;
 
+  const cloneUrl = `${origin}/${slug}`;
+  const workCmd = `zz work --repos ${slug}`;
+
   return layout(
     slug,
     me,
     `<div class="card">
-       <div class="split">
-         <div>
-           <div class="row" style="margin-bottom:.5rem"><span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>${rolesHtml}</div>
-           <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
-           <div class="row">
-             <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
-             ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="secondary">Settings</button></a>` : ""}
-           </div>
-         </div>
-         <div class="align-right">
-           <pre>git clone ${esc(origin)}/${esc(slug)}</pre>
-           <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
-         </div>
+       <div class="card-head">
+         <div class="row">${rolesHtml}</div>
+         ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
+       <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+       <div class="clone-row">
+         <pre>git clone ${esc(cloneUrl)}</pre>
+         <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
+         <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
+       </div>
+       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+       <div class="clone-row">
+         <pre>${esc(workCmd)}</pre>
+         <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+       </div>
+       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
      </div>
 
      ${tabGroup("files", fileTabs)}
      ${tabGroup("act", activityTabs)}`,
+    { titleHtml: `<span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>` },
   );
 }
 
@@ -1488,6 +1764,9 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     if (m && request.method === "POST") return handleRevokeTokenForm(m[1], request, env);
   }
   if (path === "/explore") return handleExplore(request, env);
+  if (path === "/work" && request.method === "GET") return handleWorkPage(request, env);
+  if (path === "/work/claim" && request.method === "POST") return handleWorkClaimForm(request, env);
+  if (path === "/api/explore/search" && request.method === "GET") return handleApiExploreSearch(request, env);
 
   // --- JSON API (CLI/agent parity with everything above) ---
   if (path === "/api/login/start" && request.method === "POST") return handleApiLoginStart(request, env);

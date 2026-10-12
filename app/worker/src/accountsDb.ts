@@ -48,6 +48,7 @@ export interface RepoRow {
   artifacts_name: string;
   description: string | null;
   owner_id: string;
+  visibility: "public" | "private";
   created_at: string;
   updated_at: string;
 }
@@ -197,10 +198,10 @@ export async function upsertRepo(db: D1Database, row: { slug: string; artifactsN
     await db.prepare("UPDATE repos SET description = ?, updated_at = ? WHERE id = ?").bind(row.description, now, existing.id).run();
     return { ...existing, description: row.description, updated_at: now };
   }
-  const repo: RepoRow = { id: shortId("repo"), slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_id: row.ownerId, created_at: now, updated_at: now };
+  const repo: RepoRow = { id: shortId("repo"), slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_id: row.ownerId, visibility: "public", created_at: now, updated_at: now };
   await db
-    .prepare("INSERT INTO repos (id, slug, artifacts_name, description, owner_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .bind(repo.id, repo.slug, repo.artifacts_name, repo.description, repo.owner_id, repo.created_at, repo.updated_at)
+    .prepare("INSERT INTO repos (id, slug, artifacts_name, description, owner_id, visibility, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(repo.id, repo.slug, repo.artifacts_name, repo.description, repo.owner_id, repo.visibility, repo.created_at, repo.updated_at)
     .run();
   return repo;
 }
@@ -209,27 +210,54 @@ export async function getRepoBySlug(db: D1Database, slug: string): Promise<RepoR
   return db.prepare("SELECT * FROM repos WHERE slug = ?").bind(slug).first<RepoRow>();
 }
 
+export async function updateRepoVisibility(db: D1Database, repoId: string, visibility: "public" | "private"): Promise<void> {
+  await db.prepare("UPDATE repos SET visibility = ? WHERE id = ?").bind(visibility, repoId).run();
+}
+
 export async function touchRepoUpdatedAt(db: D1Database, repoId: string): Promise<void> {
   await db.prepare("UPDATE repos SET updated_at = ? WHERE id = ?").bind(new Date().toISOString(), repoId).run();
 }
 
-export async function listRecentRepos(db: D1Database, limit: number): Promise<RepoRow[]> {
-  const result = await db.prepare("SELECT * FROM repos ORDER BY updated_at DESC LIMIT ?").bind(limit).all<RepoRow>();
+// Every repo-listing query below takes `viewerId` (null for an
+// anonymous visitor) and excludes private repos the viewer has no
+// repo_roles grant on -- a private repo is invisible on /explore and
+// search unless you're logged in AND have access, not just hidden from
+// its own page (that gate already existed via canReadRepo; this closes
+// the SAME gate for discovery, which previously ignored visibility
+// entirely).
+const VISIBILITY_CLAUSE = "(r.visibility = 'public' OR r.id IN (SELECT repo_id FROM repo_roles WHERE principal = ?))";
+
+export async function listRecentRepos(db: D1Database, limit: number, viewerId: string | null): Promise<RepoRow[]> {
+  const result = await db
+    .prepare(`SELECT * FROM repos r WHERE ${VISIBILITY_CLAUSE} ORDER BY updated_at DESC LIMIT ?`)
+    .bind(viewerId ?? "", limit)
+    .all<RepoRow>();
   return result.results;
 }
 
-export async function searchRepos(db: D1Database, query: string, limit: number): Promise<RepoRow[]> {
+export async function searchRepos(db: D1Database, query: string, limit: number, viewerId: string | null): Promise<RepoRow[]> {
   const like = `%${query}%`;
   const result = await db
     .prepare(
       `SELECT DISTINCT r.* FROM repos r
        LEFT JOIN agents a ON r.owner_id = a.id
-       WHERE r.slug LIKE ? OR r.description LIKE ? OR a.display_name LIKE ?
+       WHERE (r.slug LIKE ? OR r.description LIKE ? OR a.display_name LIKE ?) AND ${VISIBILITY_CLAUSE}
        ORDER BY r.updated_at DESC LIMIT ?`,
     )
-    .bind(like, like, like, limit)
+    .bind(like, like, like, viewerId ?? "", limit)
     .all<RepoRow>();
   return result.results;
+}
+
+export interface ExploreResults {
+  repos: RepoRow[];
+  agents: Agent[];
+}
+
+/** The mixed repo+agent feed behind /explore's autocomplete -- same visibility rule as searchRepos. */
+export async function searchExplore(db: D1Database, query: string, limit: number, viewerId: string | null): Promise<ExploreResults> {
+  const [repos, agents] = await Promise.all([searchRepos(db, query, limit, viewerId), searchAgents(db, query, limit)]);
+  return { repos, agents };
 }
 
 export async function listReposOwnedBy(db: D1Database, ownerId: string): Promise<RepoRow[]> {

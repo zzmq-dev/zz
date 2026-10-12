@@ -273,11 +273,9 @@ export interface WorkOptions {
 }
 
 export async function work(options: WorkOptions): Promise<void> {
-  const config = readConfig({ agent: options.agent, repos: options.repos });
   const scope: WorkScope = options.scope ?? "all";
   const provider = options.provider ?? "ollama";
   const backend = resolveBackend(provider, options.model);
-  const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
 
   // Remote is the default -- the real coordination layer this project
   // is about runs on a deployed Worker, not a local .zz/ directory.
@@ -285,6 +283,17 @@ export async function work(options: WorkOptions): Promise<void> {
   // path, which has no reason to touch the network at all.
   const useRemote = !options.local;
   const creds = useRemote ? requireCredentials() : null;
+
+  // In remote mode your identity IS your logged-in credential --
+  // default --agent to it rather than silently falling through to a
+  // separate (and easily stale or just never-set) agent id in
+  // ~/.zz/config.json. A mismatch there isn't a soft problem: the
+  // server's anti-impersonation check (handleApiCallTool) rejects
+  // every single tool call whose actor/from isn't the bearer token's
+  // own agent id, so this used to fail closed, silently, for anyone
+  // who hadn't hand-edited config.json to match their login.
+  const config = readConfig({ agent: options.agent ?? creds?.agentId, repos: options.repos });
+  const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
 
   for (const r of resolvedRepos) {
     if (useRemote) {

@@ -5,18 +5,29 @@
 // (claim, grant/deny) handled for them rather than hand-typed. Not a
 // general interactive session manager: just this one HITL-critical
 // step, since that's the concrete need, not the general one.
+//
+// Remote by default, like `zz work` -- same reasoning: the real
+// coordination layer runs on a deployed Worker, not a local .zz/
+// directory, so a changeset_review posted by a remote `zz work` run
+// (or the web app's own protocol activity) is invisible to this
+// command unless it watches the same backend. --local keeps the
+// original local/demo path fully working.
 import { createInterface } from "node:readline/promises";
 import { readConfig } from "../lib/config.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../lib/repo.js";
 import { claimableAcrossRepos } from "../../engine/workqueue.js";
 import { ask, answer } from "../../engine/lane.js";
-import { resolveBackend } from "../../engine/backend.js";
+import { resolveBackend, withBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
+import { requireCredentials, authedCloneUrl } from "../lib/credentials.js";
+import { callRemoteTool } from "../lib/remoteTools.js";
+import { remoteBackend } from "../lib/remoteBackend.js";
 
 export interface ReviewOptions {
   agent?: string;
   repos?: string[];
   pollMs?: number;
+  local?: boolean;
 }
 
 interface ChangesetReviewPayload {
@@ -46,15 +57,30 @@ function printReview(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry): 
 }
 
 export async function review(options: ReviewOptions): Promise<void> {
-  const config = readConfig({ agent: options.agent, repos: options.repos });
+  const useRemote = !options.local;
+  const creds = useRemote ? requireCredentials() : null;
+
+  // See work.ts's identical comment: in remote mode your identity IS
+  // your logged-in credential, not a separate (and easily mismatched)
+  // id in ~/.zz/config.json -- a mismatch fails every remote call
+  // closed via the server's anti-impersonation check.
+  const config = readConfig({ agent: options.agent ?? creds?.agentId, repos: options.repos });
   const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
-  for (const r of resolvedRepos) ensureCloned(r);
+  // Review only ever reads a changeset's payload (already embedded in
+  // the ask) and posts grant/deny -- no working tree is touched, so a
+  // local clone isn't needed to review remotely. Still cloned locally
+  // for the original --local/demo path, matching its previous behavior.
+  if (!useRemote) {
+    for (const r of resolvedRepos) ensureCloned(r);
+  } else {
+    for (const r of resolvedRepos) ensureCloned(r, authedCloneUrl(creds!.apiBase, creds!.token, r.slug));
+  }
 
   const pollMs = options.pollMs ?? 1000;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  console.log(`zz review: agent="${config.agent}" repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
+  console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
 
-  try {
+  const mainLoop = async (): Promise<void> => {
     for (;;) {
       const claimable = (
         await claimableAcrossRepos(
@@ -76,20 +102,31 @@ export async function review(options: ReviewOptions): Promise<void> {
       if (choice === "s") continue;
 
       if (!next.alreadyClaimed) {
-        const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
-        const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
-        await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+        if (useRemote) {
+          await callRemoteTool(resolved.slug, "ask_claim", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent });
+        } else {
+          const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
+          const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
+          await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+        }
       }
 
       if (choice === "a") {
-        await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+        if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+        else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
         console.log(`approved ${next.ask.id}`);
       } else {
         const reason = await rl.question("reason: ");
-        await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
+        if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "deny", payload: { reason } });
+        else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
         console.log(`requested changes on ${next.ask.id}: ${reason}`);
       }
     }
+  };
+
+  try {
+    if (useRemote) await withBackend(remoteBackend, mainLoop);
+    else await mainLoop();
   } finally {
     rl.close();
   }

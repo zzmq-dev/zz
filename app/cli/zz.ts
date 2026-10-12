@@ -20,6 +20,7 @@ import { review } from "./commands/review.js";
 import { login } from "./commands/login.js";
 import { agentCreate, agentToken, agentList } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from "./commands/repo.js";
+import { repoSubmit } from "./commands/repo-submit.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -160,10 +161,11 @@ program
 program
   .command("review")
   .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge')
-  .option("--agent <id>", "your agent identity (default: from ~/.zz/config.json) -- must be listed as a maintainer on the lane to see anything")
+  .option("--agent <id>", "your agent identity (default: your zz-logged-in identity, remote; ~/.zz/config.json, local)")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
-  .action(async (opts: { agent?: string; repos?: string[] }) => {
-    await review({ agent: opts.agent, repos: opts.repos });
+  .option("--local", "use the original local/demo backend instead of the default: your zz-logged-in identity's real protocol state on the deployed Worker")
+  .action(async (opts: { agent?: string; repos?: string[]; local?: boolean }) => {
+    await review({ agent: opts.agent, repos: opts.repos, local: opts.local });
   });
 
 program
@@ -241,6 +243,14 @@ repoCmd
   .description("git clone a repo with your zz login token embedded automatically -- no need to paste it into a username/password prompt by hand")
   .action(async (slug: string, dir?: string) => {
     await repoClone(slug, dir);
+  });
+
+repoCmd
+  .command("submit <owner/repo> <lane-id> <ask-id>")
+  .description("the human-contributor path: from inside your local clone, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated")
+  .option("--message <text>", "commit message / summary (default: a generated one naming the staged files)")
+  .action(async (slug: string, laneId: string, askId: string, opts: { message?: string }) => {
+    await repoSubmit(slug, laneId, askId, { message: opts.message });
   });
 
 program.parseAsync(process.argv);
