@@ -23,6 +23,7 @@
 // across the watched repos.
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { spawnSync } from "node:child_process";
 import { claimableAcrossRepos, type WorkScope, type ClaimableEntry } from "../engine/workqueue.js";
 import type { ChatBackend } from "../agent/chatBackend.js";
 import {
@@ -50,6 +51,8 @@ import { useMouse } from "./useMouse.js";
 import { copyToClipboard } from "./clipboard.js";
 import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { LaneList } from "./LaneList.js";
+import { LaneDetail } from "./LaneDetail.js";
+import { enterFullscreen, exitFullscreen } from "./fullscreen.js";
 import { BACKDROP, PANEL, BORDER, MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface AssistAppProps {
@@ -142,6 +145,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
   const [phase, setPhase] = useState<"picking" | "lanes" | "detail" | "session">("picking");
   const [laneEditing, setLaneEditing] = useState(false);
+  const [laneDetailTarget, setLaneDetailTarget] = useState<{ repo: string; laneId: string } | null>(null);
   const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
   const [cursor, setCursor] = useState(0);
   const [previewing, setPreviewing] = useState<ClaimableEntry | null>(null);
@@ -178,6 +182,13 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const reviewResultRef = useRef<ReviewProposal | null>(null);
   const entriesRef = useRef<TranscriptEntry[]>([]);
   entriesRef.current = entries;
+  // Whichever real directory on disk the current session is actually
+  // working in -- the parent repo until/unless a shard gets created
+  // (onShardReady, below) or a review workspace gets prepared, which
+  // both update this to the real shard clone. ctrl+t opens a shell
+  // there directly, so you can poke at the exact files being discussed
+  // without hunting for the path yourself.
+  const shardRepoDirRef = useRef<string | null>(null);
 
   const reposKey = watch
     .get()
@@ -290,11 +301,18 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       },
       callTool: useRemote ? remoteCallTool : undefined,
       authedCloneUrlFor,
-      onShardReady: (repo) => watch.add(repo),
+      onShardReady: (repo) => {
+        watch.add(repo);
+        shardRepoDirRef.current = repo.repoDir;
+      },
     };
     flowOptsRef.current = flowOpts;
     workResultRef.current = null;
     reviewResultRef.current = null;
+    // Default to the parent repo's own clone until/unless a shard (or
+    // review workspace) replaces it above/below -- correct as-is for
+    // local mode, which never shards at all.
+    shardRepoDirRef.current = resolvedParent.repoDir;
     // The full ask description lives here, in the scrollable log, not
     // in the fixed header above it -- a header whose height depends on
     // how long a task description happens to be is exactly what broke
@@ -330,6 +348,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           setStatus("preparing the files for review...");
           const workspace = await modeRun(() => prepareReviewWorkspace(flowOpts));
           if (cancelled) return;
+          shardRepoDirRef.current = workspace.repoDir;
           pushEntry("system", `Written to ${workspace.repoDir} -- cd there to browse or test it.\n\n${workspace.diff}`);
           setLiveLabel("thinking");
           setStatus("drafting a recommendation...");
@@ -514,6 +533,25 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       // a no-op rather than copying something irrelevant.
       return;
     }
+    // ctrl+t: drop into a real shell in the shard directory this
+    // session is actually working in -- same reasoning as ctrl+y above
+    // for why this is ctrl-gated rather than a bare letter. Only
+    // meaningful once a session has a directory on disk at all, so
+    // scoped to "session" (not the picker/lanes phases, which have
+    // none). Deliberately not gated on busy/done: if the model is mid
+    // stream, spawnSync still blocks correctly, it's just unusual to do
+    // on purpose.
+    if (key.ctrl && input === "t" && phase === "session" && shardRepoDirRef.current) {
+      const dir = shardRepoDirRef.current;
+      exitFullscreen();
+      const wasRaw = process.stdin.isTTY && process.stdin.isRaw;
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+      spawnSync(process.env.SHELL || "/bin/bash", [], { cwd: dir, stdio: "inherit" });
+      if (process.stdin.isTTY && wasRaw) process.stdin.setRawMode(true);
+      enterFullscreen();
+      setFlash(`back from shell (${dir})`);
+      return;
+    }
     if (phase === "picking") {
       if (input === "q") {
         void onExit().then(() => process.exit(0));
@@ -537,12 +575,15 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       return;
     }
     if (phase === "lanes") {
-      // Composing (LaneList's own text box) owns the keyboard entirely
-      // -- even esc, which LaneList interprets itself as "cancel
-      // composing," not "leave this screen." Only when merely
-      // browsing does esc belong to this outer handler.
+      // Composing (LaneDetail's own text box) owns the keyboard
+      // entirely -- even esc, which LaneDetail interprets itself as
+      // "cancel composing," not "leave this screen." While viewing a
+      // lane's own detail (laneDetailTarget set), LaneDetail's own esc
+      // handler already backs out of that one level (its onBack prop);
+      // this outer handler only owns esc at the plain-list level, to
+      // avoid double-handling the same keystroke.
       if (laneEditing) return;
-      if (key.escape) setPhase("picking");
+      if (key.escape && !laneDetailTarget) setPhase("picking");
       return;
     }
     if (phase === "detail") {
@@ -706,14 +747,29 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
           <Text bold color={CYAN} wrap="truncate-end">
-            post a new ask -- pick a lane ({backend.name})
+            {laneDetailTarget ? `${laneDetailTarget.repo}/${laneDetailTarget.laneId}` : "post a new ask -- pick a lane"} ({backend.name})
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-          <LaneList snapshots={laneSnapshots} maxRows={innerRows} scrollOffset={0} onPostAsk={onPostAsk} identity={agent} onEditingChange={setLaneEditing} />
+          {laneDetailTarget ? (
+            <LaneDetail
+              repo={laneDetailTarget.repo}
+              laneId={laneDetailTarget.laneId}
+              snapshots={laneSnapshots}
+              maxRows={innerRows}
+              identity={agent}
+              onPostAsk={onPostAsk}
+              onBack={() => setLaneDetailTarget(null)}
+              onEditingChange={setLaneEditing}
+            />
+          ) : (
+            <LaneList snapshots={laneSnapshots} maxRows={innerRows} scrollOffset={0} onSelect={(repo, laneId) => setLaneDetailTarget({ repo, laneId })} />
+          )}
         </Box>
         <Box>
-          <Text color={MUTED} wrap="truncate-end">esc: back to the ask list</Text>
+          <Text color={MUTED} wrap="truncate-end">
+            esc: back
+          </Text>
         </Box>
       </Box>
     );
@@ -808,7 +864,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       {done && <Text color={MUTED}>enter/esc: back to the ask list</Text>}
       <Box>
         <Text color={MUTED} wrap="truncate-end">
-          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y or option/shift-drag: copy esc: pause ctrl+c: quit
+          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y or option/shift-drag: copy ctrl+t: shell esc: pause ctrl+c: quit
         </Text>
       </Box>
     </Box>

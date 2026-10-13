@@ -13,6 +13,12 @@
 // terminal to select text natively anyway -- a standard convention, not
 // a workaround specific to this app.
 let active = false;
+// Separate from `active` because enterFullscreen can now be called more
+// than once per process (AssistApp's ctrl+t shell toggle leaves and
+// re-enters it) -- the exit/SIGINT/SIGTERM handlers only need
+// registering the first time, not once per re-entry, or they'd pile up
+// across however many times someone hops in and out of a shell.
+let listenersAttached = false;
 
 export function enterFullscreen(): void {
   if (active) return;
@@ -22,6 +28,8 @@ export function enterFullscreen(): void {
   process.stdout.write("\x1B[?25l"); // hide cursor
   process.stdout.write("\x1B[?1000h"); // enable mouse reporting (click + wheel)
   process.stdout.write("\x1B[?1006h"); // SGR extended mouse encoding
+  if (listenersAttached) return;
+  listenersAttached = true;
   const restore = () => exitFullscreen();
   process.on("exit", restore);
   process.on("SIGINT", () => {

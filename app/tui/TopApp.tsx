@@ -8,6 +8,7 @@ import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { Text, useInput } from "ink";
 import { TabView } from "./TabView.js";
 import { LaneList } from "./LaneList.js";
+import { LaneDetail } from "./LaneDetail.js";
 import { LiveLog } from "./LiveLog.js";
 import { LadderView } from "./LadderView.js";
 import { Explore } from "./Explore.js";
@@ -59,6 +60,7 @@ export function TopApp({
   const ladders = useLadderTrees(repos, 2000, remote);
   const [exploreEditing, setExploreEditing] = useState(false);
   const [laneEditing, setLaneEditing] = useState(false);
+  const [laneDetail, setLaneDetail] = useState<{ repo: string; laneId: string } | null>(null);
   const [identity, setIdentity] = useState(identityUsername);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -132,9 +134,21 @@ export function TopApp({
         { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
         {
           label: "lanes",
-          content: (maxRows, scrollOffset) => (
-            <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} onPostAsk={onPostAsk} identity={identity} onEditingChange={setLaneEditing} />
-          ),
+          content: (maxRows, scrollOffset) =>
+            laneDetail ? (
+              <LaneDetail
+                repo={laneDetail.repo}
+                laneId={laneDetail.laneId}
+                snapshots={snapshots}
+                maxRows={maxRows}
+                identity={identity}
+                onPostAsk={onPostAsk}
+                onBack={() => setLaneDetail(null)}
+                onEditingChange={setLaneEditing}
+              />
+            ) : (
+              <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} onSelect={(repo, laneId) => setLaneDetail({ repo, laneId })} />
+            ),
           getFullText: () => laneListText(snapshots),
         },
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
