@@ -29,6 +29,7 @@ import { createCloudflareBackend } from "../../agent/cloudflareBackend.js";
 import { WorkApp } from "../../tui/WorkApp.js";
 import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
+import { WIDE_BANNER } from "../lib/banner.js";
 import { authedCloneUrl } from "../lib/credentials.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { createRepoWatchStore, type RepoWatchStore } from "../lib/watchedRepos.js";
@@ -363,9 +364,19 @@ export async function work(options: WorkOptions): Promise<void> {
 
   const logBuffer = new LogBuffer();
   const statusRef = { current: "starting..." };
-  const onLog = options.stdio ? (line: string) => console.error(line) : (line: string) => logBuffer.push(line);
+  // Timestamped so a captured --stdio log is actually parsable
+  // (grep/sort by time, correlate against other logs) -- the TUI's own
+  // ActivityLog stays bare (it's a live, scrolling view where the
+  // "when" is "now," not a stored artifact someone greps later).
+  const onLog = options.stdio ? (line: string) => console.error(`${new Date().toISOString()} ${line}`) : (line: string) => logBuffer.push(line);
 
   if (options.stdio) {
+    // Always the full-size banner, not the narrow/responsive choice
+    // --version/--help make: a --stdio run is captured to a log file
+    // far more often than watched live in a genuinely tiny terminal,
+    // and there's no established narrow-log-header convention to fall
+    // back to here the way there is for a help screen.
+    console.error(WIDE_BANNER);
     console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();

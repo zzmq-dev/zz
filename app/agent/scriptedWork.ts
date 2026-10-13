@@ -194,7 +194,11 @@ FILE: <another path, if you're touching more than one file>
 
 List one FILE block per file you're adding or changing. Nothing else -- no prose outside these lines, no explanation, no tool calls.
 
-If the prompt below lists "potentially relevant existing code elsewhere in the ecosystem", check whether it actually covers what you need before writing a new implementation yourself -- if it does, depend on it (add it to this file's dependencies/imports) and reference it, rather than reimplementing the same thing from scratch.`;
+If the prompt below lists "potentially relevant existing code elsewhere in the ecosystem", check whether it actually covers what you need before writing a new implementation yourself -- if it does, depend on it (add it to this file's dependencies/imports) and reference it, rather than reimplementing the same thing from scratch.
+
+Your code is verified by actually running it in a disposable sandbox, with no network access and no package install step -- only what's already in the repo (plus Node's own built-ins) is available, so two things matter for anything you write to actually pass:
+- Tests run with Node's own built-in test runner ("node --test"). Import \`test\`/\`describe\` from "node:test" and assertions from "node:assert" (or "node:assert/strict") -- never assume a third-party framework like Jest, Mocha, or Vitest is installed, because nothing installs it. A bare \`describe(...)\`/\`test(...)\` with no import, or an \`import ... from "vitest"\`, will fail with "not defined"/"module not found," not pass.
+- A plain JavaScript file runs as real Node ESM: use \`export function\`/\`export const\` and \`import\`, never CommonJS's \`module.exports\`/\`require\` (mixing the two across your implementation and test file is exactly the "named export not found" error you'd see if you did) -- and the file extension is required on every relative import (e.g. \`import { foo } from "./foo.js"\`, never \`"./foo"\`); TypeScript's own extensionless resolution doesn't apply here.`;
 
 const FIX_SYSTEM_PROMPT = `${PROPOSE_SYSTEM_PROMPT}\n\nYour previous proposal failed when actually run. Fix it and output the same format again, for the full corrected set of files.`;
 
@@ -902,12 +906,39 @@ export async function prepareReviewWorkspace(opts: ScriptedFlowOptions): Promise
 
 /** Claim (if needed) and draft a decision -- doesn't post anything. --assist (cli/commands/work.ts) shows `decision`/`reason` to a human, who may accept as-is or override either field, then calls acceptReview; runChangesetReview (below) just calls both back to back, unchanged behavior from before this split. */
 export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewProposal> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onPartial, callTool = localCallTool } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onPartial, callTool = localCallTool, authedCloneUrlFor } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
 
   const payload = theAsk.payload as ChangesetReviewPayload;
+
+  // Independently re-verify it actually runs -- never trust the
+  // contributor's own earlier sandbox pass as the final word (the same
+  // "never trust self-declared scope" principle this review step
+  // already exists for, site/content/governance/index.md, extended to
+  // "never trust a self-declared passing test run" too). An objective
+  // fact, not a judgment call, so a sandbox failure here skips the
+  // model's own review entirely and denies outright -- acceptReview's
+  // own deny-branch (below) already turns a deny into a fresh "work"
+  // ask carrying this exact failure as feedback, so the retry loop
+  // closes automatically on zz work's very next poll, no restart or
+  // human intervention needed. Same source_repo/shard resolution
+  // prepareReviewWorkspace uses, since a sharded task's proposed files
+  // assume that shard's own base, not the parent repo's.
+  let target = resolved;
+  if (payload.source_repo && authedCloneUrlFor) {
+    target = resolveRepo(payload.source_repo);
+    ensureCloned(target, authedCloneUrlFor(payload.source_repo));
+  }
+  const sandboxResult = await verifyProposal(target, payload.files);
+  if (sandboxResult.exitCode !== 0) {
+    return {
+      decision: "request_changes",
+      reason: `Sandbox verification failed at review time (exit ${sandboxResult.exitCode}):\n${sandboxResult.stdout}\n${sandboxResult.stderr}`.slice(0, 1000),
+    };
+  }
+
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
   const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onPartial);
