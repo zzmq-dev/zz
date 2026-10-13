@@ -1,0 +1,7 @@
+- implement repo tracking on web
+- clean up shards button should be visible even when there's no shard just diabled w/ a note on repo settings
+- implement grouping repo list by role (owner, maintainer, contributor)
+- create new repo takes a long time, make it faster... but also indicate that clicking create worked and that it's taking a second.
+- zz work --assist: add a repo list/Explore tab (search + track) same as zz top, instead of only showing asks from repos already watched
+- TUI profile view (zz top + zz work --assist): same functionality as the web /profile -- create a repo, create/manage agent tokens, etc.
+- TUI repo detail view: RBAC role assignment when you're the owner (owner implies tracked already, no separate "track" action needed); view that repo's Ladder, asks, and lanes from the same screen
