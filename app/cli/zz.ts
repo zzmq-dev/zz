@@ -27,6 +27,7 @@ import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from ".
 import { repoSubmit } from "./commands/repo-submit.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
+import { ladderPush } from "./commands/ladder-push.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -93,6 +94,13 @@ ladder
   .option("--as <name>", "write as a managed agent instead of yourself")
   .action(async (repo: string, path: string, opts: { kind: string; summary: string; commit?: string; as?: string }) => {
     await ladderEdit(repo, path, opts);
+  });
+
+ladder
+  .command("push <local-repo> <owner/repo>")
+  .description("one-time transfer of a locally-built Ladder (zz ladder build) onto a real remote repo: pushes the real git history, then replays every local rung via ladder_write_rung -- no model calls, no GitHub API calls, just reading back what zz ladder build already wrote")
+  .action(async (localRepo: string, targetRepo: string) => {
+    await ladderPush(localRepo, targetRepo);
   });
 
 const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");

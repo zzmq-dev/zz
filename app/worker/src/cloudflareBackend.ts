@@ -32,19 +32,23 @@ async function withRepo<T>(artifacts: ArtifactsNamespace, name: string, fn: (rep
   }
 }
 
-// Rung's real kind union is wider (directory/release/ask/contributor/
-// dependencies/...) than what cloudflareLadderBackend.ts implements
-// (repo/file/changeset/filechange, matching what agent/scriptedWork.ts
-// actually writes) -- this throws a clear, specific error for any
-// other kind rather than silently mishandling it.
+// Rung's real kind union is wider than this still -- function/lines/
+// answer/package/linechange have no git object of their own and are
+// never written as a TOP-LEVEL rung at all (agent/tools.ts's own
+// VALID_TOP_LEVEL_KINDS already rejects that before this ever runs);
+// they only ever appear embedded inside an anchor's children, which
+// this function's own recursive .map(toSimpleRung) call handles
+// without needing its own case here.
+const IMPLEMENTED_KINDS = new Set<Rung["kind"]>(["repo", "file", "changeset", "filechange", "directory", "release", "ask", "contributor", "dependencies"]);
+
 function toSimpleRung(rung: Rung): SimpleRung {
   const kind = rung.kind;
-  if (kind !== "repo" && kind !== "file" && kind !== "changeset" && kind !== "filechange") {
-    throw new Error(`CloudflareBackend: rung kind "${kind}" isn't implemented yet (only repo/file/changeset/filechange are -- see cloudflareLadderBackend.ts's header). Add it there the same way if something now writes it.`);
+  if (!IMPLEMENTED_KINDS.has(kind)) {
+    throw new Error(`CloudflareBackend: rung kind "${kind}" isn't implemented yet (see cloudflareLadderBackend.ts's header for what is). Add it there the same way if something now writes it.`);
   }
   return {
     path: rung.path,
-    kind,
+    kind: kind as SimpleRung["kind"],
     summary: rung.summary,
     sources: rung.sources.filter((s) => s.kind === "commit") as SimpleRung["sources"],
     children: rung.children.map(toSimpleRung),
@@ -195,6 +199,31 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       if (path.startsWith("changesets/")) {
         const sha = path.slice("changesets/".length);
         return (await readRung(remote, token, repo, "changeset", path, sha, notesCache)) as RealEmbeddedRung | null;
+      }
+      // "directory" rungs have no path-prefix convention of their own
+      // (same as the local backend, engine/ladderNotes.ts's own
+      // readAnchor, which doesn't handle them either) -- they're only
+      // ever read as embedded children of their parent's own rung via
+      // a whole-tree walk (resolveLadderTree), never by a standalone
+      // point lookup, so there's nothing to route here.
+      if (path.startsWith("asks/")) {
+        return (await readRung(remote, token, repo, "ask", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
+      }
+      if (path.startsWith("contributors/")) {
+        return (await readRung(remote, token, repo, "contributor", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
+      }
+      if (path === "dependencies" || path.startsWith("dependencies/") || path === "dependents") {
+        return (await readRung(remote, token, repo, "dependencies", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
+      }
+      // Root-anchored, not index-resolved-to-the-tag's-own-commit the
+      // way the local backend does it (engine/ladderNotes.ts's own
+      // readIndex lookup) -- there's no stateDir/index file remotely,
+      // and cloudflareLadderBackend.ts's own writeRung already made
+      // this same simplification on the write side (see
+      // ROOT_ANCHORED_KINDS's comment there). The real commit a
+      // release maps to still lives in the rung's own `sources`.
+      if (path.startsWith("releases/")) {
+        return (await readRung(remote, token, repo, "release", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
       }
       return (await readRung(remote, token, repo, "file", path, undefined, notesCache)) as RealEmbeddedRung | null;
     });

@@ -10,14 +10,26 @@
 // of how large or old the repo gets -- no reason to hold it to the
 // same no-clone constraint the changeset-commit path needed.
 //
-// Scoped to what agent/scriptedWork.ts actually writes: "file" rungs
-// (anchored to a path's blob at HEAD) and "changeset" rungs (anchored
-// to the commit itself, with "filechange" children embedded inline,
-// never as separate notes -- matching engine/ladderNotes.ts's own
-// anchor rules). Directories, releases, ask-threads, dependencies are
-// real rung kinds engine/ladderNotes.ts handles locally but nothing
-// in the live agent loop writes yet; add them here the same way if
-// that changes.
+// Originally scoped to just what agent/scriptedWork.ts's own live
+// agent loop writes -- "file" rungs (anchored to a path's blob at
+// HEAD) and "changeset" rungs (anchored to the commit itself, with
+// "filechange" children embedded inline, never as separate notes --
+// matching engine/ladderNotes.ts's own anchor rules). Now also covers
+// what cli/commands/ladder-build.ts's remote-targeting onboarding
+// needs: "directory"/"ask"/"contributor"/"dependencies" (none of
+// these are a real path in the tree, so -- same reasoning as "repo" --
+// they anchor to the repo's own fixed root commit, not a blob) and
+// "release" (anchored to the real commit its tag points to, supplied
+// via `sources` the same way "changeset" already is).
+//
+// Unlike engine/ladderNotes.ts's local equivalent, which gives each
+// ask/contributor/dependency its own per-item notes ref,
+// "directory"/"ask"/"contributor"/"dependencies" all share the one
+// "code" ref here, same as "file"/"repo" -- a real round trip per
+// distinct ref is the documented cost on this path (see NotesCache's
+// own comment below), and a large onboarding run creating one new ref
+// per issue/contributor would multiply that cost for no real benefit
+// remotely. "release" gets its own ref, matching local.
 import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
@@ -25,7 +37,7 @@ import type { ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
 
 export interface SimpleRung {
   path: string;
-  kind: "repo" | "file" | "changeset" | "filechange";
+  kind: "repo" | "file" | "changeset" | "filechange" | "directory" | "release" | "ask" | "contributor" | "dependencies";
   summary: string;
   sources: { kind: "commit"; ref: string; title: string; author: string; at: string }[];
   children: SimpleRung[];
@@ -49,8 +61,24 @@ function isRef(x: EmbeddedRung | EmbeddedRef): x is EmbeddedRef {
 
 function notesRefFor(kind: SimpleRung["kind"]): string {
   if (kind === "changeset") return "refs/notes/zz/ladder/changeset";
+  if (kind === "release") return "refs/notes/zz/ladder/release";
   return "refs/notes/zz/ladder/code";
 }
+
+// None of these correspond to one real file blob -- same reasoning
+// "repo" already anchors to the fixed root commit for (a directory
+// listing/an issue thread/a contributor/a dependency all change
+// independently of any one commit, so anchoring to HEAD's own tree
+// would silently orphan the note on the very next unrelated commit).
+// "release" is anchored here too, by the same path-derivability
+// constraint changeset's own anchor sidesteps by embedding the sha
+// directly in its path ("changesets/<sha>") -- a release's path
+// ("releases/<tag>") doesn't carry a commit sha the read side could
+// recover without a real tag lookup, which the remote repo may not
+// even have pushed tags to resolve. The real commit a release maps to
+// is still recorded in its own `sources`, just not used as the note's
+// anchor.
+const ROOT_ANCHORED_KINDS = new Set<SimpleRung["kind"]>(["repo", "directory", "ask", "contributor", "dependencies", "release"]);
 
 function embed(rung: SimpleRung): EmbeddedRung {
   return { path: rung.path, kind: rung.kind, summary: rung.summary, sources: rung.sources, children: rung.children.map(embed) };
@@ -86,8 +114,8 @@ export async function rootCommitOid(repo: ArtifactsRepoHandle): Promise<string> 
 }
 
 async function anchorShaForRung(repo: ArtifactsRepoHandle, rung: Pick<SimpleRung, "kind" | "path" | "sources">): Promise<string> {
-  if (rung.kind === "repo") return rootCommitOid(repo);
-  if (rung.kind === "changeset") {
+  if (ROOT_ANCHORED_KINDS.has(rung.kind)) return rootCommitOid(repo);
+  if (rung.kind === "changeset" || rung.kind === "release") {
     const source = rung.sources.find((s) => s.kind === "commit");
     if (!source) throw new Error(`${rung.path}: no commit source to anchor a note to`);
     return source.ref;

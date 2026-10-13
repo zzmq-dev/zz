@@ -1,13 +1,24 @@
 // Today's behavior, unchanged, behind the Backend interface -- a real
-// local clone plus flat/SQLite files under app/state/, exactly as
-// before. The only thing that moves is who resolves a repo slug into
-// paths: that logic used to live in cli/lib/repo.ts and get threaded
-// through every call site by the caller; it lives here now, since a
-// path is something only a *local* backend has at all.
+// local clone plus flat/SQLite files under ~/.zz/, exactly as before.
+// Path resolution itself is NOT reimplemented here, despite this
+// file's own stated intent once being to own it independently of
+// cli/lib/repo.ts (a path is something only a *local* backend has at
+// all) -- that second implementation was never kept in sync with the
+// real one and drifted to a stale, package-relative "demo-repos/<name>"
+// convention cli/lib/repo.ts moved away from during the npm-packaging
+// work (see its own header comment: a globally npm-installed copy has
+// no business writing a user's real clones into wherever npm put its
+// own files). Confirmed live: `zz ladder build` on any repo not
+// already pre-seeded under demo-repos/ failed immediately after
+// cloning, with an isomorphic-git "Could not find HEAD" -- the clone
+// itself landed at the real ~/.zz/repos/<owner>/<name> (cli/lib/repo.ts's
+// own ensureCloned), but every Lane/Ladder write from here on tried to
+// read it back from the stale, nonexistent demo-repos/<name> path
+// instead. One real resolveRepo(), reused, not two that can disagree.
 import { existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { Backend, LadderSearchHit } from "./backend.js";
 import type { Lane } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
@@ -17,9 +28,7 @@ import { collectLadder, type ResolvedRung } from "./ladderRender.js";
 import { listCommitsChronological, commitFileChanges, fileContentAtCommit, type CommitRow, type FileChangeRow } from "./ingest.js";
 import { commitChangeset as commitChangesetImpl, type ChangesetFile, type CommitAuthor } from "./changeset.js";
 import { readLane as readLaneImpl, writeLane as writeLaneImpl, listLanes as listLanesImpl, withLane as withLaneImpl } from "./store.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const appRoot = join(here, "..");
+import { resolveRepo } from "../cli/lib/repo.js";
 
 /** Every "file"/"repo" kind rung in an already-resolved tree -- same filter as cloudflareBackend.ts's collectSearchableRungs (a changeset/filechange rung is a historical per-commit entry, not a holistic current-state description), just over ResolvedRung (local, children already resolved from notes refs) instead of SimpleRung (remote, embedded inline). */
 function collectSearchableRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
@@ -27,23 +36,36 @@ function collectSearchableRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
   for (const child of rung.children) collectSearchableRungs(child, out);
 }
 
-function parseSlug(slug: string): { name: string } {
-  if (typeof slug !== "string" || !slug) {
-    throw new Error(`expected a repo slug shaped "owner/repo", got ${JSON.stringify(slug)}.`);
-  }
-  const parts = slug.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error(`expected "owner/repo", got "${slug}"`);
-  }
-  return { name: parts[1] };
-}
-
 function repoDirOf(slug: string): string {
-  return join(appRoot, "demo-repos", parseSlug(slug).name);
+  return resolveRepo(slug).repoDir;
 }
 
 function stateDirOf(slug: string): string {
-  return join(appRoot, "state", parseSlug(slug).name);
+  return resolveRepo(slug).stateDir;
+}
+
+/** Every "owner/repo" slug with a real clone under ~/.zz/repos/ -- the local counterpart to searchLadder's own cross-repo scan, now that a repo's real location is a two-level owner/name tree (cli/lib/repo.ts's own convention) rather than one flat demo-repos/<name> directory. */
+function everyLocalRepoSlug(): { slug: string; repoDir: string; stateDir: string }[] {
+  const reposRoot = join(homedir(), ".zz", "repos");
+  if (!existsSync(reposRoot)) return [];
+  const out: { slug: string; repoDir: string; stateDir: string }[] = [];
+  for (const ownerEntry of readdirSync(reposRoot, { withFileTypes: true })) {
+    if (!ownerEntry.isDirectory()) continue;
+    const ownerDir = join(reposRoot, ownerEntry.name);
+    for (const repoEntry of readdirSync(ownerDir, { withFileTypes: true })) {
+      if (!repoEntry.isDirectory()) continue;
+      // The owner segment on disk is already sanitized (resolveRepo's
+      // own [^a-zA-Z0-9._-] -> "_" replacement) and lossy -- there's no
+      // way back to the real "owner/repo" slug's exact original owner
+      // string from the directory name alone. The directory name is
+      // used as both halves here, same limitation this function's own
+      // caller already documented for the old demo-repos/<name>
+      // convention ("not a real owner/repo slug, only the bare name a
+      // repo was cloned under").
+      out.push({ slug: `${ownerEntry.name}/${repoEntry.name}`, repoDir: join(ownerDir, repoEntry.name), stateDir: join(homedir(), ".zz", "state", ownerEntry.name, repoEntry.name) });
+    }
+  }
+  return out;
 }
 
 export function createLocalBackend(): Backend {
@@ -96,23 +118,16 @@ export function createLocalBackend(): Backend {
 
     // No D1/FTS5 here -- a plain multi-term substring match (every
     // query word must appear in the summary, case-insensitive) over
-    // every repo currently cloned under demo-repos/, scanned fresh on
+    // every repo currently cloned under ~/.zz/repos/, scanned fresh on
     // every call rather than kept in a maintained index. Not as sharp
     // as the remote backend's BM25 ranking, but the same feature,
-    // genuinely working locally -- not a stub. "repo" in each hit is
-    // just the directory name (demo-repos/<name>), not a real
-    // "owner/repo" slug: local mode has no account/ownership concept
-    // to reconstruct one from, only ever the bare name a repo was
-    // cloned under.
+    // genuinely working locally -- not a stub.
     async searchLadder(query, limit): Promise<LadderSearchHit[]> {
-      const demoReposDir = join(appRoot, "demo-repos");
-      if (!existsSync(demoReposDir)) return [];
       const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
       const hits: LadderSearchHit[] = [];
-      for (const entry of readdirSync(demoReposDir, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
+      for (const { slug, repoDir, stateDir } of everyLocalRepoSlug()) {
         try {
-          const { tree } = await collectLadder(join(demoReposDir, entry.name), join(appRoot, "state", entry.name));
+          const { tree } = await collectLadder(repoDir, stateDir);
           const candidates: ResolvedRung[] = [];
           collectSearchableRungs(tree, candidates);
           for (const c of candidates) {
@@ -124,7 +139,7 @@ export function createLocalBackend(): Backend {
               // taking the most recent one.
               const commitSources = c.sources.filter((s) => s.kind === "commit");
               const commitSha = commitSources.length ? commitSources[commitSources.length - 1].ref : null;
-              hits.push({ repo: entry.name, path: c.path, kind: c.kind, commitSha, summary: c.summary });
+              hits.push({ repo: slug, path: c.path, kind: c.kind, commitSha, summary: c.summary });
             }
           }
         } catch {
