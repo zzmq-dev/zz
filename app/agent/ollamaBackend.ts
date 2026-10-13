@@ -16,11 +16,24 @@ export function createOllamaBackend(model: string, baseUrl: string): ChatBackend
   return {
     name: `ollama:${model}`,
     async chat(messages, tools, onPartial) {
-      const res = await fetch(`${baseUrl}/api/chat`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ model, messages, ...(tools.length ? { tools: toOllamaTools(tools) } : {}), stream: true }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${baseUrl}/api/chat`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model, messages, ...(tools.length ? { tools: toOllamaTools(tools) } : {}), stream: true }),
+        });
+      } catch (err) {
+        // Node's own fetch error here is just "fetch failed" with no
+        // mention of ollama, the URL, or what to do about it -- the
+        // actual cause (connection refused, DNS failure, ...) is
+        // buried in `.cause`, an AggregateError whose own .message is
+        // empty (the real detail is one level deeper, in .errors), so
+        // this reaches past both to find something worth printing.
+        const inner = err instanceof Error && err.cause instanceof AggregateError ? err.cause.errors?.[0] : err instanceof Error ? err.cause : undefined;
+        const detail = inner instanceof Error ? `: ${inner.message}` : "";
+        throw new Error(`Couldn't reach Ollama at ${baseUrl}${detail} -- is it running? ("ollama serve", or point ZZ_OLLAMA_HOST at wherever it's running, or pass --provider groq/gemini/cloudflare instead).`);
+      }
       if (!res.ok) throw new Error(`ollama chat failed: ${res.status} ${await res.text()}`);
       if (!res.body) throw new Error("ollama chat response had no body to stream");
 
