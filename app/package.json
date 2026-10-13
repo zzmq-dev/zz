@@ -17,13 +17,13 @@
     "zz": "dist/cli/zz.js"
   },
   "files": [
-    "dist"
+    "dist/**/*.js"
   ],
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli/zz.js",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/cli/zz.js",
     "prepublishOnly": "npm run build",
     "setup:demo-repos": "tsx demo-repos/setup.ts",
     "build-ladder": "tsx demo/ladder-full-supertest.ts",
