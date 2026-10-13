@@ -20,7 +20,7 @@ A **Role** is granted per repo with [`zz repo grant`](/docs/cli/#zz-repo-grant) 
 | Role | Can do today |
 | --- | --- |
 | **Owner** | Everything below, plus grant and revoke Roles, change visibility, transfer the repo, delete it, and clean up its shards. Coordinates the root Lane. |
-| **Maintainer** | Push directly with git. |
+| **Maintainer** | Push directly with git, or call `commit_changeset`/`ladder_write_rung` directly (the same privilege, enforced the same way regardless of which path you use). |
 | **Contributor** | Read a private repo. |
 | **Viewer** | Read a private repo. The default for everyone on a public repo. |
 

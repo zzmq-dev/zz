@@ -221,8 +221,8 @@ zz work --assist [owner/repo] [--as <name>] [--scope <scope>] [--provider <name>
 
 A full-screen session for doing one Ask at a time with a model as a collaborator. Nothing is cloned until you pick an Ask.
 
-1. **Pick a Lane.** The **lanes** tab lists Lanes across your watched repos. The **unclaimed** tab lists open Asks; press `s` to filter by status and `n` to post a new Ask.
-2. **Pick an Ask.** Press `enter` to read it and `c` to claim it and start.
+1. **Pick a Lane.** The **lanes** tab lists Lanes across your watched repos, busiest (most Asks) first; switch to the **unclaimed** tab (`←`/`→` or `1`/`2`) for a flat list of every open Ask across those repos instead of picking through Lanes one at a time.
+2. **Pick an Ask.** Either tab's Ask list can be filtered by status (`s`, cycles open/granted/complete/denied). Press `enter` to read an Ask's full detail, `c` to claim it and start, or `n` to post a new Ask into the current Lane (lanes tab only -- the unclaimed tab has no single Lane to post into).
 3. **Work it in conversation.** For a `work` Ask, the model drafts the change and writes it into a shard checkout. For a `changeset_review` Ask, it gives a recommendation with the diff. Type feedback to get a revision, or use a command:
 
 | Command | Ask kind | Effect |
@@ -235,7 +235,7 @@ A full-screen session for doing one Ask at a time with a model as a collaborator
 | `/release` | both | Give up the claim so anyone can take the Ask. |
 | `esc` | both | Pause. You keep the claim and can resume from the picker. |
 
-`ctrl+/` opens a shell in the shard checkout so you can edit or test files directly. `ctrl+y` copies the transcript.
+`ctrl+/` (or typing `!` into the feedback box) opens a shell in the shard checkout so you can edit or test files directly. `ctrl+y` copies the transcript.
 
 Without a repo argument, `--assist` watches the repos `zz top` would show.
 
@@ -270,7 +270,7 @@ A live dashboard. It needs no login and no config. With nothing to show, it open
 | Tab | Shows |
 | --- | --- |
 | explore | Search repos on the server. Press `/` to type a query, `enter` to preview, `t` to track a repo. In local mode it browses the filesystem for onboarded clones. |
-| lanes | Every Lane in the watched repos with its status, Ask count, and coordinators. `enter` opens a Lane, where `n` posts a new Ask into it. |
+| lanes | Every Lane in the watched repos with its status, Ask count, and coordinators, sorted busiest first. `enter` opens a Lane, where `n` posts a new Ask into it. |
 | ladder | The Ladder tree for one repo. Press `r` to cycle repos. |
 | protocol | A live feed of every ASK, ANSWER, and INSIGHT, newest at the bottom. Filter by repo (`r`), Lane (`L`), Ask kind (`t`), or scope (`s`). |
 
