@@ -9,7 +9,7 @@
 // scoped into context via engine/backend.ts's withBackend().
 import type { Backend } from "../../engine/backend.js";
 import type { Lane } from "../../engine/types.js";
-import type { Rung, RungKind } from "../../engine/ladder.js";
+import { REPO_RUNG_PATH, type Rung, type RungKind } from "../../engine/ladder.js";
 import type { EmbeddedRung as RealEmbeddedRung } from "../../engine/ladderNotes.js";
 import { resolveLadderTree, type ResolvedRung } from "../../engine/ladderRender.js";
 import type { CommitRow, FileChangeRow } from "../../engine/ingest.js";
@@ -108,22 +108,64 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
   // 5 redundant checkouts instead of 2.
   const notesCache: NotesCache = new Map();
 
-  // The WHOLE resolved tree, cached durably and invalidated only on an
-  // actual write (writeLadder/appendRepoChildren below) -- not
-  // time-based, so a repo nobody's touching stays servable from cache
-  // indefinitely, and a repo that just got written to recomputes
-  // fresh exactly once before caching again. Durable storage, not an
-  // in-memory field, so it survives this DO instance being evicted
-  // and cold-starting later -- the in-memory notesCache above only
-  // needs to survive one burst of calls (it's just dedup within a
-  // resolve), but this is the actual "don't make a user wait on N
-  // real git-notes fetches to see an unchanged Ladder tab" fix, so it
-  // should outlive the JS instance, not just one request. Direct
-  // instruction: "cache at every level and invalidate cache only on
-  // ladder updates so that it can be warmed" -- this is that cache.
+  // The WHOLE resolved tree, cached durably and kept up to date on
+  // every write (writeLadder below, via mergeRungsIntoLadderTreeCache)
+  // -- not time-based, so a repo nobody's touching stays servable from
+  // cache indefinitely. Durable storage, not an in-memory field, so it
+  // survives this DO instance being evicted and cold-starting later --
+  // the in-memory notesCache above only needs to survive one burst of
+  // calls (it's just dedup within a resolve), but this is the actual
+  // "don't make a user wait on N real git-notes fetches to see an
+  // unchanged Ladder tab" fix, so it should outlive the JS instance,
+  // not just one request. Direct instruction: "cache at every level
+  // and invalidate cache only on ladder updates so that it can be
+  // warmed" -- this is that cache, updated (not merely invalidated)
+  // on every update so it's never left cold right when it matters
+  // most: a brand-new write's own notes aren't reliably readable back
+  // from Artifacts for a while after (readRung's doc comment has the
+  // full story) -- updating the cache directly from the rungs already
+  // in hand sidesteps that gap instead of racing it.
   const LADDER_TREE_CACHE_KEY = "resolvedLadderTree";
-  async function invalidateLadderTreeCache(): Promise<void> {
-    await storage.delete(LADDER_TREE_CACHE_KEY);
+
+  function simpleToResolved(rung: SimpleRung): ResolvedRung {
+    return { path: rung.path, kind: rung.kind, summary: rung.summary, sources: rung.sources, children: rung.children.map(simpleToResolved) };
+  }
+
+  // Builds/updates the cached tree directly from the rungs just
+  // written -- no re-read from Artifacts at all, so this can't be
+  // caught by the same-ref read-after-write gap readRung's doc
+  // comment describes (confirmed live: even re-resolving through the
+  // SAME repo handle/token the write itself just used still couldn't
+  // see a brand-new ref moments after creating it). A "_repo" write
+  // only replaces root's own fields and keeps whatever children the
+  // cache already had -- a root rung's own `children` is always []
+  // from the caller (engine/lane.ts's mergeLaneLadder writes _repo's
+  // real children via the separate appendRepoChildren call), so
+  // overwriting children here would just erase them. A non-root rung
+  // is upserted directly as a child of root: that's also exactly
+  // where appendRepoChildren would otherwise be linking it, and
+  // mergeLaneLadder always calls writeLadder then appendRepoChildren
+  // with the very same rungs in the same merge -- doing it here makes
+  // appendRepoChildren's own cache step unnecessary for that one real
+  // call pattern, so it's left alone instead of risking an
+  // Artifacts-read-based refresh clobbering a cache this already got
+  // right.
+  async function mergeRungsIntoLadderTreeCache(rungs: SimpleRung[]): Promise<void> {
+    let tree = (await storage.get<ResolvedRung>(LADDER_TREE_CACHE_KEY)) ?? null;
+    for (const rung of rungs) {
+      if (rung.path === REPO_RUNG_PATH) {
+        tree = tree ? { ...simpleToResolved(rung), children: tree.children } : simpleToResolved(rung);
+        continue;
+      }
+      // No root to attach to yet, and this write isn't the root
+      // either -- leave the cache alone; a later real read recomputes
+      // from Artifacts the old way rather than caching a rootless tree.
+      if (!tree) continue;
+      const node = simpleToResolved(rung);
+      const idx = tree.children.findIndex((c) => c.path === rung.path);
+      tree = idx >= 0 ? { ...tree, children: tree.children.map((c, i) => (i === idx ? node : c)) } : { ...tree, children: [...tree.children, node] };
+    }
+    if (tree) await storage.put(LADDER_TREE_CACHE_KEY, tree);
   }
 
   // Extracted out of the `readAnchor` method itself so reindexLadder
@@ -254,11 +296,10 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("write", 3600);
         for (const one of rungs) await writeRung(remote, token, repo, one);
       });
-      // Any write can change what the resolved tree looks like (a
-      // new/changed rung, however deep) -- invalidate unconditionally
-      // rather than trying to decide whether THIS particular write
-      // affected it. The next read recomputes once, then re-caches.
-      await invalidateLadderTreeCache();
+      // Built directly from the rungs just written -- see
+      // mergeRungsIntoLadderTreeCache's doc comment for why this
+      // doesn't re-read from Artifacts to do it.
+      await mergeRungsIntoLadderTreeCache(rungs);
       // Index after the real write succeeds, not before -- a search
       // hit should never point at content that didn't actually land.
       const searchable: SimpleRung[] = [];
@@ -278,7 +319,14 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("write", 3600);
         await appendRepoChildrenImpl(remote, token, repo, children);
       });
-      await invalidateLadderTreeCache();
+      // No cache update needed here: the one real caller
+      // (engine/lane.ts's mergeLaneLadder) always calls writeLadder
+      // with these exact same rungs immediately before this, and that
+      // call's own mergeRungsIntoLadderTreeCache already added them
+      // as children of root -- this call is just linking the same
+      // refs on the Artifacts side. If that stops being true for some
+      // future caller, this would need its own merge or an
+      // invalidateLadderTreeCache() fallback; not needed today.
     },
 
     async searchLadder(query, limit) {
