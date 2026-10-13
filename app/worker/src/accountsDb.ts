@@ -258,12 +258,22 @@ export async function searchRepos(db: D1Database, query: string, limit: number, 
 export interface ExploreResults {
   repos: RepoRow[];
   agents: Agent[];
+  ladderHits: LadderSearchHit[];
 }
 
-/** The mixed repo+agent feed behind /explore's autocomplete -- same visibility rule as searchRepos. */
+/** The heterogeneous repo+agent+Ladder feed behind /explore -- same visibility rule as searchRepos throughout. Three distinct result TYPES, not one merged list: a repo match, a user match, and a Ladder match (a specific file/commit something was said about) are different enough things that the caller renders each its own way, not a single generic row shape. */
 export async function searchExplore(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<ExploreResults> {
-  const [repos, agents] = await Promise.all([searchRepos(db, query, limit, viewerUsername), searchAgents(db, query, limit)]);
-  return { repos, agents };
+  const [repos, agents, ladderHits] = await Promise.all([
+    searchRepos(db, query, limit, viewerUsername),
+    searchAgents(db, query, limit),
+    // FTS5 MATCH has its own query syntax (quotes/parens/hyphens are
+    // operators) -- a plain search box shouldn't 500 just because
+    // someone typed a character that happens to mean something to FTS5,
+    // so a malformed query degrades to "no Ladder hits" instead of
+    // failing the whole /explore search.
+    searchLadderIndex(db, query, limit, viewerUsername).catch(() => []),
+  ]);
+  return { repos, agents, ladderHits };
 }
 
 export async function listReposOwnedBy(db: D1Database, ownerUsername: string): Promise<RepoRow[]> {
@@ -347,11 +357,11 @@ export async function pollAndConsumeCliLoginSession(db: D1Database, nonce: strin
 // indexLadderRung -- every rung write funnels through there regardless
 // of caller, so this stays correct without touching call sites.
 
-/** Delete-then-insert, not a real upsert -- FTS5 virtual tables have no unique constraint to upsert against, and rewriting the same (artifacts_name, path) is exactly what happens every time a file's rung gets a fresh holistic summary. */
-export async function indexLadderRung(db: D1Database, artifactsName: string, path: string, kind: string, summary: string): Promise<void> {
+/** Delete-then-insert, not a real upsert -- FTS5 virtual tables have no unique constraint to upsert against, and rewriting the same (artifacts_name, path) is exactly what happens every time a file's rung gets a fresh holistic summary. `commitSha` is whatever commit this rung's current summary is anchored to (its most recent "commit" kind source) -- lets a search hit link to that commit, not just the file. */
+export async function indexLadderRung(db: D1Database, artifactsName: string, path: string, kind: string, summary: string, commitSha: string | null): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM ladder_index WHERE artifacts_name = ? AND path = ?").bind(artifactsName, path),
-    db.prepare("INSERT INTO ladder_index (artifacts_name, path, kind, summary) VALUES (?, ?, ?, ?)").bind(artifactsName, path, kind, summary),
+    db.prepare("INSERT INTO ladder_index (artifacts_name, path, kind, commit_sha, summary) VALUES (?, ?, ?, ?, ?)").bind(artifactsName, path, kind, commitSha, summary),
   ]);
 }
 
@@ -359,6 +369,7 @@ export interface LadderSearchHit {
   repo_slug: string;
   path: string;
   kind: string;
+  commit_sha: string | null;
   summary: string;
 }
 
@@ -366,7 +377,7 @@ export interface LadderSearchHit {
 export async function searchLadderIndex(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<LadderSearchHit[]> {
   const result = await db
     .prepare(
-      `SELECT r.slug AS repo_slug, li.path, li.kind, li.summary
+      `SELECT r.slug AS repo_slug, li.path, li.kind, li.commit_sha, li.summary
        FROM ladder_index li
        JOIN repos r ON r.artifacts_name = li.artifacts_name
        WHERE ladder_index MATCH ? AND ${VISIBILITY_CLAUSE}

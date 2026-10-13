@@ -65,7 +65,7 @@ export const remoteBackend: Backend = {
   // server-side when dispatched through the generic remote
   // tool-calling loop and so can't make this same kind of call.
   async searchLadder(query, limit) {
-    const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(query)}&limit=${limit}`);
-    return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as LadderSearchHit["kind"], summary: h.summary }));
+    const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; commit_sha: string | null; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+    return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as LadderSearchHit["kind"], commitSha: h.commit_sha, summary: h.summary }));
   },
 };

@@ -177,7 +177,14 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       // hit should never point at content that didn't actually land.
       const searchable: SimpleRung[] = [];
       for (const one of rungs) collectSearchableRungs(one, searchable);
-      for (const one of searchable) await indexLadderRung(db, artifactsName, one.path, one.kind, one.summary);
+      for (const one of searchable) {
+        // The most recent commit source, not the first -- sources
+        // accumulates chronologically as a file gets touched again, and
+        // a search result's commit link should point at what most
+        // recently shaped this summary, not its very first appearance.
+        const commitSha = one.sources.length ? one.sources[one.sources.length - 1].ref : null;
+        await indexLadderRung(db, artifactsName, one.path, one.kind, one.summary, commitSha);
+      }
     },
 
     async appendRepoChildren(_repo, children: { path: string; kind: RungKind }[]): Promise<void> {
@@ -189,7 +196,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
 
     async searchLadder(query, limit) {
       const hits = await searchLadderIndex(db, query, limit, null);
-      return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as RungKind, summary: h.summary }));
+      return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as RungKind, commitSha: h.commit_sha, summary: h.summary }));
     },
 
     async readLane(_repo, laneId: string): Promise<Lane | null> {

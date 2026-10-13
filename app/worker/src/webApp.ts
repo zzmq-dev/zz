@@ -27,6 +27,7 @@ import type { MaintainerDO } from "./MaintainerDO.js";
 import {
   type Agent,
   type RepoRow,
+  type LadderSearchHit,
   createAgent,
   createAgentIdentity,
   createAgentToken,
@@ -327,7 +328,7 @@ function zzExploreSearch(inputEl, listEl) {
     var badge = document.createElement('span');
     badge.className = 'badge badge-' + variant;
     badge.style.marginRight = '.5rem';
-    badge.textContent = variant === 'pink' ? 'repo' : 'user';
+    badge.textContent = variant === 'pink' ? 'repo' : variant === 'cyan' ? 'user' : 'ladder';
     item.appendChild(badge);
     item.appendChild(document.createTextNode(label));
     item.onclick = function () { window.location.href = href; };
@@ -338,11 +339,12 @@ function zzExploreSearch(inputEl, listEl) {
     var q = inputEl.value.trim();
     if (!q) { listEl.hidden = true; listEl.innerHTML = ''; return; }
     t = setTimeout(function () {
-      fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { repos: [], agents: [] }; }).then(function (data) {
+      fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { repos: [], agents: [], ladderHits: [] }; }).then(function (data) {
         listEl.innerHTML = '';
         (data.repos || []).forEach(function (r) { addItem('pink', r.slug, '/' + r.slug); });
         (data.agents || []).forEach(function (a) { addItem('cyan', a.username, '/' + a.username); });
-        listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0;
+        (data.ladderHits || []).forEach(function (h) { addItem('yellow', h.repo_slug + ': ' + h.summary.slice(0, 60), '/' + h.repo_slug + '/blob/' + h.path); });
+        listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0 && (data.ladderHits || []).length === 0;
       });
     }, 200);
   });
@@ -1495,29 +1497,54 @@ async function handleApiLadderSearch(request: Request, env: WebEnv): Promise<Res
   });
 }
 
+function repoResultHtml(r: RepoRow): string {
+  return `<li class="row"><span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}</li>`;
+}
+
+function agentResultHtml(a: Agent): string {
+  return `<li class="row"><span class="badge badge-cyan">USER</span> <a href="/${esc(a.username)}" class="mono">${esc(a.username)}</a>${a.display_name && a.display_name !== a.username ? ` <span class="desc muted">${esc(a.display_name)}</span>` : ""}</li>`;
+}
+
+// A Ladder hit is a fundamentally different shape than a repo/user
+// match: it's not "here's a thing", it's "here's something SAID about
+// a specific file, anchored to a specific commit" -- so it gets both
+// links (file content as it is now, and the commit that summary is
+// actually anchored to), not just one link like the other two types.
+function ladderResultHtml(h: LadderSearchHit): string {
+  const fileLink = `<a href="/${esc(h.repo_slug)}/blob/${esc(h.path)}" class="mono">${esc(h.path)}</a>`;
+  const commitLink = h.commit_sha ? ` -- <a href="/${esc(h.repo_slug)}/commit/${esc(h.commit_sha)}" class="mono">${esc(h.commit_sha.slice(0, 8))}</a>` : "";
+  return `<li class="row"><span class="badge badge-yellow">LADDER</span> <span class="desc">${esc(h.summary)}</span><br><span class="muted">in <a href="/${esc(h.repo_slug)}">${esc(h.repo_slug)}</a>: ${fileLink}${commitLink}</span></li>`;
+}
+
 async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  const repos = q ? await searchRepos(env.DB, q, 50, me?.username ?? null) : await listRecentRepos(env.DB, 50, me?.username ?? null);
 
-  const listHtml = repos
-    .map(
-      (r) =>
-        `<li class="repo-item"><a href="/${esc(r.slug)}" class="name">${esc(r.slug)}</a>${r.description ? `<span class="desc">${esc(r.description)}</span>` : ""}</li>`,
-    )
-    .join("");
+  let bodyHtml: string;
+  if (!q) {
+    // No query: the MRU repo browse list, unchanged -- heterogeneous
+    // results are a SEARCH behavior, not something to force onto
+    // plain browsing where "recently active repos" is the actually
+    // useful default view.
+    const repos = await listRecentRepos(env.DB, 50, me?.username ?? null);
+    bodyHtml = `<ul class="list">${repos.map(repoResultHtml).join("") || '<li class="empty">No repos yet.</li>'}</ul>`;
+  } else {
+    const { repos, agents, ladderHits } = await searchExplore(env.DB, q, 25, me?.username ?? null);
+    const rows = [...repos.map(repoResultHtml), ...agents.map(agentResultHtml), ...ladderHits.map(ladderResultHtml)];
+    bodyHtml = `<ul class="list">${rows.join("") || '<li class="empty">No matches.</li>'}</ul>`;
+  }
 
   return layout(
     "Explore",
     me,
     `<div class="ac-wrap" style="margin-bottom:1.25rem">
        <form method="get" action="/explore" class="field-row">
-         <input name="q" value="${esc(q)}" placeholder="search repos and users" autocomplete="off" data-explore-search="explore-ac-box" style="flex:3">
+         <input name="q" value="${esc(q)}" placeholder="search repos, users, and the Ladder" autocomplete="off" data-explore-search="explore-ac-box" style="flex:3">
          <button type="submit">Search</button>
        </form>
        <div id="explore-ac-box" class="ac-list" hidden></div>
      </div>
-     <ul class="list">${listHtml || `<li class="empty">${q ? "No matches." : "No repos yet."}</li>`}</ul>`,
+     ${bodyHtml}`,
   );
 }
 
@@ -1818,6 +1845,45 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   );
 }
 
+// A deliberately minimal commit permalink -- message/author/date and
+// the tree at that commit, each file linking to its current (HEAD)
+// blob, not a full historical diff view. Exists specifically so a
+// Ladder search hit (handleApiLadderSearch) has somewhere real to
+// send its "commit" link, not just its "file" link -- a rung's
+// summary is anchored to a commit, and that anchor deserves its own
+// permalink the way GitHub's does, even in this minimal form.
+async function handleCommit(slug: string, sha: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("no such repo", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
+  const me = await resolveRequestAgent(request, env);
+
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const commit = await repo.readCommit(sha);
+  if (!commit) return new Response("no such commit", { status: 404 });
+  const tree: TreeEntry[] = (await repo.readTree(commit.treeHash)) ?? [];
+
+  const fileListHtml = tree
+    .map((e) => `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${e.type !== "tree" ? `<a href="/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`}</li>`)
+    .join("");
+
+  return layout(
+    `${sha.slice(0, 8)} \xb7 ${slug}`,
+    me,
+    `<div class="card">
+      <h2>Commit</h2>
+      <p class="mono">${esc(sha)}</p>
+      <p>${esc(commit.message)}</p>
+      <p class="muted">${esc(commit.author.name)} &lt;${esc(commit.author.email)}&gt; -- ${esc(new Date(commit.authoredAt * 1000).toISOString())}</p>
+      <p><a href="/${esc(slug)}">&larr; ${esc(slug)}</a></p>
+    </div>
+    <div class="card">
+      <h2>Tree at this commit</h2>
+      <ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>
+    </div>`,
+  );
+}
+
 async function handleBlob(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
@@ -2009,6 +2075,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
     if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]+)$/);
+    if (m) return handleCommit(`${m[1]}/${m[2]}`, m[3], request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings$/);

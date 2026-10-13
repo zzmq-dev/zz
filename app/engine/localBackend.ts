@@ -108,7 +108,15 @@ export function createLocalBackend(): Backend {
           collectSearchableRungs(tree, candidates);
           for (const c of candidates) {
             const haystack = c.summary.toLowerCase();
-            if (terms.every((t) => haystack.includes(t))) hits.push({ repo: entry.name, path: c.path, kind: c.kind, summary: c.summary });
+            if (terms.every((t) => haystack.includes(t))) {
+              // Unlike cloudflareLadderBackend.ts's SimpleRung (already
+              // commit-only by construction), a local ResolvedRung's
+              // sources can include pr/issue kinds too -- filter before
+              // taking the most recent one.
+              const commitSources = c.sources.filter((s) => s.kind === "commit");
+              const commitSha = commitSources.length ? commitSources[commitSources.length - 1].ref : null;
+              hits.push({ repo: entry.name, path: c.path, kind: c.kind, commitSha, summary: c.summary });
+            }
           }
         } catch {
           // repo not onboarded/bootstrapped yet -- skip rather than fail the whole search

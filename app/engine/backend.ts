@@ -19,6 +19,8 @@ export interface LadderSearchHit {
   repo: string;
   path: string;
   kind: RungKind;
+  /** The commit this hit's current summary is anchored to, if known -- lets a result link to both the file and the specific commit (webApp.ts's per-commit view). Null if the rung genuinely has no commit source. */
+  commitSha: string | null;
   summary: string;
 }
 
