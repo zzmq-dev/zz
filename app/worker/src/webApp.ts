@@ -225,7 +225,7 @@ form.inline{display:inline}
 .field-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
 .field-row>input,.field-row>select{flex:1;min-width:10rem}
 .muted{color:var(--muted);font-size:.9rem}
-.hint{color:var(--muted);font-size:.88rem;margin:0 0 1rem}
+.hint{color:var(--muted);font-size:.88rem;margin:0 0.5rem 1rem}
 .empty{color:var(--muted);font-style:italic;padding:.5rem 0}
 .card-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.6rem}
 .card-head h2{margin:0}
@@ -257,7 +257,7 @@ select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;b
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
 h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
-.clone-row{margin-bottom:.6rem}
+.clone-row{margin-bottom:.6rem;margin-right:4rem}
 .clone-row .pre-wrap{position:relative}
 .clone-row pre{margin:0;padding:.33rem 2.3rem .33rem .66rem;overflow-x:auto}
 .clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem;padding:0}
@@ -504,9 +504,9 @@ async function handleLogin(request: Request): Promise<Response> {
     "Log in",
     null,
     `${cliNonce ? '<p class="hint">Logging in for the zz CLI -- this browser tab can be closed once it redirects back.</p>' : ""}
-     <div class="card stack">
-       <a href="/auth/start/cloudflare${qs}"><button style="width:100%">Log in with Cloudflare</button></a>
-       <a href="/auth/start/google${qs}"><button class="secondary" style="width:100%">Log in with Google</button></a>
+     <div class="card stack" style="max-width:320px;margin:0 auto">
+       <a href="/auth/start/cloudflare${qs}" style="display:block"><button style="width:100%;padding:.85rem 1.1rem">Log in with Cloudflare</button></a>
+       <a href="/auth/start/google${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with Google</button></a>
      </div>`,
   );
 }
