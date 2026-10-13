@@ -166,7 +166,9 @@ const WEB_CSS = `
 :root{
   --bg:#1A0F2E; --panel:#241433; --surface:#2D1B4E; --border:#4A2F73; --muted:#B4A3D6; --fg:#F3EFFF;
   --pink:#FF2E92; --yellow:#E8FF3D; --cyan:#2EE6FF; --green:#4CFF6E; --blue:#5C8DFF; --red:#FF4466;
-  --code-bg:#140B24;
+  /* Same value as --panel (inputs' background) -- a pre/code block
+     reads as "a field full of text", not a separately-colored box. */
+  --code-bg:#241433;
   --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
@@ -204,6 +206,7 @@ ul.list>li:last-child{border-bottom:none}
 .repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
 .repo-item .desc{color:var(--muted);font-size:.9rem}
 input,select,textarea{font-family:var(--sans);font-size:.95rem;padding:.55rem .7rem;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg)}
+select{padding-right:1.6rem}
 input::placeholder,textarea::placeholder{color:var(--muted)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 2px rgba(255,46,146,.25)}
 textarea{width:100%;min-height:4.5rem;resize:vertical;display:block}
@@ -222,14 +225,14 @@ form.inline{display:inline}
 .empty{color:var(--muted);font-style:italic;padding:.5rem 0}
 .card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem}
 .card-head h2{margin:0}
-.icon-btn{width:1.8rem;height:1.8rem;padding:0;border-radius:999px;font-size:1.1rem;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+.icon-btn{width:1.8rem;height:1.8rem;padding:0;border-radius:999px;font-size:1.1rem;line-height:0;display:inline-flex;align-items:center;justify-content:center}
 dialog.modal{border:none;border-radius:12px;padding:0;background:var(--surface);color:var(--fg);border:1px solid var(--border);max-width:460px;width:92vw}
 dialog.modal::backdrop{background:rgba(10,6,20,.65)}
 dialog.modal .modal-body{padding:1.25rem 1.4rem}
 dialog.modal h3{margin:0 0 1rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;margin-top:1.1rem}
 .ac-wrap{position:relative}
-.ac-list{position:absolute;top:100%;left:0;right:0;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-top:.25rem;max-height:220px;overflow-y:auto;z-index:30}
+.ac-list{position:absolute;top:100%;left:0;min-width:100%;width:max-content;max-width:min(420px,90vw);background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-top:.25rem;max-height:220px;overflow-y:auto;z-index:30}
 .ac-item{padding:.5rem .7rem;cursor:pointer;font-size:.88rem}
 .ac-item:hover,.ac-item.active{background:var(--surface)}
 .tab-bar{display:flex;gap:.25rem;border-bottom:1px solid var(--border);margin-bottom:1rem;flex-wrap:wrap}
@@ -244,8 +247,9 @@ select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;b
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
 h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
-.clone-row{display:flex;gap:.5rem;align-items:stretch}
-.clone-row pre{flex:1;min-width:0;margin:0}
+.clone-row{position:relative}
+.clone-row pre{margin:0;padding:.33rem 2.3rem .33rem .66rem;overflow-x:auto}
+.clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem}
 .log-feed{font-family:var(--mono);font-size:.85rem;line-height:1.8}
 .log-line{white-space:nowrap;overflow-x:auto}
 .log-line .t-ask{color:var(--yellow);font-weight:600}
@@ -315,8 +319,39 @@ function zzInitTabs(container) {
 }
 document.querySelectorAll('[data-tabs]').forEach(zzInitTabs);
 
+// Shared by every ac-list dropdown (agent autocomplete, Explore
+// search): Up/Down moves a highlighted ".active" item among whatever
+// ".ac-item" rows are currently in listEl, Enter clicks it (reusing
+// each caller's own onclick, not a second selection path), Escape
+// closes it. Reads listEl.children live rather than tracking a
+// separate items array, so it stays correct no matter how/when a
+// caller repopulates the list.
+function zzListNav(inputEl, listEl) {
+  var activeIndex = -1;
+  function items() { return Array.prototype.slice.call(listEl.querySelectorAll('.ac-item')); }
+  function setActive(i) {
+    var els = items();
+    els.forEach(function (el) { el.classList.remove('active'); });
+    if (els.length === 0) { activeIndex = -1; return; }
+    activeIndex = (i + els.length) % els.length;
+    els[activeIndex].classList.add('active');
+    els[activeIndex].scrollIntoView({ block: 'nearest' });
+  }
+  inputEl.addEventListener('keydown', function (e) {
+    if (listEl.hidden) return;
+    var els = items();
+    if (els.length === 0) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive(activeIndex + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(activeIndex - 1); }
+    else if (e.key === 'Enter') { if (activeIndex >= 0) { e.preventDefault(); els[activeIndex].click(); } }
+    else if (e.key === 'Escape') { listEl.hidden = true; }
+  });
+  inputEl.addEventListener('input', function () { activeIndex = -1; });
+}
+
 function zzAutocomplete(inputEl, listEl, url) {
   var t;
+  zzListNav(inputEl, listEl);
   inputEl.addEventListener('input', function () {
     clearTimeout(t);
     var q = inputEl.value.trim();
@@ -343,6 +378,7 @@ document.querySelectorAll('[data-autocomplete]').forEach(function (el) {
 
 function zzExploreSearch(inputEl, listEl) {
   var t;
+  zzListNav(inputEl, listEl);
   function addItem(variant, label, href) {
     var item = document.createElement('div');
     item.className = 'ac-item';
@@ -888,25 +924,40 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   await deleteRepoRow(env.DB, repo.slug);
 }
 
-/** Deletes every direct shard of `parentSlug`, and every shard of those shards, recursively (grandchildren before the shard whose children they are, so a shard's own shard_of_slug never points at an already-gone row mid-operation). No permission check of its own -- the caller (doCleanupShards) has already verified ownership of the top-level parent, and every repo reached from here is being torn down wholesale as part of that one decision, not individually authorized. Tolerates a shard whose Artifacts repo is already gone (same idempotency as doDeleteRepo's own orphan handling), since a shard tree can legitimately be mid-cleanup already. */
-async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<number> {
+interface ShardCleanupResult {
+  deleted: number;
+  failed: { slug: string; error: string }[];
+}
+
+/** Deletes every direct shard of `parentSlug`, and every shard of those shards, recursively (grandchildren before the shard whose children they are, so a shard's own shard_of_slug never points at an already-gone row mid-operation). No permission check of its own -- the caller (doCleanupShards) has already verified ownership of the top-level parent, and every repo reached from here is being torn down wholesale as part of that one decision, not individually authorized. Tolerates a shard whose Artifacts repo is already gone (same idempotency as doDeleteRepo's own orphan handling), since a shard tree can legitimately be mid-cleanup already.
+ *
+ * One shard failing (confirmed live: a transient Artifacts error, gone on retry) used to throw straight out of the loop, silently abandoning every sibling and deeper descendant still left to process -- which is exactly the "cleaned up some, left two behind, no error shown" report this fixes. Each shard's own failure is now caught and collected instead, so the rest of the tree still gets a chance; a shard whose OWN children failed to clean up is left alone too (not deleted out from under them), so nothing gets orphaned with no shard_of_slug parent left to find it through. */
+async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<ShardCleanupResult> {
   const shards = await listShardsOf(env.DB, parentSlug);
-  let count = 0;
+  let deleted = 0;
+  const failed: { slug: string; error: string }[] = [];
   for (const shard of shards) {
-    count += await deleteShardTreeOf(env, shard.slug);
     try {
-      await env.ARTIFACTS.delete(shard.artifacts_name);
+      const child = await deleteShardTreeOf(env, shard.slug);
+      deleted += child.deleted;
+      failed.push(...child.failed);
+      if (child.failed.length > 0) continue;
+      try {
+        await env.ARTIFACTS.delete(shard.artifacts_name);
+      } catch (e) {
+        if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
+      }
+      await deleteRepoRow(env.DB, shard.slug);
+      deleted += 1;
     } catch (e) {
-      if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
+      failed.push({ slug: shard.slug, error: e instanceof Error ? e.message : String(e) });
     }
-    await deleteRepoRow(env.DB, shard.slug);
-    count += 1;
   }
-  return count;
+  return { deleted, failed };
 }
 
 /** Owner-of-the-parent is the one check that matters -- every shard being wiped is a scratch workspace that exists only because of this repo's own task delegation, not a separately-owned repo someone else gets a say over. */
-async function doCleanupShards(env: WebEnv, actor: Agent, repoSlug: string): Promise<number> {
+async function doCleanupShards(env: WebEnv, actor: Agent, repoSlug: string): Promise<ShardCleanupResult> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
@@ -1432,11 +1483,21 @@ async function handleDeleteRepoForm(repoSlug: string, request: Request, env: Web
 async function handleCleanupShardsForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
+  let result: ShardCleanupResult;
   try {
-    await doCleanupShards(env, me, repoSlug);
+    result = await doCleanupShards(env, me, repoSlug);
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
+  }
+  // Surfaced as plain text instead of the usual clean redirect --
+  // a partial failure silently redirecting as if it fully succeeded
+  // is exactly what made the underlying bug this fixes so confusing
+  // to notice in the first place. Whatever's left can be retried by
+  // clicking the button again.
+  if (result.failed.length > 0) {
+    const lines = result.failed.map((f) => `  ${f.slug}: ${f.error}`).join("\n");
+    return new Response(`Deleted ${result.deleted} shard(s), but ${result.failed.length} failed and are still there -- try again:\n\n${lines}`, { status: 207, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   return redirect(`/${repoSlug}/settings`);
 }
@@ -1688,6 +1749,13 @@ function shardGroupedListHtml<T>(rows: T[], slugOf: (t: T) => string, parentSlug
   return render(groupByShard(rows, slugOf, parentSlugOf));
 }
 
+/** Every descendant shard of `rootSlug`, at any depth, as one flat list (not including rootSlug itself) -- feeds shardGroupedListHtml for the repo page's own "Shards" panel, same as the already-flat listReposOwnedBy/searchExplore results feed it for profile pages and Explore. */
+async function listShardTreeFlat(env: WebEnv, rootSlug: string): Promise<RepoRow[]> {
+  const direct = await listShardsOf(env.DB, rootSlug);
+  const deeper = await Promise.all(direct.map((s) => listShardTreeFlat(env, s.slug)));
+  return [...direct, ...deeper.flat()];
+}
+
 function agentResultHtml(a: Agent): string {
   return `<li class="row"><span class="badge badge-cyan">USER</span> <a href="/${esc(a.username)}" class="mono">${esc(a.username)}</a>${a.display_name && a.display_name !== a.username ? ` <span class="desc muted">${esc(a.display_name)}</span>` : ""}</li>`;
 }
@@ -1871,6 +1939,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   // there's no reason the DO/Ladder round-trip should wait for the
   // Artifacts round-trip to finish first, or vice versa.
   const lanesAndLadder = Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
+  const shardTree = listShardTreeFlat(env, slug);
 
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const info = await repo.info();
@@ -1952,27 +2021,38 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const cloneUrl = `${origin}/${slug}`;
   const workCmd = `zz work --repos ${slug}`;
 
+  const resolvedShardTree = await shardTree;
+  const shardsHtml =
+    resolvedShardTree.length > 0
+      ? `<details class="summary-detail"><summary>Shards</summary><ul class="list">${shardGroupedListHtml(resolvedShardTree, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml)}</ul></details>`
+      : "";
+
   const [ownerUsername, repoNameSegment] = slug.split("/");
   return layout(
     slug,
     me,
     `<div class="card">
-       <div class="card-head">
-         <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
-         ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
-       </div>
+       ${
+         isOwner
+           ? `<div class="card-head" style="justify-content:flex-end"><a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a></div>`
+           : ""
+       }
        <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
        <div class="clone-row">
          <pre>git clone ${esc(cloneUrl)}</pre>
          <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
          <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
        </div>
-       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
        <div class="clone-row">
          <pre>${esc(workCmd)}</pre>
          <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
        </div>
-       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
+       <details class="summary-detail"><summary>Info</summary>
+         <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+         <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
+       </details>
+       <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
+       ${shardsHtml}
      </div>
 
      ${tabGroup("files", fileTabs)}
@@ -2041,8 +2121,8 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
        "Danger zone",
        `<div class="stack">
           <form method="post" action="/${esc(slug)}/settings/transfer" class="field-row">
-            ${agentAutocompleteField("new_owner", "new owner (agent name or id)", "transfer")}
             <button type="submit" class="danger">Transfer ownership</button>
+            ${agentAutocompleteField("new_owner", "new owner (agent name or id)", "transfer")}
           </form>
           ${
             directShards.length > 0
