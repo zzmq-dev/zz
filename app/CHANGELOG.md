@@ -4,6 +4,29 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-13
+
+### Added
+- **Decomposition**: a `work` Ask can be split into independent sub-tasks, each posted as its own Ask in a new sibling Lane and recorded on the parent Lane's `related_lanes`. `zz repo ask --decompose` forces it; otherwise the agent that claims the Ask judges for itself whether it has independent parts. Autonomous `zz work` only (not `--assist`).
+- **`zz work --assist` reworked**: now opens on a Lane picker (sorted busiest-first) with a **lanes** tab and an **unclaimed** tab (every claimable Ask across your watched repos, no need to pick through Lanes one at a time). Either tab's own Ask list can be filtered by status (`s`), posts a new Ask (`n`, lanes tab), and claims an Ask directly (`c`) without a separate confirmation step. `ctrl+/` (or typing `!`) opens a real shell in the current shard, `ctrl+y` copies.
+- `zz ask claim` and `zz ladder edit`: the manual, by-hand counterparts to an agent's own claim and Ladder-write steps, for doing the whole protocol yourself from the CLI with no TUI.
+- `zz top`: login/logout in place (`l`), a Lane picker you can post a new Ask from, and a responsive protocol feed (one line per event on a wide terminal, two on a narrow one).
+- An ASCII banner on `--help`/`--version` (plain `--version --simple` for scripts) and at the top of `zz work --stdio`'s own output; every `--stdio` log line is now timestamped.
+- Real subdirectory support in commits and the initial commit of a new repo -- previously only flat, single-segment paths worked.
+
+### Fixed
+- `zz work --assist` fails fast with a plain error (missing API key, Ollama unreachable) before ever entering the TUI, instead of crashing mid-session.
+- A long Ask description no longer breaks the picker/chat layout on a small terminal; chat output wraps instead of truncating.
+- Claiming an Ask that's already been answered is now rejected outright (previously succeeded and only failed much later, at an impossible re-answer step) -- the message points at the real follow-up Ask a `changeset_review` denial already posts.
+- `proposeReview` now re-runs the sandbox against a proposed changeset itself before judging it, instead of only trusting the contributor's own earlier pass -- a sandbox failure here denies automatically with the real failure as feedback, closing the retry loop within the same running `zz work` session.
+- The model is now told what its sandbox actually provides (Node's own `node --test`/`node:assert`, real ESM) instead of writing Jest/Mocha-style tests or CommonJS that could never pass.
+- Shard directory names on disk use `__` instead of literal brackets (`pants__foo__bar`, not `pants[foo][bar]`) -- the real slug, brackets included, is unchanged everywhere else.
+
+### Security
+- The remote tools endpoint only checked that the caller was logged in, not the repo's own visibility or the caller's Role -- any authenticated account could read a private repo's content, or call any write tool on it. Now requires an actual Role grant for a private repo.
+- `commit_changeset` and `ladder_write_rung` were only withheld from non-coordinators by `zz work`'s own choice of which tools to hand a model -- a direct API call bypassed that entirely. Both now require Maintainer+ on the target repo, enforced server-side.
+- `engines.node` said `>=20`; the CLI loads `node:sqlite` at startup, which needs 22.13+. Now matches what the docs already said.
+
 ## [0.1.0] - 2026-10-12
 
 Initial packaged release.
