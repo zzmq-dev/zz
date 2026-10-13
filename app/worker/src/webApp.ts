@@ -1548,6 +1548,15 @@ async function handleApiMe(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => json(await requireApiAgent(request, env)));
 }
 
+/** Owned + role-granted + tracked repos, role-sorted -- the same listMyRepos the profile page renders, as JSON. Backs the TUI's "start from your own repos when logged in" (zz top, once it goes past the local/remote plumbing fixed in this pass). */
+async function handleApiMyRepos(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const rows = await listMyRepos(env.DB, me.username);
+    return json({ repos: rows.map(({ repo, role }) => ({ slug: repo.slug, role })) });
+  });
+}
+
 async function handleApiCreateAgent(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -2497,6 +2506,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/login/start" && request.method === "POST") return handleApiLoginStart(request, env);
   if (path === "/api/login/poll" && request.method === "GET") return handleApiLoginPoll(request, env);
   if (path === "/api/me" && request.method === "GET") return handleApiMe(request, env);
+  if (path === "/api/me/repos" && request.method === "GET") return handleApiMyRepos(request, env);
   if (path === "/api/me/revoke" && request.method === "POST") return handleApiRevokeSelf(request, env);
   if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
   if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
