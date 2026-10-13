@@ -433,7 +433,7 @@ document.querySelectorAll('[data-copy]').forEach(function (btn) {
 });
 `;
 
-function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string; h1Html?: string } = {}): Response {
+function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string; h1Html?: string; centerTitle?: boolean } = {}): Response {
   // Same items, same order, as the docs site's own nav (site/themes/zz-docs/fragments/header.html) --
   // Explore/Work/Docs/Source always present, then whatever's auth-dependent.
   const navHead = `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/docs/">Docs</a><a href="https://github.com/zzmq-dev/zz">Source</a>`;
@@ -442,7 +442,7 @@ function layout(title: string, agent: Agent | null, body: string, opts: { cookie
 <style>${WEB_CSS}</style></head><body>
 <header class="topbar"><a href="/" class="brand">zz<span>_</span></a><nav class="links">${nav}</nav></header>
 <main>
-<h1>${opts.h1Html ?? esc(title)}${opts.titleHtml ?? ""}</h1>
+<h1${opts.centerTitle ? ' style="text-align:center"' : ""}>${opts.h1Html ?? esc(title)}${opts.titleHtml ?? ""}</h1>
 ${body}
 </main>
 <script>${WEB_JS}</script>
@@ -508,6 +508,7 @@ async function handleLogin(request: Request): Promise<Response> {
        <a href="/auth/start/cloudflare${qs}" style="display:block"><button style="width:100%;padding:.85rem 1.1rem">Log in with Cloudflare</button></a>
        <a href="/auth/start/google${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with Google</button></a>
      </div>`,
+    { centerTitle: true },
   );
 }
 
