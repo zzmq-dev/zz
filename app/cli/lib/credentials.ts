@@ -15,10 +15,18 @@ export interface ZzCredentials {
 
 // The deployed Worker's current URL -- the one thing in the CLI that
 // really is a hardcoded default, since a fresh `zz login` run has no
-// other way to know where to start. Override with ZZ_API_BASE the
-// moment the domain changes (zzbin.dev/zzmq.{com,dev}); nothing else
-// in the CLI or server hardcodes a domain.
-export const DEFAULT_API_BASE = "https://zz-maintainer.thoward37.workers.dev";
+// other way to know where to start. Must match whatever host the
+// OAuth redirect URIs (CF_OAUTH_REDIRECT_URI/GOOGLE_OAUTH_REDIRECT_URI,
+// worker/wrangler.jsonc) are pinned to -- a fresh `zz login` with no
+// credentials.json yet falls back to this default to open the browser,
+// and if that host doesn't match the pinned redirect_uri's host, the
+// state cookie (set on this host) never reaches the callback (lands
+// on the redirect_uri's host), failing with "OAuth state mismatch"
+// every time. Confirmed live: this was still the pre-zzmq.dev value
+// after the redirect URIs were flipped, breaking exactly this path
+// for anyone with no prior login. Override with ZZ_API_BASE if it
+// ever needs to differ from the current canonical domain.
+export const DEFAULT_API_BASE = "https://zzmq.dev";
 
 function credentialsPath(): string {
   return process.env.ZZ_CREDENTIALS ? resolveUserPath(process.env.ZZ_CREDENTIALS) : join(homedir(), ".zz", "credentials.json");
