@@ -281,6 +281,12 @@ export async function listReposOwnedBy(db: D1Database, ownerUsername: string): P
   return result.results;
 }
 
+/** Direct (one level deep) shards of a repo -- webApp.ts's cleanup-shards flow walks this recursively itself to reach shards of shards, rather than this doing a recursive query. */
+export async function listShardsOf(db: D1Database, parentSlug: string): Promise<RepoRow[]> {
+  const result = await db.prepare("SELECT * FROM repos WHERE shard_of_slug = ? ORDER BY created_at ASC").bind(parentSlug).all<RepoRow>();
+  return result.results;
+}
+
 export async function deleteRepoRow(db: D1Database, slug: string): Promise<void> {
   await db.prepare("DELETE FROM repo_roles WHERE repo_slug = ?").bind(slug).run();
   await db.prepare("DELETE FROM repos WHERE slug = ?").bind(slug).run();

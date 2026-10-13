@@ -888,6 +888,35 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   await deleteRepoRow(env.DB, repo.slug);
 }
 
+/** Deletes every direct shard of `parentSlug`, and every shard of those shards, recursively (grandchildren before the shard whose children they are, so a shard's own shard_of_slug never points at an already-gone row mid-operation). No permission check of its own -- the caller (doCleanupShards) has already verified ownership of the top-level parent, and every repo reached from here is being torn down wholesale as part of that one decision, not individually authorized. Tolerates a shard whose Artifacts repo is already gone (same idempotency as doDeleteRepo's own orphan handling), since a shard tree can legitimately be mid-cleanup already. */
+async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<number> {
+  const shards = await listShardsOf(env.DB, parentSlug);
+  let count = 0;
+  for (const shard of shards) {
+    count += await deleteShardTreeOf(env, shard.slug);
+    try {
+      await env.ARTIFACTS.delete(shard.artifacts_name);
+    } catch (e) {
+      if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
+    }
+    await deleteRepoRow(env.DB, shard.slug);
+    count += 1;
+  }
+  return count;
+}
+
+/** Owner-of-the-parent is the one check that matters -- every shard being wiped is a scratch workspace that exists only because of this repo's own task delegation, not a separately-owned repo someone else gets a say over. */
+async function doCleanupShards(env: WebEnv, actor: Agent, repoSlug: string): Promise<number> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("read", 120);
+  const info = await artifactsRepo.info();
+  const roles = await readRepoRoles(info.remote, token);
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  return deleteShardTreeOf(env, repoSlug);
+}
+
 function doStub(env: WebEnv, artifactsName: string) {
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(artifactsName));
   return stub;
@@ -1398,6 +1427,18 @@ async function handleDeleteRepoForm(repoSlug: string, request: Request, env: Web
     throw err;
   }
   return redirect(`/${me.username}`);
+}
+
+async function handleCleanupShardsForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  try {
+    await doCleanupShards(env, me, repoSlug);
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${repoSlug}/settings`);
 }
 
 // --- JSON API (same core logic, bearer-token or session authenticated, for the CLI and any script) ---
@@ -1951,6 +1992,11 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   const { meta, roles } = ctx;
   if (!repoAtLeast(repoRoleFor(roles, me.username), "owner")) return new Response("Owners only", { status: 403 });
 
+  // Direct shards only, for the count shown here -- the actual
+  // cleanup (doCleanupShards) recurses to shards of shards itself;
+  // this is just "does the button need to show at all."
+  const directShards = await listShardsOf(env.DB, slug);
+
   const roleRows = (roles?.grants ?? [])
     .map(
       (g) => `<li class="row">
@@ -1998,6 +2044,13 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
             ${agentAutocompleteField("new_owner", "new owner (agent name or id)", "transfer")}
             <button type="submit" class="danger">Transfer ownership</button>
           </form>
+          ${
+            directShards.length > 0
+              ? `<form method="post" action="/${esc(slug)}/settings/cleanup-shards" onsubmit="return confirm('Permanently delete every shard of ${esc(slug).replace(/'/g, "\\'")} (and any shards of those shards)? This cannot be undone.')">
+            <button type="submit" class="danger">Clean up shards</button>
+          </form>`
+              : ""
+          }
           <form method="post" action="/${esc(slug)}/settings/delete" onsubmit="return confirm('Permanently delete ${esc(slug).replace(/'/g, "\\'")}? This cannot be undone.')">
             <button type="submit" class="danger">Delete repo</button>
           </form>
@@ -2406,6 +2459,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/delete$/);
     if (m && request.method === "POST") return handleDeleteRepoForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/cleanup-shards$/);
+    if (m && request.method === "POST") return handleCleanupShardsForm(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/info\/refs$/);
