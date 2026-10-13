@@ -17,6 +17,7 @@ import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
 import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
 import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
 import { work } from "./commands/work.js";
+import { workAssist } from "./commands/workAssist.js";
 import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
@@ -156,7 +157,10 @@ program
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare (remote, each needs its own API key -- see app/.env)")
   .option("--model <name>", 'model name for whichever provider -- default is "qwen2.5:14b-instruct" (ollama), "gemini-3.8-flash" (gemini), "openai/gpt-oss-120b" (groq), or "@cf/meta/llama-3.3-70b-instruct-fp8-fast" (cloudflare). Run `zz models` to see what\'s available locally for ollama.')
   .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your resolved identity's real protocol state on the deployed Worker")
-  .option("--assist", "a single interactive session instead of the headless loop: drafts one work/changeset_review ask at a time via a model, shows you the draft, and only writes anything on your explicit accept (or lets you reject/override) -- never the TUI, ignores --stdio/--poll-ms/--max-turns")
+  .option(
+    "--assist",
+    "a human-in-the-loop TUI instead of the headless loop: pick a claimable work/changeset_review ask from the repos you're watching (same resolution as `zz top`), chat with the model about its draft/recommendation, then explicitly submit it back as a real ANSWER. Never clones anything until you've picked an ask. Ignores --stdio/--poll-ms/--max-turns.",
+  )
   .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean }) => {
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
@@ -166,6 +170,18 @@ program
     if (opts.provider && !["ollama", "gemini", "groq", "cloudflare"].includes(opts.provider)) {
       console.error(`unknown --provider "${opts.provider}"; expected ollama, gemini, groq, or cloudflare`);
       process.exitCode = 1;
+      return;
+    }
+    if (opts.assist) {
+      await workAssist({
+        as: opts.as,
+        agent: opts.agent,
+        repos: repo ? [repo] : opts.repos,
+        scope: opts.scope as "coordinator" | "contributor" | "all" | undefined,
+        model: opts.model,
+        provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
+        local: opts.local,
+      });
       return;
     }
     await work({
@@ -179,7 +195,6 @@ program
       model: opts.model,
       provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
       local: opts.local,
-      assist: opts.assist,
     });
   });
 

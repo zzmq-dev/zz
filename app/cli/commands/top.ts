@@ -5,57 +5,24 @@
 // read-only and has to work with ZERO config: no ~/.zz/config.json,
 // no --repos, no login (remote) or other running zz process (local)
 // all mean "show an empty/starter dashboard, not a crash" -- the
-// repo-resolution chain below (configuredRepos -> /api/me/repos ->
-// local discovery -> empty) is what makes that true, and Explore
-// (reachable as its own tab, see TopApp.tsx) is how you find repos to
-// add from inside the TUI instead of hand-editing config.json.
+// repo-resolution chain (lib/watchedRepoResolution.ts, shared with
+// `zz work --assist`'s own ask picker) is what makes that true, and
+// Explore (reachable as its own tab, see TopApp.tsx) is how you find
+// repos to add from inside the TUI instead of hand-editing config.json.
 import React from "react";
 import { render } from "ink";
-import { execFileSync } from "node:child_process";
-import { resolveRepo, isLocallyOnboarded, inferGitHubSlugFromCwd } from "../lib/repo.js";
-import { configuredRepos, addRepoToConfig } from "../lib/config.js";
+import { resolveRepo } from "../lib/repo.js";
+import { addRepoToConfig } from "../lib/config.js";
 import { resolveCliBackendMode } from "../lib/backendMode.js";
 import { apiFetch } from "../lib/api.js";
 import { createRepoWatchStore } from "../lib/watchedRepos.js";
-import { listRunningRepos } from "../lib/processRegistry.js";
+import { resolveWatchedRepoSlugs } from "../lib/watchedRepoResolution.js";
 import { TopApp } from "../../tui/TopApp.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 
 export interface TopOptions {
   repos?: string[];
   local?: boolean;
-}
-
-/** No explicit config/--repos, local mode: union whatever other local `zz work`/`zz review` processes are watching with the current directory, if it's an onboarded GitHub-backed repo. Prints onboarding guidance and returns null (meaning "nothing to show, caller should exit") rather than ever rendering an empty-but-otherwise-normal TUI with no obvious next step. */
-async function discoverLocalRepos(): Promise<string[] | null> {
-  const running = listRunningRepos();
-  const cwdSlug = inferGitHubSlugFromCwd();
-  const cwdRepo = cwdSlug ? resolveRepo(cwdSlug) : null;
-  const cwdOnboarded = cwdRepo ? await isLocallyOnboarded(cwdRepo) : false;
-  const repos = cwdOnboarded && cwdSlug ? [...new Set([...running, cwdSlug])] : running;
-  if (repos.length > 0) return repos;
-
-  if (cwdSlug && !cwdOnboarded) {
-    console.log(`Nothing to show yet. This directory looks like it's "${cwdSlug}" on GitHub, but it isn't onboarded into zz locally. Run:\n\n  zz ladder build ${cwdSlug}\n\nthen run \`zz top --local\` again.`);
-  } else if (cwdRepo === null && cwdSlugLooksLikeGitRepo()) {
-    console.log(`Nothing to show yet. This directory is a git repo, but its origin isn't a GitHub remote -- \`zz ladder build\` (zz's only onboarding path right now) needs one. Run \`zz work --local <owner/repo>\`/\`zz review --local <owner/repo>\` directly on a repo you've already onboarded, or use Explore (local mode browses the filesystem) from a terminal where one is nearby.`);
-  } else {
-    console.log("Nothing to show yet -- no other local zz process is running, and this directory isn't a git repo. Run `zz work`/`zz review` on a repo, or `zz ladder build owner/repo` to onboard one from GitHub, then run `zz top --local` again.");
-  }
-  return null;
-}
-
-// A plain git-repo check (no GitHub remote needed) just to pick the
-// right wording above -- inferGitHubSlugFromCwd() returning null is
-// ambiguous between "not a git repo" and "git repo, no GitHub
-// remote," and those two deserve different guidance.
-function cwdSlugLooksLikeGitRepo(): boolean {
-  try {
-    execFileSync("git", ["rev-parse", "--show-toplevel"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function top(options: TopOptions): Promise<void> {
@@ -68,33 +35,10 @@ export async function top(options: TopOptions): Promise<void> {
   process.on("SIGINT", () => void mode.cleanup().then(() => process.exit(0)));
   process.on("SIGTERM", () => void mode.cleanup().then(() => process.exit(0)));
 
-  // Priority: --repos (explicit, always wins) > the server's own
-  // per-identity list, if logged in (never mixed with a local config
-  // file that isn't scoped per-identity -- confirmed live: logging in
-  // as a second account still showed the first account's repos,
-  // because ~/.zz/config.json was being checked unconditionally
-  // before login state at all) > ~/.zz/config.json (the fallback for
-  // the two cases with no server-side list to use instead: remote but
-  // not logged in, or local mode) > local discovery > empty.
-  let repoSlugs: string[];
-  if (options.repos && options.repos.length > 0) {
-    repoSlugs = options.repos;
-  } else if (mode.useRemote && mode.identity) {
-    repoSlugs = (await apiFetch<{ repos: { slug: string }[] }>("GET", "/api/me/repos")).repos.map((r) => r.slug);
-  } else {
-    const configured = configuredRepos();
-    if (configured) {
-      repoSlugs = configured;
-    } else if (mode.useRemote) {
-      repoSlugs = []; // not logged in, no config -- empty dashboard
-    } else {
-      const discovered = await discoverLocalRepos();
-      if (discovered === null) {
-        await mode.cleanup();
-        return; // discoverLocalRepos already printed guidance -- nothing to render
-      }
-      repoSlugs = discovered;
-    }
+  const repoSlugs = await resolveWatchedRepoSlugs(mode, options);
+  if (repoSlugs === null) {
+    await mode.cleanup();
+    return; // resolveWatchedRepoSlugs already printed guidance -- nothing to render
   }
 
   const resolvedRepos = repoSlugs.map((slug) => resolveRepo(slug));

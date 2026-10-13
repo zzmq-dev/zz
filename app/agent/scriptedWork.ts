@@ -214,6 +214,40 @@ export interface ScriptedFlowOptions {
 
 const MAX_SANDBOX_ATTEMPTS = 2;
 
+/** The generate-then-sandbox-verify retry loop shared by a fresh proposal (proposeContributorWork) and a chat-revised one (reviseContributorWork) -- callers differ only in how they build the user prompt (fresh task framing vs. "here's the previous proposal plus feedback") and what system prompt a verified-from-scratch attempt starts with; a failed sandbox run always switches to FIX_SYSTEM_PROMPT on retry regardless of which caller is running. */
+async function generateVerifiedProposal(opts: {
+  resolved: ResolvedRepo;
+  backend: ChatBackend;
+  onLog: (line: string) => void;
+  initialSystemPrompt: string;
+  buildUserPrompt: (attempt: number, lastFailure: string) => string;
+}): Promise<{ proposal: ParsedFileProposal; baseCommit: string } | { denialReason: string }> {
+  const { resolved, backend, onLog, initialSystemPrompt, buildUserPrompt } = opts;
+  let systemPrompt = initialSystemPrompt;
+  let lastFailure = "";
+  for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
+    // baseCommit read fresh each attempt -- HEAD can genuinely move
+    // between attempts (another agent's commit landing while this one
+    // retries), so this is captured alongside each attempt's own
+    // generation rather than once before the loop.
+    const baseCommit = currentHeadSha(resolved);
+    const userPrompt = buildUserPrompt(attempt, lastFailure);
+    onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
+    const text = await generateText(backend, systemPrompt, userPrompt);
+    const proposal = parseFileProposal(text);
+    onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
+    const result = await verifyProposal(resolved, proposal.files);
+    if (result.exitCode === 0) {
+      onLog(`[scripted] sandbox passed`);
+      return { proposal, baseCommit };
+    }
+    lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
+    onLog(`[scripted] sandbox failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
+    systemPrompt = FIX_SYSTEM_PROMPT;
+  }
+  return { denialReason: `sandbox verification failed after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` };
+}
+
 /** Everything proposeContributorWork resolved along the way that acceptContributorWork needs to finish the job -- resolved/laneId/shardSource differ from opts.resolved/opts.laneId exactly when sharding happened (see runContributorWorkAsk's own header comment on authedCloneUrlFor), so they're carried here rather than re-derived. */
 export interface ContributorProposal {
   resolved: ResolvedRepo;
@@ -293,36 +327,49 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
     // best-effort -- a search failure should never block the actual work
   }
 
-  let proposal: ParsedFileProposal;
-  let systemPrompt = PROPOSE_SYSTEM_PROMPT;
-  let lastFailure = "";
-  for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
-    // Re-read on every attempt, not just once before the loop -- HEAD
-    // can genuinely move between attempts (another agent's commit
-    // landing while this one retries), and reusing a stale snapshot
-    // across retries was the same bug class as currentRepoFiles
-    // reading the working tree: feeding the model outdated context
-    // instead of giving it a real chance to account for what changed.
-    const baseCommit = currentHeadSha(resolved);
-    const files = currentRepoFiles(resolved);
-    const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-    const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}${relevantBlock}`;
-    const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}`;
-    onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
-    const text = await generateText(backend, systemPrompt, promptForAttempt);
-    proposal = parseFileProposal(text);
-    onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
-    const result = await verifyProposal(resolved, proposal.files);
-    if (result.exitCode === 0) {
-      onLog(`[scripted] sandbox passed`);
-      return { ok: true, result: { resolved, laneId, shardSource, proposal, baseCommit } };
-    }
-    lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
-    onLog(`[scripted] sandbox failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
-    systemPrompt = FIX_SYSTEM_PROMPT;
-  }
+  const gen = await generateVerifiedProposal({
+    resolved,
+    backend,
+    onLog,
+    initialSystemPrompt: PROPOSE_SYSTEM_PROMPT,
+    buildUserPrompt: (_attempt, lastFailure) => {
+      // Re-read on every attempt, not just once before the loop -- HEAD
+      // can genuinely move between attempts (another agent's commit
+      // landing while this one retries), and reusing a stale snapshot
+      // across retries was the same bug class as currentRepoFiles
+      // reading the working tree: feeding the model outdated context
+      // instead of giving it a real chance to account for what changed.
+      const files = currentRepoFiles(resolved);
+      const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+      const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}${relevantBlock}`;
+      return lastFailure ? `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}` : userPrompt;
+    },
+  });
+  if ("denialReason" in gen) return { ok: false, denialReason: gen.denialReason };
+  return { ok: true, result: { resolved, laneId, shardSource, proposal: gen.proposal, baseCommit: gen.baseCommit } };
+}
 
-  return { ok: false, denialReason: `sandbox verification failed after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` };
+/** A revised draft in response to a human's chat feedback on a previous proposal -- same generate-verify-retry mechanics as proposeContributorWork's own loop (via the same generateVerifiedProposal helper), just seeded with the previous proposal + the feedback instead of a blind first attempt. Nothing claimed/sharded here (that already happened); resolved/laneId/shardSource carry over from `current` unchanged, only proposal/baseCommit refresh. */
+export async function reviseContributorWork(opts: ScriptedFlowOptions, current: ContributorProposal, feedback: string): Promise<ContributorProposalResult> {
+  const { theAsk, backend, onLog } = opts;
+  const { resolved, laneId, shardSource, proposal: previous } = current;
+  const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
+  const previousBlob = previous.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+
+  const gen = await generateVerifiedProposal({
+    resolved,
+    backend,
+    onLog,
+    initialSystemPrompt: PROPOSE_SYSTEM_PROMPT,
+    buildUserPrompt: (_attempt, lastFailure) => {
+      const files = currentRepoFiles(resolved);
+      const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+      const base = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}\n\nYour previous proposal:\n${previousBlob}\n\nFeedback from the human reviewing this proposal: ${feedback}\n\nProduce a revised proposal addressing the feedback, in the same FILE:/SUMMARY:/MESSAGE: format.`;
+      return lastFailure ? `${base}\n\nYour previous revision's test run failed:\n${lastFailure}` : base;
+    },
+  });
+  if ("denialReason" in gen) return { ok: false, denialReason: gen.denialReason };
+  return { ok: true, result: { resolved, laneId, shardSource, proposal: gen.proposal, baseCommit: gen.baseCommit } };
 }
 
 /** The back half: commit for real in the shard (if sharded), write the Ladder, post the changeset_review/submit_changeset pair, and answer the original ask complete. Takes a (possibly human-edited, for --assist) proposal rather than generating one itself. */
@@ -663,6 +710,18 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
   const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt);
   return parseReviewDecision(text);
+}
+
+const CHANGESET_DISCUSS_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a Maintainer discussing a proposed changeset with the human who will make the final approve/request_changes call. You already gave an initial recommendation; the human is now asking a follow-up question or pushing back on it. Answer plainly and specifically about the real file contents and the task -- don't repeat your whole earlier analysis, just address what they're asking. Free-form prose is fine here (this is discussion, not the final decision) -- no DECISION:/REASON: format, no tool calls.`;
+
+/** Free-form Q&A about a changeset_review before the human finalizes it -- unlike proposeReview, this doesn't produce a DECISION:/REASON: pair, just an answer to append to the chat transcript. `conversation` is the prior turns (proposeReview's own initial recommendation counts as the first assistant turn) so follow-up questions have context. */
+export async function discussReview(opts: ScriptedFlowOptions, conversation: { role: "assistant" | "user"; content: string }[], question: string): Promise<string> {
+  const { theAsk, backend } = opts;
+  const payload = theAsk.payload as ChangesetReviewPayload;
+  const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  const history = conversation.map((t) => `${t.role === "assistant" ? "You" : "Human"}: ${t.content}`).join("\n\n");
+  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary: ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}\n\nConversation so far:\n${history}\n\nHuman: ${question}`;
+  return generateText(backend, CHANGESET_DISCUSS_SYSTEM_PROMPT, prompt);
 }
 
 /** Posts the grant/deny this review's decision calls for -- a (possibly human-overridden) ReviewProposal, not necessarily the exact one proposeReview drafted. */
