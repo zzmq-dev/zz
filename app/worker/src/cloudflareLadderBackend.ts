@@ -120,7 +120,11 @@ async function pushNote(remote: string, token: { plaintext: string } | string, f
   await git.addNote({ fs, dir, ref, oid: anchorSha, note: JSON.stringify(content), force: true, author: person, committer: person });
   const onAuth = () => ({ username: "x-token-auth", password: tokenString(token) });
   const pushResult = await git.push({ fs, http, dir, url: remote, onAuth, ref, remoteRef: ref });
-  if (!pushResult.ok) throw new Error(`push of ${ref} rejected: ${JSON.stringify(pushResult.refs)}`);
+  // pushResult.ok is an aggregate flag; per-ref status also confirmed ok
+  // live for this exact failure, so this check isn't the fix -- see the
+  // KNOWN ISSUE note on readRung below for what's actually going on.
+  const refStatus = pushResult.refs?.[ref];
+  if (!refStatus?.ok) throw new Error(`push of ${ref} rejected: ${refStatus?.error ?? JSON.stringify(pushResult)}`);
 }
 
 export async function writeRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, rung: SimpleRung): Promise<void> {
@@ -145,6 +149,24 @@ export async function writeRung(remote: string, token: { plaintext: string } | s
 // cloudflareBackend.ts's readAnchorFor); nothing requires it.
 export type NotesCache = Map<string, { fs: ReturnType<typeof createMemFs>; dir: string; hadExisting: boolean }>;
 
+// KNOWN ISSUE, not yet fixed: a brand-new repo's writes to this ref
+// (confirmed for "repo"/"file" kinds, which share one ref -- see
+// notesRefFor) report success -- isomorphic-git's push() reports
+// ok:true at both the aggregate AND per-ref level, and a same-request
+// re-fetch (the next sequential rung in the same writeLadder batch)
+// correctly sees the prior note via a brand-new scopedNotesCheckout --
+// but a LATER, separate request's fetch of that exact ref fails with
+// isomorphic-git's own NotFoundError ("Could not find <ref>"), so
+// readRung below returns null forever after. Confirmed NOT a timing
+// issue (retried after 45s and 120s, same result) and NOT caused by
+// `singleBranch: true` on the fetch (tested without it, same result).
+// Looks like an Artifacts-side consistency gap specific to non-branch
+// refs (git notes) that's visible within the request that just wrote
+// but not from a fresh connection -- not something fixable from this
+// side without a different write/verify strategy (e.g. reading back
+// after push and retrying, or writing notes as part of the same
+// commit instead of a separate ref). Flagging for follow-up rather
+// than chasing further right now.
 export async function readRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, kind: SimpleRung["kind"], path: string, explicitAnchorSha?: string, cache?: NotesCache): Promise<EmbeddedRung | null> {
   const ref = notesRefFor(kind);
   const anchorSha = explicitAnchorSha ?? (await anchorShaForRung(repo, { kind, path, sources: [] }));
