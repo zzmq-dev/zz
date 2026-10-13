@@ -47,11 +47,19 @@ export function resolveRepo(slug: string): ResolvedRepo {
   // genuinely possible with remote repos, e.g. two humans' repos both
   // named "shoes") happened to pick the same repo name.
   const ownerDir = owner.replace(/[^a-zA-Z0-9._-]/g, "_");
+  // On disk only: a shard's name segment carries bracket-delimited task
+  // slugs (computeShardSlug, worker/src/webApp.ts, e.g.
+  // "pants[foo][bar]") -- real brackets are legal in a directory name
+  // but clunky to type/tab-complete/paste, so locally this becomes a
+  // double-underscore delimiter instead ("pants__foo__bar"). `slug` and
+  // `name` themselves are untouched -- they're the real identifiers
+  // used everywhere else (API calls, display, the protocol itself).
+  const nameDir = name.replace(/\[/g, "__").replace(/\]/g, "");
   return {
     slug,
     name,
-    repoDir: join(zzHome(), "repos", ownerDir, name),
-    stateDir: join(zzHome(), "state", ownerDir, name),
+    repoDir: join(zzHome(), "repos", ownerDir, nameDir),
+    stateDir: join(zzHome(), "state", ownerDir, nameDir),
   };
 }
 

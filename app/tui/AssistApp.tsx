@@ -185,7 +185,8 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // Whichever real directory on disk the current session is actually
   // working in -- the parent repo until/unless a shard gets created
   // (onShardReady, below) or a review workspace gets prepared, which
-  // both update this to the real shard clone. ctrl+t opens a shell
+  // both update this to the real shard clone. ctrl+/ (or typing "!")
+  // opens a shell
   // there directly, so you can poke at the exact files being discussed
   // without hunting for the path yourself.
   const shardRepoDirRef = useRef<string | null>(null);
@@ -381,6 +382,24 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, selected]);
 
+  // Drops out of the TUI into a real shell in the shard directory this
+  // session is actually working in, then restores the alt-screen and
+  // raw mode exactly where it left off. Reachable both as a hotkey
+  // (ctrl+/) and by typing "!" into the feedback box -- the two spots
+  // someone might reach for a shell escape from, not two different
+  // features.
+  function openShell(): void {
+    const dir = shardRepoDirRef.current;
+    if (!dir) return;
+    exitFullscreen();
+    const wasRaw = process.stdin.isTTY && process.stdin.isRaw;
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    spawnSync(process.env.SHELL || "/bin/bash", [], { cwd: dir, stdio: "inherit" });
+    if (process.stdin.isTTY && wasRaw) process.stdin.setRawMode(true);
+    enterFullscreen();
+    setFlash(`back from shell (${dir})`);
+  }
+
   async function handleCommand(cmd: string, arg: string): Promise<void> {
     const flowOpts = flowOptsRef.current;
     if (!flowOpts || !selected) return;
@@ -533,23 +552,23 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       // a no-op rather than copying something irrelevant.
       return;
     }
-    // ctrl+t: drop into a real shell in the shard directory this
+    // ctrl+/: drop into a real shell in the shard directory this
     // session is actually working in -- same reasoning as ctrl+y above
-    // for why this is ctrl-gated rather than a bare letter. Only
+    // for why this is ctrl-gated rather than a bare letter (and not
+    // ctrl+t, which collides with common terminal/tmux bindings). Only
     // meaningful once a session has a directory on disk at all, so
     // scoped to "session" (not the picker/lanes phases, which have
     // none). Deliberately not gated on busy/done: if the model is mid
     // stream, spawnSync still blocks correctly, it's just unusual to do
-    // on purpose.
-    if (key.ctrl && input === "t" && phase === "session" && shardRepoDirRef.current) {
-      const dir = shardRepoDirRef.current;
-      exitFullscreen();
-      const wasRaw = process.stdin.isTTY && process.stdin.isRaw;
-      if (process.stdin.isTTY) process.stdin.setRawMode(false);
-      spawnSync(process.env.SHELL || "/bin/bash", [], { cwd: dir, stdio: "inherit" });
-      if (process.stdin.isTTY && wasRaw) process.stdin.setRawMode(true);
-      enterFullscreen();
-      setFlash(`back from shell (${dir})`);
+    // on purpose. Typing "!" into the feedback box (below) reaches the
+    // same openShell().
+    // Terminals vary in how they encode ctrl+/ (historically the 0x1F
+    // "unit separator" byte) -- accept both the literal "/" ink
+    // sometimes reports and the "_" some terminals send instead, so
+    // the hotkey isn't silently dead on a terminal that picks the other
+    // encoding.
+    if (key.ctrl && (input === "/" || input === "_") && phase === "session" && shardRepoDirRef.current) {
+      openShell();
       return;
     }
     if (phase === "picking") {
@@ -675,7 +694,9 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       const text = inputValue.trim();
       setInputValue("");
       if (!text) return;
-      if (text.startsWith("/")) {
+      if (text === "!") {
+        openShell();
+      } else if (text.startsWith("/")) {
         const [cmd, ...rest] = text.slice(1).split(" ");
         void handleCommand(cmd, rest.join(" ").trim());
       } else {
@@ -864,7 +885,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       {done && <Text color={MUTED}>enter/esc: back to the ask list</Text>}
       <Box>
         <Text color={MUTED} wrap="truncate-end">
-          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y or option/shift-drag: copy ctrl+t: shell esc: pause ctrl+c: quit
+          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y or option/shift-drag: copy ctrl+/ or !: shell esc: pause ctrl+c: quit
         </Text>
       </Box>
     </Box>
