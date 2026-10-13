@@ -19,6 +19,9 @@ import { createRepoWatchStore } from "../lib/watchedRepos.js";
 import { resolveWatchedRepoSlugs } from "../lib/watchedRepoResolution.js";
 import { login } from "./login.js";
 import { clearCredentials } from "../lib/credentials.js";
+import { callRemoteTool } from "../lib/remoteTools.js";
+import { ask } from "../../engine/lane.js";
+import { readConfig } from "../lib/config.js";
 import { TopApp } from "../../tui/TopApp.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 
@@ -70,6 +73,33 @@ export async function top(options: TopOptions): Promise<void> {
     clearCredentials();
   };
 
+  // A plain "work" ask (payload.description), same shape `zz repo ask`
+  // itself posts -- just into whichever lane was actually selected,
+  // not always "_repo". Remote mode goes through the real protocol
+  // tool (callRemoteTool); local mode calls the engine primitive
+  // directly -- NOT through remoteBackend, which throws on purpose for
+  // every write method (see remoteBackend.ts's own notSupported) since
+  // only the server side can make a Lane mutation atomic.
+  const onPostAsk = async (repoSlug: string, laneId: string, description: string): Promise<void> => {
+    if (mode.useRemote) {
+      // LaneList's own "n" handler already blocks this unless its
+      // `identity` prop is set, but don't rely on the UI guard alone --
+      // posting as nobody (or worse, as some stale local-mode fallback)
+      // to a real remote repo should never be possible even if that
+      // check is ever bypassed.
+      if (!mode.identity) throw new Error("not logged in -- press l to log in first");
+      await callRemoteTool(repoSlug, "ask_post", { lane_id: laneId, kind: "work", from: mode.identity.username, payload: { description }, depends_on: [] });
+    } else {
+      let localAgent: string | undefined;
+      try {
+        localAgent = readConfig({ allowEmpty: true }).agent;
+      } catch {
+        // no ~/.zz/config.json agent set -- fall through to the default below
+      }
+      await ask(repoSlug, laneId, { kind: "work", from: localAgent ?? "local-user", payload: { description } });
+    }
+  };
+
   enterFullscreen();
   render(
     React.createElement(TopApp, {
@@ -80,6 +110,7 @@ export async function top(options: TopOptions): Promise<void> {
       identityUsername: mode.identity?.username ?? null,
       onLogin,
       onLogout,
+      onPostAsk,
     }),
   );
 }

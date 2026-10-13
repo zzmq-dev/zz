@@ -36,6 +36,7 @@ export function TopApp({
   identityUsername,
   onLogin,
   onLogout,
+  onPostAsk,
 }: {
   watch: RepoWatch;
   /** Mirrors WorkApp's own prop: in remote mode, Lane/Ladder state lives on the deployed Worker, not in a local clone's flat files/git notes -- see useLaneSnapshots.ts/useLadderTrees.ts's own `remote` param. */
@@ -49,12 +50,15 @@ export function TopApp({
   /** Opens a browser for the OAuth flow and resolves once it completes -- `cli/commands/login.ts`'s own `login()`, called with `quiet: true` so its normal console.log output doesn't corrupt the alt-screen frame. */
   onLogin: () => Promise<string>;
   onLogout: () => void;
+  /** LaneList's own "n" (post a new ask into the selected lane) -- see top.ts's own implementation for the remote/local split. */
+  onPostAsk: (repo: string, laneId: string, description: string) => Promise<void>;
 }) {
   const watchedRepos = useSyncExternalStore(watch.subscribe, watch.get);
   const repos = watchedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir }));
   const snapshots = useLaneSnapshots(repos, 500, remote);
   const ladders = useLadderTrees(repos, 2000, remote);
   const [exploreEditing, setExploreEditing] = useState(false);
+  const [laneEditing, setLaneEditing] = useState(false);
   const [identity, setIdentity] = useState(identityUsername);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -92,7 +96,7 @@ export function TopApp({
           setAuthError(err instanceof Error ? err.message : String(err));
         });
     },
-    { isActive: !exploreEditing },
+    { isActive: !exploreEditing && !laneEditing },
   );
   // Explore is always tabs[0] -- reachable the same way regardless of
   // mode -- but which tab actually opens first depends on whether
@@ -114,7 +118,7 @@ export function TopApp({
   return (
     <TabView
       title="zz top"
-      inputPaused={exploreEditing}
+      inputPaused={exploreEditing || laneEditing}
       initialTab={initialTab}
       headerRight={
         <Text>
@@ -126,7 +130,13 @@ export function TopApp({
       }
       tabs={[
         { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
-        { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
+        {
+          label: "lanes",
+          content: (maxRows, scrollOffset) => (
+            <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} onPostAsk={onPostAsk} identity={identity} onEditingChange={setLaneEditing} />
+          ),
+          getFullText: () => laneListText(snapshots),
+        },
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
         {
           label: "protocol",
