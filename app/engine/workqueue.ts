@@ -24,19 +24,21 @@ export function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "
  * lease this project didn't have until now. A claim_request targeting
  * this ask, once granted, makes its `from` the holder; a later granted
  * claim_request on the same target (e.g. the same actor resuming after
- * a failed attempt) replaces the holder, but there's still always at
- * most one at a time. Nothing here expires a claim on its own; a holder
- * only changes by a new claim_request being granted. There's
- * deliberately no separate "release" -- the ask leaving the claimable
- * set entirely once it's answered is what ends the need for a holder.
+ * a failed attempt) replaces the holder. A later granted claim_release
+ * (ask_release, agent/tools.ts) clears it back to null instead --
+ * giving up a claim without answering the claimed ask itself, so it
+ * goes back to being claimable by anyone, including the same actor
+ * later. lane.history is already in the order these were posted, so
+ * the last granted claim/release event targeting this ask wins.
  */
-function claimHolder(lane: Lane, askId: string): string | null {
+export function claimHolder(lane: Lane, askId: string): string | null {
   let holder: string | null = null;
   for (const e of lane.history) {
-    if (e.type !== "ASK" || e.kind !== "claim_request") continue;
+    if (e.type !== "ASK" || (e.kind !== "claim_request" && e.kind !== "claim_release")) continue;
     if ((e.payload as { target?: string } | undefined)?.target !== askId) continue;
     const granted = lane.history.some((a) => a.type === "ANSWER" && a.ask === e.id && a.action === "grant");
-    if (granted) holder = e.from;
+    if (!granted) continue;
+    holder = e.kind === "claim_request" ? e.from : null;
   }
   return holder;
 }

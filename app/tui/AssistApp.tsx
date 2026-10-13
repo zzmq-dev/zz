@@ -1,21 +1,36 @@
-// `zz work --assist`'s TUI: pick a claimable work/changeset_review ask
-// out of the repos you're watching, then chat with the model about its
-// draft (or, for a review, its recommendation) before explicitly
+// `zz work --assist`'s interface: pick a claimable work/changeset_review
+// ask out of the repos you're watching, then chat with the model about
+// its draft (or, for a review, its recommendation) before explicitly
 // submitting it back into the protocol as a real ANSWER -- a
 // human-in-the-loop counterpart to `zz work`'s own fully autonomous
-// claim-draft-verify-submit loop, not a replacement for it. Nothing is
-// cloned until an ask is actually picked (proposeContributorWork's own
-// shard-clone step handles that, same as the autonomous path); the
-// picker itself only ever reads lane_list across the watched repos.
+// claim-draft-verify-submit loop, not a replacement for it.
+//
+// Deliberately NOT a full-screen/alt-buffer dashboard (see
+// cli/commands/workAssist.ts, which never calls enterFullscreen) --
+// the chat transcript renders via ink's own <Static>, which prints
+// permanently into the terminal's real scrollback and is never
+// re-rendered once written. That's what makes scrolling back through
+// earlier turns just work (your terminal's own scrollback, not a
+// bespoke one this app would otherwise have to build), and it's the
+// same shape Claude Code's own CLI uses. Only the "current turn in
+// progress" region below the transcript re-renders on every state
+// change (streaming tokens, the input box).
+//
+// Nothing is cloned until an ask is actually picked
+// (proposeContributorWork's own shard-clone step handles that, same as
+// the autonomous path); the picker itself only ever reads lane_list
+// across the watched repos.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Static, Text, useInput } from "ink";
 import { claimableAcrossRepos, type WorkScope, type ClaimableEntry } from "../engine/workqueue.js";
 import type { ChatBackend } from "../agent/chatBackend.js";
 import {
   proposeContributorWork,
   acceptContributorWork,
   reviseContributorWork,
+  commitContributorWork,
   denyContributorWork,
+  releaseAsk,
   proposeReview,
   acceptReview,
   discussReview,
@@ -24,10 +39,10 @@ import {
   type ScriptedFlowOptions,
 } from "../agent/scriptedWork.js";
 import { remoteCallTool } from "../cli/lib/remoteTools.js";
+import { diffFileSets } from "../cli/lib/fileDiff.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
-import { BACKDROP, PANEL, BORDER, MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
-import { useTerminalSize } from "./useTerminalSize.js";
+import { MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface AssistAppProps {
   watch: RepoWatchStore;
@@ -47,35 +62,35 @@ interface TranscriptEntry {
 
 function describeAsk(ask: ClaimableEntry["ask"]): string {
   const payload = ask.payload as { description?: string; taskDescription?: string } | undefined;
-  return (payload?.description ?? payload?.taskDescription ?? JSON.stringify(ask.payload)).slice(0, 90);
+  return payload?.description ?? payload?.taskDescription ?? JSON.stringify(ask.payload);
 }
 
-function formatProposal(p: ContributorProposal["proposal"]): string {
+function formatFreshProposal(p: ContributorProposal["proposal"]): string {
   const filesBlock = p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   return `${p.summary}\n(commit message: "${p.message}")\n\n${filesBlock}`;
+}
+
+function formatRevisedProposal(previous: ContributorProposal["proposal"], p: ContributorProposal["proposal"]): string {
+  const diff = diffFileSets(previous.files, p.files);
+  return `${p.summary}\n(commit message: "${p.message}")\n\n${diff || "(no file changes)"}`;
 }
 
 function formatDecision(d: ReviewProposal): string {
   return `Decision: ${d.decision}\nReason: ${d.reason}`;
 }
 
-const MAX_ENTRY_LINES = 30;
-const MAX_VISIBLE_ENTRIES = 4;
-
-function truncateLines(text: string): string {
-  const lines = text.split("\n");
-  if (lines.length <= MAX_ENTRY_LINES) return text;
-  return [...lines.slice(0, MAX_ENTRY_LINES), `... (${lines.length - MAX_ENTRY_LINES} more lines)`].join("\n");
-}
+const roleLabel: Record<TranscriptEntry["role"], string> = { assistant: "model", user: "you", system: "system" };
+const roleColor: Record<TranscriptEntry["role"], string> = { assistant: GREEN, user: CYAN, system: RED };
 
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
-  const { columns } = useTerminalSize();
   const [phase, setPhase] = useState<"picking" | "session">("picking");
   const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<ClaimableEntry | null>(null);
-  const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
+  const [entries, setEntries] = useState<TranscriptEntry[]>([]);
+  const [liveLabel, setLiveLabel] = useState("");
+  const [liveText, setLiveText] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
@@ -84,13 +99,17 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const flowOptsRef = useRef<ScriptedFlowOptions | null>(null);
   const workResultRef = useRef<ContributorProposal | null>(null);
   const reviewResultRef = useRef<ReviewProposal | null>(null);
-  const transcriptRef = useRef<TranscriptEntry[]>([]);
-  transcriptRef.current = transcript;
+  const entriesRef = useRef<TranscriptEntry[]>([]);
+  entriesRef.current = entries;
 
   const reposKey = watch
     .get()
     .map((r) => r.slug)
     .join(",");
+
+  function pushEntry(role: TranscriptEntry["role"], content: string): void {
+    setEntries((e) => [...e, { role, content }]);
+  }
 
   // Picker polling -- claimableAcrossRepos itself (engine/workqueue.ts)
   // already encodes exactly the same scope/claim-holder rules the real
@@ -127,7 +146,11 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // Never clones anything itself -- proposeContributorWork's own
   // shard-clone step (remote mode) handles that exactly when needed;
   // local mode's repos are already on disk by the time they're
-  // watchable at all.
+  // watchable at all. ensureShard (worker/src/webApp.ts) is
+  // deterministic/idempotent per task, so re-picking an already-claimed
+  // ask reuses the same shard rather than creating a new one -- this is
+  // what makes "pause (leave it claimed), come back later" safe: a
+  // /commit before pausing is real git history in that same shard.
   useEffect(() => {
     if (phase !== "session" || !selected) return;
     let cancelled = false;
@@ -142,6 +165,9 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       onLog: (line) => {
         if (!cancelled) setStatus(line);
       },
+      onPartial: (text) => {
+        if (!cancelled) setLiveText(text);
+      },
       callTool: useRemote ? remoteCallTool : undefined,
       authedCloneUrlFor,
       onShardReady: (repo) => watch.add(repo),
@@ -149,40 +175,52 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     flowOptsRef.current = flowOpts;
     workResultRef.current = null;
     reviewResultRef.current = null;
-    setTranscript([]);
+    setEntries(selected.alreadyClaimed ? [{ role: "system", content: "Resuming -- you already hold this claim. Drafting against the current state of your shard." }] : []);
+    setLiveLabel("");
+    setLiveText("");
     setDone(false);
     setBusy(true);
 
     (async () => {
       try {
         if (selected.ask.kind === "work") {
+          setLiveLabel("drafting");
           setStatus("drafting...");
           const res = await modeRun(() => proposeContributorWork(flowOpts));
           if (cancelled) return;
+          setLiveLabel("");
+          setLiveText("");
           if (!res.ok) {
-            setTranscript((t) => [...t, { role: "assistant", content: `Couldn't produce a verified draft: ${res.denialReason}` }]);
-            setStatus("type feedback to try again, /deny [reason], or esc to cancel");
+            pushEntry("assistant", `Couldn't produce a verified draft: ${res.denialReason}`);
+            setStatus("type feedback to try again, /deny [reason], /release, or esc to pause");
           } else {
             workResultRef.current = res.result;
-            setTranscript((t) => [...t, { role: "assistant", content: formatProposal(res.result.proposal) }]);
-            setStatus("type feedback, /submit, /deny [reason], or esc to cancel");
+            pushEntry("assistant", formatFreshProposal(res.result.proposal));
+            setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
           }
         } else {
+          setLiveLabel("thinking");
           setStatus("drafting a recommendation...");
           const proposal = await modeRun(() => proposeReview(flowOpts));
           if (cancelled) return;
+          setLiveLabel("");
+          setLiveText("");
           reviewResultRef.current = proposal;
-          setTranscript((t) => [...t, { role: "assistant", content: formatDecision(proposal) }]);
-          setStatus("ask questions, /approve [reason], /request-changes [reason], or esc to cancel");
+          pushEntry("assistant", formatDecision(proposal));
+          setStatus("ask questions, /approve [reason], /request-changes [reason], /release, or esc to pause");
         }
       } catch (err) {
         if (!cancelled) {
           const message = err instanceof Error ? err.message : String(err);
-          setTranscript((t) => [...t, { role: "system", content: `Error: ${message}` }]);
+          pushEntry("system", `Error: ${message}`);
           setStatus("esc to go back");
         }
       } finally {
-        if (!cancelled) setBusy(false);
+        if (!cancelled) {
+          setBusy(false);
+          setLiveLabel("");
+          setLiveText("");
+        }
       }
     })();
 
@@ -195,18 +233,46 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   async function handleCommand(cmd: string, arg: string): Promise<void> {
     const flowOpts = flowOptsRef.current;
     if (!flowOpts || !selected) return;
+
     if (cmd === "cancel") {
+      pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
       setPhase("picking");
       setSelected(null);
       return;
     }
+    if (cmd === "release") {
+      setBusy(true);
+      setStatus("releasing...");
+      await modeRun(() => releaseAsk(flowOpts));
+      pushEntry("system", "Released -- claimable by anyone again.");
+      setStatus("");
+      setDone(true);
+      setBusy(false);
+      return;
+    }
+
     if (selected.ask.kind === "work") {
       if (cmd === "submit" && workResultRef.current) {
         setBusy(true);
         setStatus("submitting...");
         await modeRun(() => acceptContributorWork(flowOpts, workResultRef.current!));
-        setStatus("submitted for review.");
+        pushEntry("system", "Submitted for review.");
+        setStatus("");
         setDone(true);
+        setBusy(false);
+        return;
+      }
+      if (cmd === "commit" && workResultRef.current) {
+        if (!authedCloneUrlFor) {
+          pushEntry("system", "Local mode has no shard to commit to independently -- /submit when ready.");
+          return;
+        }
+        setBusy(true);
+        setStatus("committing...");
+        const committed = await modeRun(() => commitContributorWork(flowOpts, workResultRef.current!));
+        workResultRef.current = committed;
+        pushEntry("system", `Committed ${committed.shardSource?.commitOid.slice(0, 10)} to the shard. Still claimed -- /submit when ready, or pause (esc) and come back any time; this is saved.`);
+        setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
         setBusy(false);
         return;
       }
@@ -214,61 +280,74 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         setBusy(true);
         setStatus("denying...");
         await modeRun(() => denyContributorWork(flowOpts, arg || "rejected by human"));
-        setStatus("denied.");
+        pushEntry("system", "Denied.");
+        setStatus("");
         setDone(true);
         setBusy(false);
         return;
       }
-      setTranscript((t) => [...t, { role: "system", content: `Unknown command "/${cmd}". Try /submit, /deny [reason], or /cancel.` }]);
+      pushEntry("system", `Unknown command "/${cmd}". Try /submit, /commit, /deny [reason], /release, or /cancel.`);
       return;
     }
+
     if ((cmd === "approve" || cmd === "request-changes") && reviewResultRef.current) {
       const decision = cmd === "approve" ? ("approve" as const) : ("request_changes" as const);
       setBusy(true);
       setStatus(cmd === "approve" ? "approving..." : "requesting changes...");
       await modeRun(() => acceptReview(flowOpts, { decision, reason: arg || reviewResultRef.current!.reason }));
-      setStatus(cmd === "approve" ? "approved." : "requested changes.");
+      pushEntry("system", cmd === "approve" ? "Approved." : "Requested changes.");
+      setStatus("");
       setDone(true);
       setBusy(false);
       return;
     }
-    setTranscript((t) => [...t, { role: "system", content: `Unknown command "/${cmd}". Try /approve [reason], /request-changes [reason], or /cancel.` }]);
+    pushEntry("system", `Unknown command "/${cmd}". Try /approve [reason], /request-changes [reason], /release, or /cancel.`);
   }
 
   async function handleFeedback(text: string): Promise<void> {
     const flowOpts = flowOptsRef.current;
     if (!flowOpts || !selected) return;
-    setTranscript((t) => [...t, { role: "user", content: text }]);
+    pushEntry("user", text);
     setBusy(true);
     if (selected.ask.kind === "work") {
       if (!workResultRef.current) {
+        setLiveLabel("drafting");
         setStatus("retrying from scratch...");
         const res = await modeRun(() => proposeContributorWork(flowOpts));
+        setLiveLabel("");
+        setLiveText("");
         if (!res.ok) {
-          setTranscript((t) => [...t, { role: "assistant", content: `Still couldn't produce a verified draft: ${res.denialReason}` }]);
-          setStatus("type feedback to try again, /deny [reason], or esc to cancel");
+          pushEntry("assistant", `Still couldn't produce a verified draft: ${res.denialReason}`);
+          setStatus("type feedback to try again, /deny [reason], /release, or esc to pause");
         } else {
           workResultRef.current = res.result;
-          setTranscript((t) => [...t, { role: "assistant", content: formatProposal(res.result.proposal) }]);
-          setStatus("type feedback, /submit, /deny [reason], or esc to cancel");
+          pushEntry("assistant", formatFreshProposal(res.result.proposal));
+          setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
         }
       } else {
+        const previous = workResultRef.current.proposal;
+        setLiveLabel("revising");
         setStatus("revising...");
         const res = await modeRun(() => reviseContributorWork(flowOpts, workResultRef.current!, text));
+        setLiveLabel("");
+        setLiveText("");
         if (!res.ok) {
-          setTranscript((t) => [...t, { role: "assistant", content: `Couldn't produce a verified revision: ${res.denialReason}` }]);
+          pushEntry("assistant", `Couldn't produce a verified revision: ${res.denialReason}`);
         } else {
           workResultRef.current = res.result;
-          setTranscript((t) => [...t, { role: "assistant", content: formatProposal(res.result.proposal) }]);
+          pushEntry("assistant", formatRevisedProposal(previous, res.result.proposal));
         }
-        setStatus("type feedback, /submit, /deny [reason], or esc to cancel");
+        setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
       }
     } else {
+      setLiveLabel("thinking");
       setStatus("thinking...");
-      const conversation = transcriptRef.current.map((e) => ({ role: e.role === "user" ? ("user" as const) : ("assistant" as const), content: e.content }));
+      const conversation = entriesRef.current.filter((e) => e.role !== "system").map((e) => ({ role: e.role === "user" ? ("user" as const) : ("assistant" as const), content: e.content }));
       const answer = await modeRun(() => discussReview(flowOpts, conversation, text));
-      setTranscript((t) => [...t, { role: "assistant", content: answer }]);
-      setStatus("ask questions, /approve [reason], /request-changes [reason], or esc to cancel");
+      setLiveLabel("");
+      setLiveText("");
+      pushEntry("assistant", answer);
+      setStatus("ask questions, /approve [reason], /request-changes [reason], /release, or esc to pause");
     }
     setBusy(false);
   }
@@ -302,6 +381,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     }
     if (busy) return;
     if (key.escape) {
+      pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
       setPhase("picking");
       setSelected(null);
       return;
@@ -327,7 +407,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   if (phase === "picking") {
     return (
-      <Box flexDirection="column" width={columns} minHeight={10} backgroundColor={BACKDROP} paddingX={1}>
+      <Box flexDirection="column">
         <Text color={CYAN} bold>
           zz work --assist -- pick an ask
         </Text>
@@ -336,46 +416,51 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
             <Text color={MUTED}>No claimable work/changeset_review asks right now across your watched repos. (refreshing every 2s)</Text>
           ) : (
             claimableList.map((c, i) => (
-              <Text key={c.ask.id} color={i === cursor ? CYAN : undefined}>
-                {i === cursor ? "> " : "  "}
-                <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text> {c.repo} -- {describeAsk(c.ask)}
-                {c.alreadyClaimed ? " (claimed by you)" : ""}
-              </Text>
+              <Box key={c.ask.id} flexDirection="column" marginBottom={1}>
+                <Text color={i === cursor ? CYAN : undefined}>
+                  {i === cursor ? "> " : "  "}
+                  <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text> {c.repo}
+                  {c.alreadyClaimed ? " (claimed by you)" : ""}
+                </Text>
+                <Text color={i === cursor ? undefined : MUTED}>{"    " + describeAsk(c.ask)}</Text>
+              </Box>
             ))
           )}
         </Box>
-        <Box marginTop={1}>
-          <Text color={MUTED}>↑/↓ select enter: start q/ctrl+c: quit</Text>
-        </Box>
+        <Text color={MUTED}>↑/↓ select enter: start q/ctrl+c: quit</Text>
       </Box>
     );
   }
 
-  const visible = transcript.slice(-MAX_VISIBLE_ENTRIES);
-  const hiddenCount = transcript.length - visible.length;
-
   return (
-    <Box flexDirection="column" width={columns} minHeight={10} backgroundColor={BACKDROP} paddingX={1}>
-      <Text color={CYAN} bold>
-        {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId}
-      </Text>
-      <Text color={MUTED}>{selected ? describeAsk(selected.ask) : ""}</Text>
-      <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor={BORDER} backgroundColor={PANEL} paddingX={1}>
-        {hiddenCount > 0 && <Text color={MUTED}>... {hiddenCount} earlier turn(s) not shown ...</Text>}
-        {visible.map((e, i) => (
+    <Box flexDirection="column">
+      <Static items={entries}>
+        {(e, i) => (
           <Box key={i} flexDirection="column" marginBottom={1}>
-            <Text color={e.role === "user" ? CYAN : e.role === "system" ? RED : GREEN} bold>
-              {e.role === "user" ? "you" : e.role === "system" ? "system" : "model"}:
+            <Text color={roleColor[e.role]} bold>
+              {roleLabel[e.role]}:
             </Text>
-            <Text>{truncateLines(e.content)}</Text>
+            <Text>{e.content}</Text>
           </Box>
-        ))}
+        )}
+      </Static>
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color={CYAN} bold>
+          {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId}
+        </Text>
+        <Text color={MUTED}>{selected ? describeAsk(selected.ask) : ""}</Text>
       </Box>
-      <Box marginTop={1}>
-        <Text color={busy ? YELLOW : MUTED}>{status}</Text>
-      </Box>
+      {liveText && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color={YELLOW} bold>
+            {liveLabel}:
+          </Text>
+          <Text>{liveText}</Text>
+        </Box>
+      )}
+      <Text color={busy ? YELLOW : MUTED}>{status}</Text>
       {!done && (
-        <Box marginTop={1}>
+        <Box>
           <Text color={MUTED}>{"> "}</Text>
           <Text>{inputValue}</Text>
           <Text color={MUTED}>{busy ? "" : "_"}</Text>

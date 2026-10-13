@@ -189,6 +189,7 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
 // actor would run against a shared queue.
 export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer"> = {
   claim_request: "coordinator",
+  claim_release: "coordinator",
   merge_request: "coordinator",
   review_request: "coordinator",
   change_request: "coordinator",

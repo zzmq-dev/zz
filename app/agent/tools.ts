@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
 import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
-import { claimableAsks, isResolved } from "../engine/workqueue.js";
+import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
 import { type ChangesetFile } from "../engine/changeset.js";
@@ -446,6 +446,24 @@ const askClaim: ToolDef = {
   },
 };
 
+const askRelease: ToolDef = {
+  name: "ask_release",
+  description: "Give up your own claim on an Ask without answering it -- it goes back to being claimable by anyone (including you again later), unlike ask_answer's \"deny\" (terminal) or just leaving it claimed forever.",
+  parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, ask_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "ask_id", "actor"] },
+  async execute({ repo, lane_id, ask_id, actor }) {
+    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
+    const target = requireAsk(lane, ask_id as string);
+    const holder = claimHolder(lane!, target.id);
+    if (holder !== actor) {
+      throw new Error(`"${actor}" doesn't currently hold the claim on ask ${ask_id} (held by ${holder ?? "no one"}) -- only the current holder can release it.`);
+    }
+    const grantedBy = lane!.coordinators[0] ?? actor;
+    const release = await ask(repo as string, lane_id as string, { kind: "claim_release", from: actor as string, payload: { target: target.id } });
+    await answer(repo as string, lane_id as string, release, { from: grantedBy, action: "grant", payload: { release: `release-${release.id}` } });
+    return target;
+  },
+};
+
 const askAnswerTool: ToolDef = {
   name: "ask_answer",
   description: "Answer an Ask you've claimed: action \"complete\" with the result as payload when you've finished the work, or \"deny\" if you can't.",
@@ -653,7 +671,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

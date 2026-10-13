@@ -65,6 +65,12 @@ function fromOpenAiResponse(data: { choices?: { message?: { content?: string | n
   return { role: "assistant", content: msg?.content ?? "", tool_calls: toolCalls.length ? toolCalls : undefined };
 }
 
+interface StreamedToolCallDelta {
+  index: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+
 export function createOpenAiCompatBackend(opts: { name: string; url: string; model: string; apiKey: () => string }): ChatBackend {
   return {
     name: opts.name,
@@ -77,16 +83,55 @@ export function createOpenAiCompatBackend(opts: { name: string; url: string; mod
         // as omitting the field -- needed for a plain-text, no-tools
         // generation call (agent/scriptedWork.ts), which intentionally
         // passes [].
-        body: JSON.stringify({ model: opts.model, messages: toOpenAiMessages(messages), ...(tools.length ? { tools: toOpenAiTools(tools) } : {}) }),
+        body: JSON.stringify({ model: opts.model, messages: toOpenAiMessages(messages), ...(tools.length ? { tools: toOpenAiTools(tools) } : {}), stream: true }),
       });
       if (!res.ok) throw new Error(`${opts.name} chat failed: ${res.status} ${await res.text()}`);
-      const data = await res.json();
-      const message = fromOpenAiResponse(data);
-      // No streaming here yet (non-streaming call) -- same as Gemini,
-      // still report the final content once so a status line fed by
-      // onPartial has something to show.
-      if (message.content) onPartial?.(message.content);
-      return message;
+      if (!res.body) throw new Error(`${opts.name} chat response had no body to stream`);
+
+      // SSE: "data: {...}\n\n" lines, a final "data: [DONE]" sentinel.
+      // Prose content arrives incrementally (delta.content, appended
+      // straight onto the running total); a tool call arrives as
+      // fragments keyed by `index` (one chunk's id/name, several more
+      // chunks each appending a few more characters of `arguments`'
+      // JSON string) that have to be reassembled before
+      // fromOpenAiResponse can parse them -- same two-tier shape
+      // ollamaBackend.ts's own streaming loop documents (content
+      // token-by-token, tool_calls complete once decided), just SSE
+      // instead of NDJSON on the wire.
+      let content = "";
+      const toolCallsByIndex = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
+      let buffer = "";
+      for await (const rawChunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        buffer += Buffer.from(rawChunk).toString("utf8");
+        let newlineAt: number;
+        while ((newlineAt = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineAt).trim();
+          buffer = buffer.slice(newlineAt + 1);
+          if (!line.startsWith("data:")) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === "[DONE]") continue;
+          let chunk: { choices?: { delta?: { content?: string; tool_calls?: StreamedToolCallDelta[] } }[] };
+          try {
+            chunk = JSON.parse(data);
+          } catch {
+            continue; // a stray/partial SSE line -- skip rather than crash the whole stream over it
+          }
+          const delta = chunk.choices?.[0]?.delta;
+          if (delta?.content) {
+            content += delta.content;
+            onPartial?.(content);
+          }
+          for (const tc of delta?.tool_calls ?? []) {
+            const existing = toolCallsByIndex.get(tc.index) ?? { id: "", type: "function" as const, function: { name: "", arguments: "" } };
+            if (tc.id) existing.id = tc.id;
+            if (tc.function?.name) existing.function.name += tc.function.name;
+            if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+            toolCallsByIndex.set(tc.index, existing);
+          }
+        }
+      }
+      const toolCalls = [...toolCallsByIndex.entries()].sort(([a], [b]) => a - b).map(([, v]) => v);
+      return fromOpenAiResponse({ choices: [{ message: { content, tool_calls: toolCalls.length ? toolCalls : undefined } }] });
     },
   };
 }

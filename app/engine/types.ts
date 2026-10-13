@@ -33,6 +33,14 @@ export interface Trigger {
 
 export type AskKind =
   | "claim_request"
+  // Gives up a claim held via an earlier claim_request, without
+  // answering the claimed ask itself -- it goes back to being
+  // claimable by anyone (including the same actor again later), unlike
+  // "deny" (terminal) or just walking away (claim stays held forever,
+  // invisible to claimableAsks). See engine/workqueue.ts's claimHolder,
+  // which treats the latest granted claim_request/claim_release event
+  // for a given target ask as authoritative.
+  | "claim_release"
   | "review_request"
   | "change_request"
   | "coordinator_request"

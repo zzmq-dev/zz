@@ -49,13 +49,14 @@ async function localCallTool(name: string, args: Record<string, unknown>): Promi
 // "omit tools when empty" fix in each backend file) not to offer any
 // tool-calling at all, so there's no tool-call JSON to get wrong --
 // the model can only produce prose/code as its message content.
-async function generateText(backend: ChatBackend, systemPrompt: string, userPrompt: string): Promise<string> {
+async function generateText(backend: ChatBackend, systemPrompt: string, userPrompt: string, onPartial?: (textSoFar: string) => void): Promise<string> {
   const message = await backend.chat(
     [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ],
     [],
+    onPartial,
   );
   return message.content;
 }
@@ -210,6 +211,8 @@ export interface ScriptedFlowOptions {
   authedCloneUrlFor?: (slug: string) => string;
   /** Called once a task shard's local clone is ready, so the TUI/mainLoop start watching it immediately instead of only finding out once the ask that created it completes (see cli/lib/watchedRepos.ts). */
   onShardReady?: (repo: ResolvedRepo) => void;
+  /** Live token-by-token text as a model call streams in, when the backend supports it (see ChatBackend.chat's own onPartial) -- `--assist` (tui/AssistApp.tsx) is the one caller that actually shows this; the autonomous path leaves it unset, same as before this existed. */
+  onPartial?: (textSoFar: string) => void;
 }
 
 const MAX_SANDBOX_ATTEMPTS = 2;
@@ -219,10 +222,11 @@ async function generateVerifiedProposal(opts: {
   resolved: ResolvedRepo;
   backend: ChatBackend;
   onLog: (line: string) => void;
+  onPartial?: (textSoFar: string) => void;
   initialSystemPrompt: string;
   buildUserPrompt: (attempt: number, lastFailure: string) => string;
 }): Promise<{ proposal: ParsedFileProposal; baseCommit: string } | { denialReason: string }> {
-  const { resolved, backend, onLog, initialSystemPrompt, buildUserPrompt } = opts;
+  const { resolved, backend, onLog, onPartial, initialSystemPrompt, buildUserPrompt } = opts;
   let systemPrompt = initialSystemPrompt;
   let lastFailure = "";
   for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
@@ -233,7 +237,7 @@ async function generateVerifiedProposal(opts: {
     const baseCommit = currentHeadSha(resolved);
     const userPrompt = buildUserPrompt(attempt, lastFailure);
     onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
-    const text = await generateText(backend, systemPrompt, userPrompt);
+    const text = await generateText(backend, systemPrompt, userPrompt, onPartial);
     const proposal = parseFileProposal(text);
     onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
     const result = await verifyProposal(resolved, proposal.files);
@@ -261,7 +265,7 @@ export type ContributorProposalResult = { ok: true; result: ContributorProposal 
 
 /** The front half of what used to be one function: claim (if needed), shard setup, Ladder search for context, then generate+verify on retry -- stops the instant a proposal passes verification (or every attempt is exhausted) without writing anything or touching the protocol beyond the claim. `--assist` (cli/commands/work.ts) pauses here for a human to look at `result.proposal` before calling acceptContributorWork; the autonomous path (runContributorWorkAsk, below) just calls both back to back, unchanged behavior from before this split. */
 export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise<ContributorProposalResult> {
-  const { resolved: parentResolved, laneId: parentLaneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool, authedCloneUrlFor, onShardReady } = opts;
+  const { resolved: parentResolved, laneId: parentLaneId, theAsk, agent, alreadyClaimed, backend, onLog, onPartial, callTool = localCallTool, authedCloneUrlFor, onShardReady } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: parentResolved.slug, lane_id: parentLaneId, ask_id: theAsk.id, actor: agent });
   }
@@ -331,6 +335,7 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
     resolved,
     backend,
     onLog,
+    onPartial,
     initialSystemPrompt: PROPOSE_SYSTEM_PROMPT,
     buildUserPrompt: (_attempt, lastFailure) => {
       // Re-read on every attempt, not just once before the loop -- HEAD
@@ -351,8 +356,8 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
 
 /** A revised draft in response to a human's chat feedback on a previous proposal -- same generate-verify-retry mechanics as proposeContributorWork's own loop (via the same generateVerifiedProposal helper), just seeded with the previous proposal + the feedback instead of a blind first attempt. Nothing claimed/sharded here (that already happened); resolved/laneId/shardSource carry over from `current` unchanged, only proposal/baseCommit refresh. */
 export async function reviseContributorWork(opts: ScriptedFlowOptions, current: ContributorProposal, feedback: string): Promise<ContributorProposalResult> {
-  const { theAsk, backend, onLog } = opts;
-  const { resolved, laneId, shardSource, proposal: previous } = current;
+  const { theAsk, backend, onLog, onPartial } = opts;
+  const { resolved, laneId, proposal: previous } = current;
   const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
   const previousBlob = previous.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
 
@@ -360,6 +365,7 @@ export async function reviseContributorWork(opts: ScriptedFlowOptions, current: 
     resolved,
     backend,
     onLog,
+    onPartial,
     initialSystemPrompt: PROPOSE_SYSTEM_PROMPT,
     buildUserPrompt: (_attempt, lastFailure) => {
       const files = currentRepoFiles(resolved);
@@ -369,49 +375,58 @@ export async function reviseContributorWork(opts: ScriptedFlowOptions, current: 
     },
   });
   if ("denialReason" in gen) return { ok: false, denialReason: gen.denialReason };
-  return { ok: true, result: { resolved, laneId, shardSource, proposal: gen.proposal, baseCommit: gen.baseCommit } };
+  // shardSource deliberately not carried over -- it points at the
+  // previous proposal's own commit, which no longer matches these
+  // revised files. commitContributorWork/acceptContributorWork create
+  // a fresh one for this revision when it's actually committed.
+  return { ok: true, result: { resolved, laneId, proposal: gen.proposal, baseCommit: gen.baseCommit } };
 }
 
 /** The back half: commit for real in the shard (if sharded), write the Ladder, post the changeset_review/submit_changeset pair, and answer the original ask complete. Takes a (possibly human-edited, for --assist) proposal rather than generating one itself. */
+/** Commits `proposed`'s current file content for real in the shard (remote mode only -- gated on authedCloneUrlFor exactly like this always was before this split; a no-op in local/demo mode, same as before) and writes the matching Ladder rungs, returning an updated ContributorProposal with a fresh shardSource. Safe to call more than once for the same ask -- each call is a new checkpoint commit, the same as committing periodically in any real coding session. `--assist`'s own `/commit` (cli/commands/workAssist.ts) calls this directly to persist progress to the shard without finalizing/submitting, so pausing (leaving the claim held) and coming back later never loses committed work; acceptContributorWork (below) calls it too, but skips a redundant empty commit when the proposal it's given already has a shardSource. */
+export async function commitContributorWork(opts: ScriptedFlowOptions, proposed: ContributorProposal): Promise<ContributorProposal> {
+  const { agent, onLog, callTool = localCallTool, authedCloneUrlFor } = opts;
+  const { resolved, laneId, proposal } = proposed;
+  if (!authedCloneUrlFor) return proposed;
+  // Commit for real in the shard -- the agent owns it, so this is
+  // authorized the same way a maintainer's own direct commit on a
+  // repo it coordinates is (lane_propose made this agent the shard
+  // lane's coordinator). This, plus the ladder write right after, is
+  // the real "creating a changeset and a ladder within that lane" the
+  // shard flow exists for -- not just a JSON payload like the
+  // pre-shard design.
+  onLog(`[scripted] committing ${proposal.files.map((f) => f.path).join(", ")} in ${resolved.slug}`);
+  const commitResult = (await callTool("commit_changeset", {
+    repo: resolved.slug,
+    files: proposal.files,
+    message: proposal.message,
+    author_name: agent,
+    author_email: `${agent}@local`,
+  })) as { commitOid: string };
+  const now = new Date().toISOString();
+  const source = [{ kind: "commit" as const, ref: commitResult.commitOid, title: proposal.message, author: agent, at: now }];
+  await callTool("ladder_write_rung", {
+    repo: resolved.slug,
+    rung: [
+      ...proposal.files.map((f) => ({ path: f.path, kind: "file" as const, summary: proposal.summary, sources: source, children: [] })),
+      {
+        path: `changesets/${commitResult.commitOid}`,
+        kind: "changeset" as const,
+        summary: proposal.summary,
+        sources: source,
+        children: proposal.files.map((f) => ({ path: `changesets/${commitResult.commitOid}/${f.path}`, kind: "filechange" as const, summary: "changed.", sources: source, children: [] })),
+      },
+    ],
+  });
+  return { ...proposed, shardSource: { repo: resolved.slug, lane: laneId, commitOid: commitResult.commitOid } };
+}
+
 export async function acceptContributorWork(opts: ScriptedFlowOptions, proposed: ContributorProposal): Promise<void> {
-  const { resolved: parentResolved, laneId: parentLaneId, theAsk, agent, onLog, callTool = localCallTool, authedCloneUrlFor } = opts;
-  const { resolved, laneId, proposal, baseCommit } = proposed;
-  let shardSource = proposed.shardSource;
+  const { resolved: parentResolved, laneId: parentLaneId, theAsk, agent, onLog, callTool = localCallTool } = opts;
+  const committed = proposed.shardSource ? proposed : await commitContributorWork(opts, proposed);
+  const { proposal, baseCommit, shardSource } = committed;
   const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
 
-  if (authedCloneUrlFor) {
-    // Commit for real in the shard -- the agent owns it, so this is
-    // authorized the same way a maintainer's own direct commit on a
-    // repo it coordinates is (lane_propose above made this agent
-    // the shard lane's coordinator). This, plus the ladder write
-    // right after, is the real "creating a changeset and a ladder
-    // within that lane" the shard flow exists for -- not just a
-    // JSON payload like the pre-shard design.
-    onLog(`[scripted] committing ${proposal.files.map((f) => f.path).join(", ")} in ${resolved.slug}`);
-    const commitResult = (await callTool("commit_changeset", {
-      repo: resolved.slug,
-      files: proposal.files,
-      message: proposal.message,
-      author_name: agent,
-      author_email: `${agent}@local`,
-    })) as { commitOid: string };
-    const now = new Date().toISOString();
-    const source = [{ kind: "commit" as const, ref: commitResult.commitOid, title: proposal.message, author: agent, at: now }];
-    await callTool("ladder_write_rung", {
-      repo: resolved.slug,
-      rung: [
-        ...proposal.files.map((f) => ({ path: f.path, kind: "file" as const, summary: proposal.summary, sources: source, children: [] })),
-        {
-          path: `changesets/${commitResult.commitOid}`,
-          kind: "changeset" as const,
-          summary: proposal.summary,
-          sources: source,
-          children: proposal.files.map((f) => ({ path: `changesets/${commitResult.commitOid}/${f.path}`, kind: "filechange" as const, summary: "changed.", sources: source, children: [] })),
-        },
-      ],
-    });
-    shardSource = { repo: resolved.slug, lane: laneId, commitOid: commitResult.commitOid };
-  }
   await postForReview({
     resolved: parentResolved,
     laneId: parentLaneId,
@@ -448,6 +463,13 @@ export async function denyContributorWork(opts: ScriptedFlowOptions, reason: str
     payload: { reason },
   });
   onLog(`[scripted] denied ${theAsk.id}: ${reason.slice(0, 200)}`);
+}
+
+/** Gives up the claim on `theAsk` (either kind -- this is purely protocol-level, not specific to work vs. changeset_review) without answering it: it goes back to being claimable by anyone, including the same actor later. Any in-progress shard/draft is left exactly as it was (a shard's own commits are never undone by this -- see commitContributorWork), so this is the "I don't want to finish this right now, let someone else (or me later) pick it up" exit, distinct from denyContributorWork's terminal "this can't be done." */
+export async function releaseAsk(opts: ScriptedFlowOptions): Promise<void> {
+  const { resolved, laneId, theAsk, agent, callTool = localCallTool, onLog } = opts;
+  await callTool("ask_release", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+  onLog(`[scripted] released claim on ${theAsk.id} -- it's claimable again`);
 }
 
 export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
@@ -700,7 +722,7 @@ export interface ReviewProposal {
 
 /** Claim (if needed) and draft a decision -- doesn't post anything. --assist (cli/commands/work.ts) shows `decision`/`reason` to a human, who may accept as-is or override either field, then calls acceptReview; runChangesetReview (below) just calls both back to back, unchanged behavior from before this split. */
 export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewProposal> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, callTool = localCallTool } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onPartial, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
@@ -708,7 +730,7 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   const payload = theAsk.payload as ChangesetReviewPayload;
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
-  const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt);
+  const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onPartial);
   return parseReviewDecision(text);
 }
 
@@ -716,12 +738,12 @@ const CHANGESET_DISCUSS_SYSTEM_PROMPT = `You are an agent in the zz coordination
 
 /** Free-form Q&A about a changeset_review before the human finalizes it -- unlike proposeReview, this doesn't produce a DECISION:/REASON: pair, just an answer to append to the chat transcript. `conversation` is the prior turns (proposeReview's own initial recommendation counts as the first assistant turn) so follow-up questions have context. */
 export async function discussReview(opts: ScriptedFlowOptions, conversation: { role: "assistant" | "user"; content: string }[], question: string): Promise<string> {
-  const { theAsk, backend } = opts;
+  const { theAsk, backend, onPartial } = opts;
   const payload = theAsk.payload as ChangesetReviewPayload;
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const history = conversation.map((t) => `${t.role === "assistant" ? "You" : "Human"}: ${t.content}`).join("\n\n");
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary: ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}\n\nConversation so far:\n${history}\n\nHuman: ${question}`;
-  return generateText(backend, CHANGESET_DISCUSS_SYSTEM_PROMPT, prompt);
+  return generateText(backend, CHANGESET_DISCUSS_SYSTEM_PROMPT, prompt, onPartial);
 }
 
 /** Posts the grant/deny this review's decision calls for -- a (possibly human-overridden) ReviewProposal, not necessarily the exact one proposeReview drafted. */

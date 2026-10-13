@@ -19,7 +19,6 @@ import { authedCloneUrl } from "../lib/credentials.js";
 import { resolveBackend, type Provider } from "./work.js";
 import type { WorkScope } from "../../engine/workqueue.js";
 import { AssistApp } from "../../tui/AssistApp.js";
-import { enterFullscreen } from "../../tui/fullscreen.js";
 
 export interface WorkAssistOptions {
   as?: string;
@@ -61,7 +60,11 @@ export async function workAssist(options: WorkAssistOptions): Promise<void> {
   const resolvedRepos = repoSlugs.map((slug) => resolveRepo(slug));
   const watch = createRepoWatchStore(resolvedRepos);
 
-  enterFullscreen();
+  // Deliberately no enterFullscreen() here -- the chat transcript
+  // (tui/AssistApp.tsx) prints permanently into the terminal's own
+  // scrollback via ink's <Static>, not into an alt-screen dashboard, so
+  // scrolling back through earlier turns is just your terminal doing
+  // what it always does, same as Claude Code's own CLI.
   const onExit = async () => {
     await mode.cleanup();
   };
