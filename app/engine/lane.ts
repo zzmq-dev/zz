@@ -9,7 +9,7 @@
 // ask()/answer() primitives here.
 import { randomBytes } from "node:crypto";
 import { resolveBackend } from "./backend.js";
-import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, Trigger } from "./types.js";
+import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, RelatedLaneEntry, Trigger } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import { REPO_RUNG_PATH } from "./ladder.js";
 
@@ -71,6 +71,13 @@ export async function ask(repo: string, laneId: string, input: { kind: AskKind; 
     lane.history.push(entry);
   });
   return entry;
+}
+
+/** Records that another Lane relates to this one -- the inverse of `Lane.origin` (which only lets you walk UP from a child lane to whatever created it): this lets the PARENT side enumerate its own children, e.g. runDecomposeWorkAsk (agent/scriptedWork.ts) populating this for the first time when a task splits into several sub-Lanes. Atomic via the same withLane as ask(), for the same reason. */
+export async function addRelatedLane(repo: string, laneId: string, related: RelatedLaneEntry): Promise<void> {
+  await resolveBackend().withLane(repo, laneId, (lane) => {
+    lane.related_lanes.push(related);
+  });
 }
 
 // Only kinds that describe *this lane's own* lifecycle drive a status

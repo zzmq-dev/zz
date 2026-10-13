@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, addRelatedLane } from "../engine/lane.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -367,6 +367,45 @@ const laneProposeTool: ToolDef = {
   },
 };
 
+// The inverse of lane_propose's own origin_lane/origin_repo: that sets
+// a CHILD lane's `.origin` pointer up to its parent; this records the
+// same relationship on the PARENT's own `related_lanes`, so the parent
+// side can enumerate its children without a reverse Ladder-wide scan.
+// First real caller: runDecomposeWorkAsk (agent/scriptedWork.ts),
+// splitting one task into several sibling Lanes.
+const laneAddRelated: ToolDef = {
+  name: "lane_add_related",
+  description: "Record that another Lane relates to this one (e.g. a sub-Lane spawned by decomposing this Lane's own task) -- appends to this Lane's related_lanes.",
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string", description: "The repo of the Lane this relation is recorded ON" },
+      lane_id: { type: "string", description: "The Lane this relation is recorded ON" },
+      related_repo: { type: "string", description: "The repo the RELATED lane lives in" },
+      related_lane: { type: "string", description: "The related Lane's id" },
+      status: { type: "string", description: "The related Lane's current status, as of this recording" },
+      // Same reason lane_propose takes its own separate origin_repo
+      // rather than reusing `repo`: a remote tool call's `repo` field
+      // gets rewritten server-side to the DO's own internal
+      // artifacts_name before this ever runs (handleApiCallTool), so
+      // reusing it here would silently store that internal name into
+      // `origin.repo` instead of the real slug every other Lane field
+      // uses. A separate field name is never touched by that rewrite.
+      origin_repo: { type: "string", description: "The repo this Lane (the one named by `repo` above) actually lives in, for the stored origin pointer -- normally the same value you passed as `repo`" },
+    },
+    required: ["repo", "lane_id", "related_repo", "related_lane", "status", "origin_repo"],
+  },
+  async execute({ repo, lane_id, related_repo, related_lane, status, origin_repo }) {
+    await addRelatedLane(repo as string, lane_id as string, {
+      repo: related_repo as string,
+      lane: related_lane as string,
+      origin: { repo: origin_repo as string, lane: lane_id as string },
+      status: status as Lane["status"],
+    });
+    return { ok: true };
+  },
+};
+
 const laneGet: ToolDef = {
   name: "lane_get",
   description: "Read a Lane's full record: status, scope, coordinators, and its complete Ask/Answer history.",
@@ -671,7 +710,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

@@ -333,8 +333,9 @@ repoCmd
 repoCmd
   .command("ask <owner/repo> <description>")
   .description("post a work Ask to a repo's root Lane")
-  .action(async (slug: string, description: string) => {
-    await repoAsk(slug, description);
+  .option("--decompose", "mark this task to be split into several independent sub-tasks (each its own new Lane) instead of implemented directly -- picked up by `zz work`'s autonomous loop, not --assist")
+  .action(async (slug: string, description: string, opts: { decompose?: boolean }) => {
+    await repoAsk(slug, description, opts);
   });
 
 repoCmd

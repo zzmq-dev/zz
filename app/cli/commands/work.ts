@@ -20,7 +20,7 @@ import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js"
 import type { AskEntry, Lane } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
-import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, runChangesetReview } from "../../agent/scriptedWork.js";
+import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, runChangesetReview, runDecomposeWorkAsk } from "../../agent/scriptedWork.js";
 import type { ChatBackend } from "../../agent/chatBackend.js";
 import { createOllamaBackend } from "../../agent/ollamaBackend.js";
 import { createGeminiBackend } from "../../agent/geminiBackend.js";
@@ -202,6 +202,11 @@ async function runClaimedAsk(
   // code drives claiming/testing/submitting/committing/Ladder-writing
   // itself, in a fixed order. Every other ask kind still goes through
   // the generic loop below.
+  if (theAsk.kind === "work" && (theAsk.payload as { decompose?: boolean } | undefined)?.decompose) {
+    await runDecomposeWorkAsk({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
+    statusRef.current = baseStatus;
+    return;
+  }
   if (theAsk.kind === "work") {
     await runContributorWorkAsk({
       resolved,

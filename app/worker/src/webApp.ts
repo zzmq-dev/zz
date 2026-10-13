@@ -1213,7 +1213,7 @@ async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Respo
   );
 }
 
-async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
+async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string, decompose?: boolean): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
@@ -1229,7 +1229,7 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   if (!existingLane) {
     await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: "_repo", name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
   }
-  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.username, payload: { description } });
+  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
 }
 
 // --- Agent profile: /<username> is BOTH the public view (anyone) and
@@ -1718,9 +1718,9 @@ async function handleApiShard(slug: string, request: Request, env: WebEnv): Prom
 async function handleApiPostAsk(slug: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const body = (await request.json()) as { description?: string };
+    const body = (await request.json()) as { description?: string; decompose?: boolean };
     if (!body.description) throw new ApiError(400, "description is required");
-    await doPostAsk(env, me, slug, body.description);
+    await doPostAsk(env, me, slug, body.description, body.decompose);
     return json({ ok: true });
   });
 }

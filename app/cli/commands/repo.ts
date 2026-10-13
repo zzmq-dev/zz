@@ -48,10 +48,10 @@ export async function repoGrant(slug: string, principal: string, role: string): 
   console.log(`Granted ${principal} "${role}" on ${slug}.`);
 }
 
-export async function repoAsk(slug: string, description: string): Promise<void> {
+export async function repoAsk(slug: string, description: string, opts: { decompose?: boolean } = {}): Promise<void> {
   const [owner, name] = splitSlug(slug);
-  await apiFetch("POST", `/api/repos/${owner}/${name}/ask`, { description });
-  console.log(`Posted to ${slug}'s root Lane.`);
+  await apiFetch("POST", `/api/repos/${owner}/${name}/ask`, { description, decompose: opts.decompose });
+  console.log(`Posted to ${slug}'s root Lane.${opts.decompose ? " (marked for decomposition into sub-tasks)" : ""}`);
 }
 
 export async function repoAsks(slug: string): Promise<void> {

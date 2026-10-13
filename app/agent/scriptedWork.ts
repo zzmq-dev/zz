@@ -505,6 +505,98 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
   await acceptContributorWork(opts, proposed.result);
 }
 
+interface ParsedSubtask {
+  name: string;
+  description: string;
+}
+
+// Same regex shape as parseFileProposal's own FILE: + fenced block --
+// a fence is a reliable boundary for "where does this block end" even
+// though what's inside is prose, not code, and it keeps this parser
+// consistent with the rest of the file's "the model only ever produces
+// plain text in one fixed format" approach.
+function parseSubtasks(text: string): ParsedSubtask[] {
+  const subtasks: ParsedSubtask[] = [];
+  const re = /^SUBTASK:\s*(.+?)\s*\r?\n```[a-zA-Z0-9]*\r?\n([\s\S]*?)\r?\n```/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    subtasks.push({ name: m[1].trim(), description: m[2].trim() });
+  }
+  if (subtasks.length === 0) {
+    throw new Error(`could not parse any "SUBTASK: <name>" + fenced description block from the model's response -- got:\n${text.slice(0, 2000)}`);
+  }
+  return subtasks;
+}
+
+const DECOMPOSE_SYSTEM_PROMPT = `You are an agent in the zz coordination system, splitting one task into several independent sub-tasks. Each sub-task you describe will be posted as its own new Ask into its own new Lane, for a contributor (another agent, or a human) to pick up and finish independently of the others. You never call tools or write JSON here -- you only write plain text in the exact format below.
+
+Split the task into genuinely independent pieces -- each small enough for a single contributor to finish in one pass, and not depending on any other piece finishing first. If a piece truly can't start until another one finishes, that's a sign the split is wrong, not something to represent here -- this format has no way to express a dependency between sub-tasks.
+
+Output format, exactly, one block per sub-task:
+SUBTASK: <a short name, a few words -- used to label the new Lane>
+\`\`\`
+<the full task description for whoever picks this up -- specific enough to act on without needing to see the original task>
+\`\`\`
+
+List at least 2 sub-tasks. Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
+
+/** Splits one "work" Ask (payload.description) into several independent sub-tasks, each posted as a fresh "work" Ask into its own new sibling Lane (lane_propose with this Ask's own Lane as origin) -- then records each one on this Lane's own related_lanes (lane_add_related), the first real populator of that field, so the parent side can enumerate what it spawned. Answers the original Ask complete once every sub-task is posted; never generates or commits any code itself. Triggered when payload.decompose is true (set by `zz repo ask --decompose`) instead of the plain runContributorWorkAsk a "work" Ask normally gets -- see cli/commands/work.ts's own dispatch. */
+export async function runDecomposeWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, onPartial, callTool = localCallTool } = opts;
+  if (!alreadyClaimed) {
+    await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+  }
+
+  const payload = theAsk.payload as { description?: string } | undefined;
+  const description = payload?.description ?? JSON.stringify(theAsk.payload);
+
+  onLog(`[scripted] decomposing: ${description.slice(0, 120)}`);
+  const text = await generateText(backend, DECOMPOSE_SYSTEM_PROMPT, `Task to split into independent sub-tasks:\n${description}`, onPartial);
+  const subtasks = parseSubtasks(text);
+  onLog(`[scripted] split into ${subtasks.length} sub-task(s): ${subtasks.map((s) => s.name).join(", ")}`);
+
+  const childLaneIds: string[] = [];
+  for (const sub of subtasks) {
+    const childLane = (await callTool("lane_propose", {
+      repo: resolved.slug,
+      name: sub.name,
+      objective: sub.description,
+      scope: ["**"],
+      actor: agent,
+      origin_lane: laneId,
+      origin_repo: resolved.slug,
+    })) as { id: string; status: string };
+    await callTool("ask_post", {
+      repo: resolved.slug,
+      lane_id: childLane.id,
+      kind: "work",
+      from: agent,
+      payload: { description: sub.description },
+      depends_on: [],
+    });
+    await callTool("lane_add_related", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      related_repo: resolved.slug,
+      related_lane: childLane.id,
+      status: childLane.status,
+      origin_repo: resolved.slug,
+    });
+    childLaneIds.push(childLane.id);
+    onLog(`[scripted] posted "${sub.name}" into new lane ${childLane.id}`);
+  }
+
+  await callTool("ask_answer", {
+    repo: resolved.slug,
+    lane_id: laneId,
+    ask_id: theAsk.id,
+    actor: agent,
+    action: "complete",
+    payload: { decomposedInto: childLaneIds },
+  });
+  onLog(`[scripted] decomposition complete -- answered ${theAsk.id} complete, ${childLaneIds.length} sub-lane(s) created`);
+}
+
 interface ChangesetPayload {
   files: { path: string; content: string }[];
   message: string;
