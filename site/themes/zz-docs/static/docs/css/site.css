@@ -1,21 +1,13 @@
+/* Same palette/tokens as the web app's WEB_CSS (app/worker/src/webApp.ts)
+   -- always dark, no light-mode variant, to match the product exactly
+   rather than drift into a separate "docs site" look. */
 :root {
-  --bg: #fbfaf8;
-  --fg: #1b1b18;
-  --muted: #6b6a66;
-  --line: #e4e2dd;
-  --accent: #b34700;
-  --code-bg: #f1efe9;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15140f;
-    --fg: #ece9e2;
-    --muted: #9b988f;
-    --line: #322f27;
-    --accent: #ff9955;
-    --code-bg: #1f1d17;
-  }
+  --bg: #1A0F2E; --panel: #241433; --surface: #2D1B4E; --border: #4A2F73; --muted: #B4A3D6; --fg: #F3EFFF;
+  --pink: #FF2E92; --cyan: #2EE6FF;
+  --code-bg: #140B24;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -25,39 +17,45 @@ html, body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-family: var(--sans);
   line-height: 1.6;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; color: var(--pink); }
 
 code, pre {
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--mono);
   background: var(--code-bg);
   border-radius: 4px;
 }
-code { padding: 0.1em 0.35em; font-size: 0.9em; }
-pre { padding: 1rem; overflow-x: auto; border: 1px solid var(--line); }
-pre code { padding: 0; background: none; }
+code { padding: 0.1em 0.35em; font-size: 0.9em; color: var(--cyan); }
+pre { padding: 1rem; overflow-x: auto; border: 1px solid var(--border); }
+pre code { padding: 0; background: none; color: var(--fg); }
 
 table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
-th, td { border: 1px solid var(--line); padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95em; }
-th { background: var(--code-bg); }
+th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95em; }
+th { background: var(--code-bg); color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
 
 .site-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--line);
+  padding: 0.75rem 1.5rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
 }
-.brand { font-weight: 700; font-size: 1.3rem; color: var(--fg); letter-spacing: -0.02em; }
-.brand-dim { color: var(--muted); }
-.topnav a { color: var(--muted); font-size: 0.9rem; }
+.brand { font-weight: 800; font-size: 1.3rem; color: var(--pink); letter-spacing: -0.02em; }
+.brand-dim { color: var(--muted); font-weight: 400; }
+.topnav { display: flex; gap: 0; }
+.topnav a { margin-left: 1.25rem; color: var(--muted); font-size: 0.92rem; }
+.topnav a:hover { color: var(--pink); }
 
 .site-footer {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--border);
   padding: 1.5rem;
   color: var(--muted);
   font-size: 0.85rem;
@@ -80,12 +78,12 @@ th { background: var(--code-bg); }
   font-size: 0.92rem;
   padding: 0.25rem 0;
 }
-.navlink.active, .navlink:hover { color: var(--accent); }
+.navlink.active, .navlink:hover { color: var(--pink); }
 
 .content { flex: 1 1 auto; min-width: 0; }
 .prose { max-width: 680px; }
-.prose h1 { font-size: 1.8rem; margin-top: 0; }
-.prose h2 { font-size: 1.3rem; margin-top: 2.2rem; border-top: 1px solid var(--line); padding-top: 1.2rem; }
+.prose h1 { font-size: 1.8rem; margin-top: 0; color: var(--fg); }
+.prose h2 { font-size: 1.3rem; margin-top: 2.2rem; border-top: 1px solid var(--border); padding-top: 1.2rem; }
 .prose h3 { font-size: 1.05rem; }
 
 .heading-anchor {
@@ -105,7 +103,7 @@ th { background: var(--code-bg); }
 .heading-anchor:focus {
   opacity: 1;
 }
-.heading-anchor:hover { color: var(--accent); }
+.heading-anchor:hover { color: var(--pink); }
 .heading-anchor svg { display: block; }
 .heading-anchor.copied::after {
   content: "Copied!";
@@ -121,7 +119,7 @@ th { background: var(--code-bg); }
   padding: 4rem 1.5rem 3rem;
   text-align: left;
 }
-.hero h1 { font-size: 2.6rem; margin-bottom: 0.5rem; letter-spacing: -0.02em; }
+.hero h1 { font-size: 2.6rem; margin-bottom: 0.5rem; letter-spacing: -0.02em; color: var(--fg); }
 
 /* page-body is the home page's whole markdown body (tagline, nav-links,
    factor blocks, closing line) rendered as one flow. It's a real CSS grid
@@ -151,18 +149,24 @@ nav-links ul {
 nav-links li a {
   display: block;
   padding: 0.9rem 1.1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
   color: var(--fg);
   font-size: 0.95rem;
 }
-nav-links li a:hover { border-color: var(--accent); text-decoration: none; }
+nav-links li a:hover { border-color: var(--pink); text-decoration: none; }
 
 factor {
+  display: block;
   margin-top: 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem 1.4rem;
 }
-factor h3 { font-size: 0.95rem; margin: 0 0 0.4rem; color: var(--fg); }
-factor p { font-size: 0.88rem; color: var(--muted); margin: 0; line-height: 1.5; }
+factor h3 { font-size: 0.85rem; margin: 0 0 0.6rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+factor p { font-size: 0.9rem; color: var(--fg); margin: 0; line-height: 1.5; }
 @media (max-width: 520px) {
   .page-body { grid-template-columns: 1fr; }
 }
