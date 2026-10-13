@@ -100,17 +100,32 @@ interface Line {
   bold?: boolean;
 }
 
-/** Flattens the transcript (plus the in-flight streaming turn, if any) into individual lines for scroll windowing -- a single entry (a whole file diff, several files) can be many lines, and TabView's own convention (see its header comment) scrolls by line, not by entry. */
-function transcriptLines(entries: TranscriptEntry[], live: { label: string; text: string } | null): Line[] {
+/** Word-wraps one logical line to fit `maxWidth` columns -- chat content (the model's output, a diff, anything printed in the scrollable log) wraps rather than truncating, unlike the single-line chrome elsewhere (headers, the picker list, status/footer text), which truncates with an ellipsis instead. Wrapping has to happen here, in JS, rather than leaning on ink's own wrap="wrap" on the Text: the scroll windowing below counts logical lines to decide how many fit on screen, and that count is only accurate if one Line here always renders as exactly one row -- letting ink wrap a too-long string at render time would silently make the window show more or less than what's actually visible. */
+function wrapText(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0 || text.length <= maxWidth) return [text];
+  const out: string[] = [];
+  let remaining = text;
+  while (remaining.length > maxWidth) {
+    let breakAt = remaining.lastIndexOf(" ", maxWidth);
+    if (breakAt <= 0) breakAt = maxWidth; // no good word-break -- hard break (e.g. a long code line)
+    out.push(remaining.slice(0, breakAt));
+    remaining = remaining.slice(breakAt).replace(/^ /, "");
+  }
+  out.push(remaining);
+  return out;
+}
+
+/** Flattens the transcript (plus the in-flight streaming turn, if any) into individual, pre-wrapped lines for scroll windowing -- a single entry (a whole file diff, several files) can be many lines, and TabView's own convention (see its header comment) scrolls by line, not by entry. */
+function transcriptLines(entries: TranscriptEntry[], live: { label: string; text: string } | null, maxWidth: number): Line[] {
   const lines: Line[] = [];
   for (const e of entries) {
     lines.push({ text: `${roleLabel[e.role]}:`, color: roleColor[e.role], bold: true });
-    for (const l of e.content.split("\n")) lines.push({ text: l });
+    for (const l of e.content.split("\n")) for (const w of wrapText(l, maxWidth)) lines.push({ text: w });
     lines.push({ text: "" });
   }
   if (live) {
     lines.push({ text: `${live.label}:`, color: YELLOW, bold: true });
-    for (const l of live.text.split("\n")) lines.push({ text: l });
+    for (const l of live.text.split("\n")) for (const w of wrapText(l, maxWidth)) lines.push({ text: w });
   }
   return lines;
 }
@@ -122,9 +137,10 @@ function transcriptPlainText(entries: TranscriptEntry[]): string {
 
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
-  const [phase, setPhase] = useState<"picking" | "session">("picking");
+  const [phase, setPhase] = useState<"picking" | "detail" | "session">("picking");
   const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
   const [cursor, setCursor] = useState(0);
+  const [previewing, setPreviewing] = useState<ClaimableEntry | null>(null);
   const [selected, setSelected] = useState<ClaimableEntry | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [liveLabel, setLiveLabel] = useState("");
@@ -175,6 +191,13 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   useEffect(() => {
     setScroll(0);
   }, [entries.length]);
+
+  // Also reset on every phase change -- the detail view and the
+  // session view each start their own fresh scroll position, not
+  // whatever was left over from whichever view was open before.
+  useEffect(() => {
+    setScroll(0);
+  }, [phase]);
 
   const scrollUp = () => setScroll((s) => s + 1);
   const scrollDown = () => setScroll((s) => Math.max(0, s - 1));
@@ -455,6 +478,11 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           copyToClipboard(`[${c.ask.kind}] ${c.repo}\n${describeAsk(c.ask)}`);
           setFlash("copied to clipboard");
         }
+      } else if (phase === "detail") {
+        if (previewing) {
+          copyToClipboard(`[${previewing.ask.kind}] ${previewing.repo}\n${describeAsk(previewing.ask)}`);
+          setFlash("copied to clipboard");
+        }
       } else {
         copyToClipboard(transcriptPlainText(entries));
         setFlash("copied the transcript to clipboard");
@@ -469,7 +497,41 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
       else if (key.downArrow) setCursor((c) => Math.min(claimableList.length - 1, c + 1));
       else if (key.return && claimableList[cursor]) {
-        setSelected(claimableList[cursor]);
+        // Preview first, not an immediate claim -- same reasoning as
+        // Explore's own "view before you track" flow: picking an ask
+        // out of the list is a commitment (it claims it), so seeing
+        // the whole task description first, not just the one-line
+        // summary the list itself shows, matters.
+        setPreviewing(claimableList[cursor]);
+        setPhase("detail");
+      }
+      return;
+    }
+    if (phase === "detail") {
+      if (key.upArrow) {
+        scrollUp();
+        return;
+      }
+      if (key.downArrow) {
+        scrollDown();
+        return;
+      }
+      if (key.pageUp) {
+        setScroll((s) => s + pageSize);
+        return;
+      }
+      if (key.pageDown) {
+        setScroll((s) => Math.max(0, s - pageSize));
+        return;
+      }
+      if (key.escape) {
+        setPreviewing(null);
+        setPhase("picking");
+        return;
+      }
+      if ((key.return || input === "c") && previewing) {
+        setSelected(previewing);
+        setPreviewing(null);
         setPhase("session");
       }
       return;
@@ -537,16 +599,17 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   });
 
   if (phase === "picking") {
-    // Estimate only, for pagination math (how many items fit around the
-    // cursor) -- the box itself is sized by Yoga's own flexGrow below,
-    // same reasoning as the session view's own innerRows.
-    const pickerInnerRows = Math.max(1, rows - 4);
-    // Windowed around the cursor -- rendering every claimable ask
-    // unconditionally overflowed a small terminal's actual height
-    // before, which is a big part of what made the whole picker look
-    // broken there.
-    const windowStart = Math.max(0, Math.min(cursor - Math.floor(pickerInnerRows / 2), Math.max(0, claimableList.length - pickerInnerRows)));
-    const visible = claimableList.slice(windowStart, windowStart + pickerInnerRows);
+    // Always exactly two rows per ask -- [kind] repo on one, the
+    // description's own first line on the other, both truncated with
+    // an ellipsis (wrap="truncate-end") rather than wrapped. This is
+    // chrome, a list you're scanning to pick from, not content you're
+    // reading -- the full, wrapped description is one Enter away (the
+    // detail view below), same as Explore.tsx's own "view before you
+    // track" preview.
+    const pickerInnerRows = Math.max(1, rows - 4); // estimate only, box itself uses flexGrow below
+    const itemSlots = Math.max(1, Math.floor(pickerInnerRows / 2));
+    const windowStart = Math.max(0, Math.min(cursor - Math.floor(itemSlots / 2), Math.max(0, claimableList.length - itemSlots)));
+    const visible = claimableList.slice(windowStart, windowStart + itemSlots);
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
@@ -560,20 +623,18 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           ) : (
             visible.map((c, i) => {
               const idx = windowStart + i;
+              const current = idx === cursor;
+              const firstLine = describeAsk(c.ask).split("\n")[0];
               return (
-                <Box key={c.ask.id}>
-                  <Text bold={idx === cursor} color={idx === cursor ? CYAN : undefined}>
-                    {idx === cursor ? "> " : "  "}
+                <Box key={c.ask.id} flexDirection="column">
+                  <Text bold={current} color={current ? CYAN : undefined} wrap="truncate-end">
+                    {current ? "> " : "  "}
+                    <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text> {c.repo}
+                    {c.alreadyClaimed ? " (claimed)" : ""}
                   </Text>
-                  <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text>
-                  <Text bold={idx === cursor} color={idx === cursor ? CYAN : undefined}>
-                    {" "}
-                    {c.repo}
-                  </Text>
-                  {c.alreadyClaimed && <Text color={MUTED}> (claimed)</Text>}
                   <Text color={MUTED} wrap="truncate-end">
-                    {" "}
-                    -- {describeAsk(c.ask)}
+                    {"    "}
+                    {firstLine}
                   </Text>
                 </Box>
               );
@@ -582,15 +643,51 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         </Box>
         <Box>
           <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
-            {flash ?? "↑/↓ select enter: start ctrl+y: copy q/ctrl+c: quit"}
+            {flash ?? "↑/↓ select enter: view ctrl+y: copy q/ctrl+c: quit"}
           </Text>
         </Box>
       </Box>
     );
   }
 
+  if (phase === "detail" && previewing) {
+    const detailTextWidth = Math.max(10, columns - 4);
+    const detailLines: Line[] = [];
+    for (const l of describeAsk(previewing.ask).split("\n")) for (const w of wrapText(l, detailTextWidth)) detailLines.push({ text: w });
+    const detailInnerRows = Math.max(1, rows - 6); // header(1) + border(2) + footer(1) + a little slack
+    const dMaxOffset = Math.max(0, detailLines.length - detailInnerRows);
+    const dOffset = Math.min(scroll, dMaxOffset);
+    const dEnd = detailLines.length - dOffset;
+    const dShown = detailLines.slice(Math.max(0, dEnd - detailInnerRows), dEnd);
+    return (
+      <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
+        <Box backgroundColor={PANEL} paddingX={1}>
+          <Text bold color={CYAN} wrap="truncate-end">
+            [{previewing.ask.kind}] {previewing.repo}
+            {previewing.alreadyClaimed ? " (claimed)" : ""}
+          </Text>
+        </Box>
+        <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
+          {dOffset > 0 && <Text color={MUTED}>-- {dOffset} line(s) back --</Text>}
+          {dShown.map((l, i) => (
+            <Text key={i}>{l.text || " "}</Text>
+          ))}
+        </Box>
+        <Box>
+          <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
+            {flash ?? "↑/↓ PgUp/PgDn: scroll c/enter: claim and start ctrl+y: copy esc: back to list"}
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  // Border (2) + paddingX*2 (2) -- the content box's own real inner
+  // width, which every line gets pre-wrapped to fit (see wrapText's own
+  // comment on why this can't just be ink's wrap="wrap" on the Text).
+  const textWidth = Math.max(10, columns - 4);
   const liveTurn = liveText ? { label: liveLabel, text: liveText } : null;
-  const allLines = transcriptLines(entries, liveTurn);
+  const allLines = transcriptLines(entries, liveTurn, textWidth);
   const windowSize = innerRows;
   const maxOffset = Math.max(0, allLines.length - windowSize);
   const offset = Math.min(scroll, maxOffset);
@@ -607,7 +704,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
         {offset > 0 && <Text color={MUTED}>-- {offset} line(s) back (End to catch up) --</Text>}
         {shown.map((l, i) => (
-          <Text key={i} color={l.color} bold={l.bold} wrap="truncate-end">
+          <Text key={i} color={l.color} bold={l.bold}>
             {l.text || " "}
           </Text>
         ))}
