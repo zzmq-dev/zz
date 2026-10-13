@@ -15,6 +15,13 @@ import type { CommitRow, FileChangeRow } from "./ingest.js";
 import type { ChangesetFile, CommitAuthor } from "./changeset.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+export interface LadderSearchHit {
+  repo: string;
+  path: string;
+  kind: RungKind;
+  summary: string;
+}
+
 export interface Backend {
   readonly name: string;
 
@@ -36,6 +43,8 @@ export interface Backend {
   /** A Rung, or several top-level Rungs at once -- the array case used to be handled one level up (engine/lane.ts's mergeLaneLadder); it lives here now so every caller goes through one method. */
   writeLadder(repo: string, rung: Rung | Rung[]): Promise<void>;
   appendRepoChildren(repo: string, children: { path: string; kind: RungKind }[]): Promise<void>;
+  /** Full-text search over every repo's Ladder, not just this one -- the cross-repo "ecosystem-wide intelligence" surface (agent/tools.ts's ladder_search). Public repos only (no actor param at this layer to scope private visibility by) -- a real backend-interface method, not an HTTP call from inside a tool's execute(), since that execute() runs server-side (inside the Durable Object) when dispatched through the generic remote tool-calling loop, where there's no filesystem/credentials to make an outbound authenticated call with. */
+  searchLadder(query: string, limit: number): Promise<LadderSearchHit[]>;
 
   // Lane/Ask/Answer
   readLane(repo: string, laneId: string): Promise<Lane | null>;

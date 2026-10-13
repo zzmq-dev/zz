@@ -17,6 +17,7 @@ import type { ArtifactsNamespace } from "./cloudflareGitBackend.js";
 
 interface Env {
   ARTIFACTS: ArtifactsNamespace;
+  DB: D1Database;
 }
 
 // Tools that fundamentally can't run in a Worker -- no child_process,
@@ -32,12 +33,12 @@ export class MaintainerDO extends DurableObject<Env> {
   // passes in its args (kept for shape-compatibility with
   // agent/tools.ts's parameters, not actually branched on).
   private artifactsName = "do";
-  private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName);
+  private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName, this.env.DB);
 
   /** Which Artifacts repo this DO instance actually operates on -- set once, before any tool call, since the DO's own id (from idFromName) doesn't reverse back to the name that created it. */
   async configure(artifactsName: string): Promise<void> {
     this.artifactsName = artifactsName;
-    this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName);
+    this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName, this.env.DB);
   }
 
   /** The tool surface, by name -- the same ToolDef.execute() contract agent/tools.ts already defines, just reached over RPC instead of an in-process call. */

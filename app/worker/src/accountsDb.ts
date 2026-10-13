@@ -338,3 +338,41 @@ export async function pollAndConsumeCliLoginSession(db: D1Database, nonce: strin
   await db.prepare("UPDATE cli_login_sessions SET consumed = 1 WHERE nonce = ?").bind(nonce).run();
   return { agentUsername: row.agent_username, token: row.token };
 }
+
+// --- Ladder search (migration 0008) ---
+// "Ecosystem-wide intelligence" only matters if it's findable: this is
+// the one cross-repo index over Ladder content (every other Ladder
+// read is scoped to a single repo's own git notes). See
+// cloudflareBackend.ts's writeLadder for the one place that calls
+// indexLadderRung -- every rung write funnels through there regardless
+// of caller, so this stays correct without touching call sites.
+
+/** Delete-then-insert, not a real upsert -- FTS5 virtual tables have no unique constraint to upsert against, and rewriting the same (artifacts_name, path) is exactly what happens every time a file's rung gets a fresh holistic summary. */
+export async function indexLadderRung(db: D1Database, artifactsName: string, path: string, kind: string, summary: string): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM ladder_index WHERE artifacts_name = ? AND path = ?").bind(artifactsName, path),
+    db.prepare("INSERT INTO ladder_index (artifacts_name, path, kind, summary) VALUES (?, ?, ?, ?)").bind(artifactsName, path, kind, summary),
+  ]);
+}
+
+export interface LadderSearchHit {
+  repo_slug: string;
+  path: string;
+  kind: string;
+  summary: string;
+}
+
+/** BM25-ranked full-text search over every indexed rung's summary, joined back to the owning repo for its slug and gated by the same public-or-granted visibility rule as searchRepos. */
+export async function searchLadderIndex(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<LadderSearchHit[]> {
+  const result = await db
+    .prepare(
+      `SELECT r.slug AS repo_slug, li.path, li.kind, li.summary
+       FROM ladder_index li
+       JOIN repos r ON r.artifacts_name = li.artifacts_name
+       WHERE ladder_index MATCH ? AND ${VISIBILITY_CLAUSE}
+       ORDER BY bm25(ladder_index) LIMIT ?`,
+    )
+    .bind(query, viewerUsername ?? "", limit)
+    .all<LadderSearchHit>();
+  return result.results;
+}

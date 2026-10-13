@@ -8,7 +8,7 @@ import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Backend } from "./backend.js";
+import type { Backend, LadderSearchHit } from "./backend.js";
 import type { Lane } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
@@ -76,6 +76,10 @@ export function createLocalBackend(): Backend {
 
     async appendRepoChildren(repo, children: { path: string; kind: RungKind }[]): Promise<void> {
       await appendRepoChildrenImpl(repoDirOf(repo), stateDirOf(repo), children);
+    },
+
+    async searchLadder(): Promise<LadderSearchHit[]> {
+      throw new Error("ladder_search isn't available in local/demo mode -- there's no cross-repo index there, only each repo's own git notes.");
     },
 
     async readLane(repo, laneId): Promise<Lane | null> {

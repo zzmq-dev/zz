@@ -127,6 +127,30 @@ const ladderRead: ToolDef = {
   },
 };
 
+// Cross-repo -- searches across every repo's Ladder at once, unlike
+// every other tool here which is scoped to whatever `repo` arg it's
+// given. Goes through resolveBackend() like everything else (NOT a
+// direct apiFetch call to the search API -- that was tried first and
+// is wrong: when this tool is dispatched through the generic remote
+// tool-calling loop, its execute() runs server-side, inside the
+// Durable Object, where there's no ~/.zz/credentials.json or
+// filesystem to make an outbound authenticated HTTP call with.
+// resolveBackend() is already correctly scoped to that DO's own
+// backend via withBackend(), same as every other tool). Before
+// proposing a new implementation of something, check whether it
+// already exists somewhere in the ecosystem -- this is the
+// "ecosystem-wide intelligence" the Ladder is for, made actually
+// queryable instead of only ever written and never read back.
+const ladderSearch: ToolDef = {
+  name: "ladder_search",
+  description:
+    "Full-text search over every repo's Ladder (file/repo rung summaries -- what each file currently does, holistically) across the whole ecosystem, not just this repo. Use this before writing new code for something that might already exist elsewhere, so you can add a dependency and reference it instead of reimplementing it. Remote mode only -- not available in --local/demo runs.",
+  parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
+  async execute({ query, limit }) {
+    return resolveBackend().searchLadder(query as string, (limit as number) || 10);
+  },
+};
+
 const VALID_SOURCE_KINDS = new Set(["commit", "pr", "issue"]);
 
 // Fills in sources/children with [] when omitted, recursively, so a
@@ -594,7 +618,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderSearch, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

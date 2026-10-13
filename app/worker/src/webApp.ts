@@ -52,6 +52,7 @@ import {
   revokeAgentToken,
   searchAgents,
   searchExplore,
+  searchLadderIndex,
   searchRepos,
   shortId,
   syncRepoRoleCache,
@@ -1477,6 +1478,23 @@ async function handleApiExploreSearch(request: Request, env: WebEnv): Promise<Re
   return json(await searchExplore(env.DB, q, 8, me?.username ?? null));
 }
 
+// --- Ladder search: "ecosystem-wide intelligence" you can actually
+// query, not just generate. Deliberately NOT a per-repo tool routed
+// through one repo's MaintainerDO (every other tool is) -- this reads
+// across every repo at once, which is a D1 concern (the one place
+// that's already cross-repo infrastructure, same as searchRepos/
+// searchExplore), not a single repo's Ladder/git-notes concern.
+async function handleApiLadderSearch(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await resolveRequestAgent(request, env);
+    const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+    if (!q) return json({ hits: [] });
+    const limit = Math.min(Number(new URL(request.url).searchParams.get("limit")) || 10, 25);
+    const hits = await searchLadderIndex(env.DB, q, limit, me?.username ?? null);
+    return json({ hits });
+  });
+}
+
 async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
@@ -1943,6 +1961,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/work" && request.method === "GET") return handleWorkPage(request, env);
   if (path === "/work/claim" && request.method === "POST") return handleWorkClaimForm(request, env);
   if (path === "/api/explore/search" && request.method === "GET") return handleApiExploreSearch(request, env);
+  if (path === "/api/ladder/search" && request.method === "GET") return handleApiLadderSearch(request, env);
 
   // --- JSON API (CLI/agent parity with everything above) ---
   if (path === "/api/login/start" && request.method === "POST") return handleApiLoginStart(request, env);

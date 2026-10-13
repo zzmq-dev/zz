@@ -17,10 +17,11 @@
 // as its own first argument (claimableAcrossRepos iterates several
 // repos through the SAME Backend instance), so this just forwards
 // whichever repo each call names, rather than baking one in.
-import type { Backend } from "../../engine/backend.js";
+import type { Backend, LadderSearchHit } from "../../engine/backend.js";
 import type { Lane } from "../../engine/types.js";
 import type { EmbeddedRung } from "../../engine/ladderNotes.js";
 import { callRemoteTool } from "./remoteTools.js";
+import { apiFetch } from "./api.js";
 
 function notSupported(method: string): never {
   throw new Error(
@@ -55,4 +56,16 @@ export const remoteBackend: Backend = {
     return (await callRemoteTool(repo, "lane_list", {})) as Lane[];
   },
   withLane: () => notSupported("withLane"),
+  // Cross-repo, so callRemoteTool (which routes to one specific
+  // repo's DO) doesn't apply here -- a direct API call instead, same
+  // as any other plain CLI->Worker call. Safe specifically because
+  // this file (cli/lib/remoteBackend.ts) only ever runs in the CLI's
+  // own process, never bundled into the Worker -- unlike
+  // agent/tools.ts's ladder_search tool, whose execute() runs
+  // server-side when dispatched through the generic remote
+  // tool-calling loop and so can't make this same kind of call.
+  async searchLadder(query, limit) {
+    const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+    return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as LadderSearchHit["kind"], summary: h.summary }));
+  },
 };

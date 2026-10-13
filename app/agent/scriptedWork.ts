@@ -188,7 +188,9 @@ FILE: <another path, if you're touching more than one file>
 <its full content>
 \`\`\`
 
-List one FILE block per file you're adding or changing. Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
+List one FILE block per file you're adding or changing. Nothing else -- no prose outside these lines, no explanation, no tool calls.
+
+If the prompt below lists "potentially relevant existing code elsewhere in the ecosystem", check whether it actually covers what you need before writing a new implementation yourself -- if it does, depend on it (add it to this file's dependencies/imports) and reference it, rather than reimplementing the same thing from scratch.`;
 
 const FIX_SYSTEM_PROMPT = `${PROPOSE_SYSTEM_PROMPT}\n\nYour previous proposal failed when actually run. Fix it and output the same format again, for the full corrected set of files.`;
 
@@ -253,6 +255,30 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     laneId = shardLane.id;
   }
 
+  // Searched once, not re-run per sandbox attempt -- the task
+  // description doesn't change between retries. This is the
+  // code-driven equivalent of the generic loop's own ladder_search
+  // tool call: generateText's empty tools array means the model can't
+  // call a tool mid-generation in THIS flow at all (confirmed: an
+  // empty tools array omits the "tools" field entirely from both the
+  // Ollama and OpenAI-compatible request bodies), so "search before
+  // writing new code" has to be driven by this surrounding code
+  // instead of left to the model to decide. Without this, Ladder
+  // content is written every time but never read back into a
+  // decision anywhere -- "ecosystem-wide intelligence" that's
+  // generated but never consulted.
+  let relevantBlock = "";
+  if (authedCloneUrlFor) {
+    try {
+      const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(description)}&limit=5`);
+      if (hits.length) {
+        relevantBlock = `\n\nPotentially relevant existing code elsewhere in the ecosystem -- consider depending on one of these instead of reimplementing it (add it to this repo's dependencies and import/reference it in your FILE output):\n${hits.map((h) => `- ${h.repo_slug} ${h.path} (${h.kind}): ${h.summary}`).join("\n")}`;
+      }
+    } catch {
+      // best-effort -- a search failure should never block the actual work
+    }
+  }
+
   let proposal: ParsedFileProposal;
   let systemPrompt = PROPOSE_SYSTEM_PROMPT;
   let lastFailure = "";
@@ -266,7 +292,7 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
     const baseCommit = currentHeadSha(resolved);
     const files = currentRepoFiles(resolved);
     const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-    const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}`;
+    const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}${relevantBlock}`;
     const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}`;
     onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
     const text = await generateText(backend, systemPrompt, promptForAttempt);

@@ -15,6 +15,7 @@ import type { CommitRow, FileChangeRow } from "../../engine/ingest.js";
 import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtCommitImpl, type ArtifactsNamespace, type ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
 import { writeRung, readRung, appendRepoChildren as appendRepoChildrenImpl, type SimpleRung } from "./cloudflareLadderBackend.js";
+import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
 
 interface RepoInfo {
   remote: string;
@@ -49,7 +50,13 @@ function toSimpleRung(rung: Rung): SimpleRung {
   };
 }
 
-export function createCloudflareBackend(storage: DurableObjectStorage, artifacts: ArtifactsNamespace, artifactsName: string): Backend {
+/** Every "file"/"repo" kind rung in the tree, in-memory only (a SimpleRung's children are already embedded inline, not a separate fetch per child) -- the set of things worth putting in the cross-repo search index. "changeset"/"filechange" are historical per-commit entries, not current-state descriptions, so they're skipped. */
+function collectSearchableRungs(rung: SimpleRung, out: SimpleRung[]): void {
+  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  for (const child of rung.children) collectSearchableRungs(child, out);
+}
+
+export function createCloudflareBackend(storage: DurableObjectStorage, artifacts: ArtifactsNamespace, artifactsName: string, db: D1Database): Backend {
   const sql = storage.sql;
   sql.exec("CREATE TABLE IF NOT EXISTS lanes (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
 
@@ -166,6 +173,11 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("write", 3600);
         for (const one of rungs) await writeRung(remote, token, repo, one);
       });
+      // Index after the real write succeeds, not before -- a search
+      // hit should never point at content that didn't actually land.
+      const searchable: SimpleRung[] = [];
+      for (const one of rungs) collectSearchableRungs(one, searchable);
+      for (const one of searchable) await indexLadderRung(db, artifactsName, one.path, one.kind, one.summary);
     },
 
     async appendRepoChildren(_repo, children: { path: string; kind: RungKind }[]): Promise<void> {
@@ -173,6 +185,11 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("write", 3600);
         await appendRepoChildrenImpl(remote, token, repo, children);
       });
+    },
+
+    async searchLadder(query, limit) {
+      const hits = await searchLadderIndex(db, query, limit, null);
+      return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as RungKind, summary: h.summary }));
     },
 
     async readLane(_repo, laneId: string): Promise<Lane | null> {
