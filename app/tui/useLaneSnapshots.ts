@@ -20,24 +20,29 @@ export function useLaneSnapshots(repos: { repo: string; stateDir: string }[], in
   useEffect(() => {
     let cancelled = false;
     const read = async () => {
-      const next: LaneSnapshot[] = [];
-      for (const { repo, stateDir } of repos) {
-        if (remote) {
-          try {
-            // allowAnonymous: zz top's "not logged in" mode (Explore's
-            // whole point) still needs to watch a public repo it just
-            // tracked -- the server already allows this tool with no
-            // auth for a public repo (webApp.ts's ANON_READ_TOOLS).
-            const lanes = (await callRemoteTool(repo, "lane_list", {}, true)) as Lane[];
-            for (const lane of lanes) next.push({ repo, lane });
-          } catch {
-            // repo not reachable/onboarded yet -- skip rather than crash the view
+      // Parallel across repos, not sequential -- in remote mode each
+      // one is its own HTTP round trip (callRemoteTool), and nothing
+      // here depends on another repo's result. Watching more than one
+      // repo used to pay those round trips one after another, which is
+      // the real reason this ever felt slow to load.
+      const perRepo = await Promise.all(
+        repos.map(async ({ repo, stateDir }): Promise<LaneSnapshot[]> => {
+          if (remote) {
+            try {
+              // allowAnonymous: zz top's "not logged in" mode (Explore's
+              // whole point) still needs to watch a public repo it just
+              // tracked -- the server already allows this tool with no
+              // auth for a public repo (webApp.ts's ANON_READ_TOOLS).
+              const lanes = (await callRemoteTool(repo, "lane_list", {}, true)) as Lane[];
+              return lanes.map((lane) => ({ repo, lane }));
+            } catch {
+              return []; // repo not reachable/onboarded yet -- skip rather than crash the view
+            }
           }
-        } else {
-          for (const lane of listLanes(stateDir)) next.push({ repo, lane });
-        }
-      }
-      if (!cancelled) setSnapshots(next);
+          return listLanes(stateDir).map((lane) => ({ repo, lane }));
+        }),
+      );
+      if (!cancelled) setSnapshots(perRepo.flat());
     };
     read();
     const id = setInterval(read, intervalMs);

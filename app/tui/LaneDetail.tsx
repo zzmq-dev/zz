@@ -1,18 +1,19 @@
 // One Lane's own asks and their status -- what LaneList's "enter"
 // pushes into (zz top's lanes tab, zz work --assist's lane picker):
-// see what's already queued/answered, post a new one ("n"), or (in
-// --assist only, via onViewAsk/onClaimAsk) view one's full detail
-// (enter) or claim it and start a work session right from the list
-// ("c") -- zz top passes neither callback, since it's a pure watcher
-// with no work session to start; cursor navigation stays harmlessly
-// inert there.
+// see what's already queued/answered, filter by status ("s", cycled --
+// same convention as LiveLog.tsx's own filter bar), post a new one
+// ("n"), or (in --assist only, via onViewAsk/onClaimAsk) view one's
+// full detail (enter) or claim it and start a work session right from
+// the list ("c") -- zz top passes neither callback, since it's a pure
+// watcher with no work session to start; cursor navigation stays
+// harmlessly inert there.
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, useStdin } from "ink";
 import type { LaneSnapshot } from "./types.js";
 import type { ClaimableEntry } from "../engine/workqueue.js";
 import { claimHolder } from "../engine/workqueue.js";
 import type { AskEntry, AnswerEntry } from "../engine/types.js";
-import { MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
+import { MUTED, CYAN, PINK, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface LaneDetailProps {
   repo: string;
@@ -48,16 +49,26 @@ function describePayload(payload: unknown): string {
   return payload === undefined ? "" : JSON.stringify(payload).split("\n")[0];
 }
 
-function statusOf(ask: AskEntry, answers: AnswerEntry[]): { label: string; color: string } {
-  const answer = answers.find((a) => a.ask === ask.id);
-  if (!answer) return { label: "open", color: YELLOW };
-  if (answer.action === "complete") return { label: "complete", color: GREEN };
-  if (answer.action === "grant") return { label: "granted", color: GREEN };
-  return { label: "denied", color: RED };
+const STATUS_COLOR: Record<string, string> = { open: YELLOW, claimed: GREEN, granted: GREEN, complete: GREEN, denied: RED };
+
+/** One label per entry regardless of mode -- the unclaimed pseudo-lane only ever has "open"/"claimed" (claimableAsks, engine/workqueue.ts, already excludes anything answered), a real lane's own history can show the full open/granted/complete/denied lifecycle. */
+function statusLabel(entry: ClaimableEntry, answers: AnswerEntry[], unclaimedMode: boolean): string {
+  if (unclaimedMode) return entry.alreadyClaimed ? "claimed" : "open";
+  const answer = answers.find((a) => a.ask === entry.ask.id);
+  if (!answer) return "open";
+  if (answer.action === "complete") return "complete";
+  if (answer.action === "grant") return "granted";
+  return "denied";
+}
+
+function cycle<T>(values: T[], current: T): T {
+  const i = values.indexOf(current);
+  return values[(i + 1) % values.length];
 }
 
 export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostAsk, onBack, onEditingChange, claimableEntries, onViewAsk, onClaimAsk, allowPost = true }: LaneDetailProps) {
   const [cursor, setCursor] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
   const [posting, setPosting] = useState(false);
@@ -70,13 +81,16 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
   // wrapped into the same ClaimableEntry shape the unclaimed pseudo-
   // lane already comes in, so selection/view/claim never need to
   // branch on which mode produced a given row.
-  const entries: ClaimableEntry[] = unclaimedMode
+  const allEntries: ClaimableEntry[] = unclaimedMode
     ? claimableEntries
     : (snapshot?.lane.history.filter((e): e is AskEntry => e.type === "ASK") ?? [])
         .slice()
         .reverse() // newest first
         .map((a) => ({ repo, laneId, ask: a, alreadyClaimed: snapshot ? claimHolder(snapshot.lane, a.id) === identity : false }));
   const answers = unclaimedMode ? [] : (snapshot?.lane.history.filter((e): e is AnswerEntry => e.type === "ANSWER") ?? []);
+
+  const statuses = ["all", ...Array.from(new Set(allEntries.map((e) => statusLabel(e, answers, unclaimedMode))))];
+  const entries = statusFilter === "all" ? allEntries : allEntries.filter((e) => statusLabel(e, answers, unclaimedMode) === statusFilter);
 
   useEffect(() => {
     if (cursor >= entries.length) setCursor(Math.max(0, entries.length - 1));
@@ -138,6 +152,11 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
         setCursor((c) => Math.min(entries.length - 1, c + 1));
         return;
       }
+      if (input === "s") {
+        setStatusFilter((v) => cycle(statuses, statuses.includes(v) ? v : "all"));
+        setCursor(0);
+        return;
+      }
       if (key.return) {
         const entry = entries[cursor];
         if (entry) onViewAsk?.(entry);
@@ -166,15 +185,18 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
   return (
     <Box flexDirection="column">
       <Text bold color={CYAN} wrap="truncate-end">
-        {unclaimedMode ? "unclaimed across all watched repos" : `${repo}/${laneId} -- ${snapshot?.lane.status ?? "unknown"}`} ({entries.length} ask{entries.length === 1 ? "" : "s"})
+        {unclaimedMode ? "unclaimed across all watched repos" : `${repo}/${laneId} -- ${snapshot?.lane.status ?? "unknown"}`}
+      </Text>
+      <Text color={MUTED} wrap="truncate-end">
+        filter: status=[<Text color={statusFilter === "all" ? MUTED : PINK}>{statusFilter}</Text>](s) -- {entries.length} of {allEntries.length} ask{allEntries.length === 1 ? "" : "s"}
       </Text>
       {shownEntries.length === 0 ? (
-        <Text color={MUTED}>{unclaimedMode ? "nothing claimable right now" : "no asks in this lane yet"}</Text>
+        <Text color={MUTED}>{allEntries.length === 0 ? (unclaimedMode ? "nothing claimable right now" : "no asks in this lane yet") : "(nothing matches this filter)"}</Text>
       ) : (
         shownEntries.map((entry, i) => {
           const idx = windowStart + i;
           const current = idx === cursor;
-          const { label, color } = unclaimedMode ? { label: entry.alreadyClaimed ? "claimed" : "open", color: entry.alreadyClaimed ? GREEN : YELLOW } : statusOf(entry.ask, answers);
+          const label = statusLabel(entry, answers, unclaimedMode);
           return (
             <Box key={entry.ask.id}>
               <Box flexShrink={0}>
@@ -188,7 +210,7 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
                 </Text>
               </Box>
               <Box width={10} marginRight={1} flexShrink={0}>
-                <Text bold color={color} wrap="truncate-end">
+                <Text bold color={STATUS_COLOR[label] ?? MUTED} wrap="truncate-end">
                   {label}
                 </Text>
               </Box>
@@ -211,7 +233,10 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
       )}
       <Box marginTop={1} flexDirection="column">
         <Text color={message ? (message.startsWith("failed") ? RED : posting ? YELLOW : GREEN) : MUTED} wrap="truncate-end">
-          {message ?? (composing ? `describe the ask for ${repo}/${laneId} (enter: post, esc: cancel):` : `enter: view detail c: claim and start${allowPost ? "   n: post a new ask" : ""}   esc: back`)}
+          {message ??
+            (composing
+              ? `describe the ask for ${repo}/${laneId} (enter: post, esc: cancel):`
+              : [onViewAsk && "enter: view detail", onClaimAsk && "c: claim and start", "s: filter by status", allowPost && "n: post a new ask", "esc: back"].filter(Boolean).join("   "))}
         </Text>
         {composing && (
           <Text wrap="truncate-start">

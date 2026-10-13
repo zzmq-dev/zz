@@ -89,15 +89,26 @@ export interface ClaimableEntry {
  * open-scope ask it's merely *permitted* to pick up).
  */
 export async function claimableAcrossRepos(repos: { repo: string }[], actor: string, scope: WorkScope = "all"): Promise<ClaimableEntry[]> {
+  // Parallel across repos, not sequential -- a round trip per repo
+  // (remote mode: one callRemoteTool/listLanes HTTP call each) used to
+  // be paid one after another, which is the real cost for anyone
+  // watching more than one repo; nothing here depends on the others'
+  // results.
+  const perRepo = await Promise.all(
+    repos.map(async ({ repo }) => (await resolveBackend().listLanes(repo)).map((lane) => ({ repo, lane }))),
+  );
+  return claimableFromSnapshots(perRepo.flat(), actor, scope);
+}
+
+/** The pure, synchronous half of claimableAcrossRepos -- split out so a caller that's already polling the same Lane snapshots for its own display (tui/useLaneSnapshots.ts) can derive the claimable list from data it already has in hand, instead of re-fetching the identical lane_list data over the network a second time (tui/AssistApp.tsx's own lane picker/unclaimed screen does exactly this). */
+export function claimableFromSnapshots(snapshots: { repo: string; lane: Lane }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
   const out: ClaimableEntry[] = [];
-  for (const { repo } of repos) {
-    for (const lane of await resolveBackend().listLanes(repo)) {
-      for (const a of claimableAsks(lane, actor)) {
-        const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
-        if (scope === "coordinator" && !isCoordScope) continue;
-        if (scope === "contributor" && isCoordScope) continue;
-        out.push({ repo, laneId: lane.id, ask: a, alreadyClaimed: claimHolder(lane, a.id) === actor });
-      }
+  for (const { repo, lane } of snapshots) {
+    for (const a of claimableAsks(lane, actor)) {
+      const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
+      if (scope === "coordinator" && !isCoordScope) continue;
+      if (scope === "contributor" && isCoordScope) continue;
+      out.push({ repo, laneId: lane.id, ask: a, alreadyClaimed: claimHolder(lane, a.id) === actor });
     }
   }
   return out;

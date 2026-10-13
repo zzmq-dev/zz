@@ -21,10 +21,10 @@
 // (proposeContributorWork's own shard-clone step handles that, same as
 // the autonomous path); the picker itself only ever reads lane_list
 // across the watched repos.
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { spawnSync } from "node:child_process";
-import { claimableAcrossRepos, type WorkScope, type ClaimableEntry } from "../engine/workqueue.js";
+import { claimableFromSnapshots, type WorkScope, type ClaimableEntry } from "../engine/workqueue.js";
 import type { ChatBackend } from "../agent/chatBackend.js";
 import {
   proposeContributorWork,
@@ -141,24 +141,24 @@ function transcriptPlainText(entries: TranscriptEntry[]): string {
   return entries.map((e) => `${roleLabel[e.role]}: ${e.content}`).join("\n\n");
 }
 
-// "__unclaimed__" is never a real repo/lane id (repo slugs always
-// contain a "/"; lane ids come from shortId("lane") or well-known
-// names like "_repo") -- the sentinel laneDetailTarget value meaning
-// "show the claimable-across-all-watched-repos pseudo-lane" rather
-// than one real Lane's own history.
-const UNCLAIMED_SENTINEL = { repo: "__unclaimed__", laneId: "__unclaimed__" };
-
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
   // Default screen is the lane picker, not a flat cross-repo ask list --
-  // pick a lane, see all its asks, then enter/c from there (or from the
-  // "unclaimed across all repos" pseudo-lane LaneList always appends as
-  // its last row, for a quick cross-repo view without picking through
-  // lanes one at a time).
+  // pick a lane, see all its asks, then enter/c from there. The old
+  // flat "every claimable ask across every watched repo" screen is its
+  // own tab here ("unclaimed"), left/right arrow to switch, rather than
+  // a row mixed into the lane list itself.
   const [phase, setPhase] = useState<"lanePicker" | "laneAsks" | "detail" | "session">("lanePicker");
+  const [lanePickerTab, setLanePickerTab] = useState<"lanes" | "unclaimed">("lanes");
   const [laneEditing, setLaneEditing] = useState(false);
   const [laneDetailTarget, setLaneDetailTarget] = useState<{ repo: string; laneId: string } | null>(null);
-  const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
+  // Where "back" (detail's esc, session's cancel/pause/done) actually
+  // returns to -- set whenever an ask is viewed/claimed, since that can
+  // now happen from either a real lane's own ask list (laneAsks) or the
+  // lane picker's own "unclaimed" tab, and those need different return
+  // screens (laneAsks itself, vs. lanePicker with the unclaimed tab
+  // left exactly as it was).
+  const [returnPhase, setReturnPhase] = useState<"lanePicker" | "laneAsks">("lanePicker");
   const [previewing, setPreviewing] = useState<ClaimableEntry | null>(null);
   const [selected, setSelected] = useState<ClaimableEntry | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -201,11 +201,6 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // there directly, so you can poke at the exact files being discussed
   // without hunting for the path yourself.
   const shardRepoDirRef = useRef<string | null>(null);
-
-  const reposKey = watch
-    .get()
-    .map((r) => r.slug)
-    .join(",");
 
   // "n" from the picker -- browse lanes across the same watched repos
   // and post a plain "work" ask into whichever one you pick, same
@@ -255,32 +250,18 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   }, [flash]);
 
   // Backs both the lane picker's own "unclaimed (N)" row count and the
-  // unclaimed pseudo-lane's own ask list -- claimableAcrossRepos itself
-  // (engine/workqueue.ts) already encodes exactly the same scope/claim-
-  // holder rules the real `zz work` loop obeys, so this reuses it
-  // verbatim (wrapped in modeRun for correct remote backend scoping)
-  // instead of re-deriving the same logic by hand against raw lane_list
-  // reads. Polls whenever either screen that uses it is visible.
-  useEffect(() => {
-    if (phase !== "lanePicker" && phase !== "laneAsks") return;
-    let cancelled = false;
-    const read = async () => {
-      try {
-        const repos = watch.get().map((r) => ({ repo: r.slug }));
-        const next = await modeRun(() => claimableAcrossRepos(repos, agent, scope));
-        if (!cancelled) setClaimableList(next.filter((c) => c.ask.kind === "work" || c.ask.kind === "changeset_review"));
-      } catch {
-        // transient (a repo not reachable yet, a network blip) -- keep showing the last good list
-      }
-    };
-    read();
-    const id = setInterval(read, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, agent, scope, reposKey]);
+  // unclaimed pseudo-lane's own ask list. Derived straight from
+  // laneSnapshots (useLaneSnapshots, below -- already polling the same
+  // lane_list data for the lane picker's own display) via
+  // claimableFromSnapshots -- the pure, synchronous half of
+  // claimableAcrossRepos (engine/workqueue.ts) -- rather than a second,
+  // separate poll that would fetch the exact same data over the
+  // network twice. This is also why this no longer needs its own
+  // useEffect/interval at all: it's just a plain computed value.
+  const claimableList = useMemo(
+    () => claimableFromSnapshots(laneSnapshots, agent, scope).filter((c) => c.ask.kind === "work" || c.ask.kind === "changeset_review"),
+    [laneSnapshots, agent, scope],
+  );
 
   // Session driver -- runs once when an ask is picked: builds this
   // ask's ScriptedFlowOptions, then drafts the first proposal/decision.
@@ -415,7 +396,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
     if (cmd === "cancel") {
       pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
-      setPhase("laneAsks");
+      setPhase(returnPhase);
       setSelected(null);
       return;
     }
@@ -576,12 +557,20 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       return;
     }
     if (phase === "lanePicker") {
-      // Arrow/enter navigation is LaneList's own -- it manages its own
-      // cursor, same as Explore.tsx's repo list. This outer handler
-      // only owns quit here.
+      // Up/down/enter navigation (and, on the "unclaimed" tab, s/c/n)
+      // are LaneList's/LaneDetail's own -- each manages its own cursor,
+      // same as Explore.tsx's repo list. laneEditing guards left/right
+      // the same way it guards "laneAsks"' own esc: the unclaimed tab's
+      // composer is free text, and left/right are real characters
+      // someone might type into a description. This outer handler only
+      // owns quit and tab-switching.
       if (input === "q") {
         void onExit().then(() => process.exit(0));
+        return;
       }
+      if (laneEditing) return;
+      if (key.leftArrow) setLanePickerTab("lanes");
+      else if (key.rightArrow) setLanePickerTab("unclaimed");
       return;
     }
     if (phase === "laneAsks") {
@@ -623,7 +612,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       }
       if (key.escape) {
         setPreviewing(null);
-        setPhase("laneAsks");
+        setPhase(returnPhase);
         return;
       }
       // "c" only, not key.return -- enter means exactly one thing
@@ -668,7 +657,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     }
     if (done) {
       if (key.return || key.escape) {
-        setPhase("laneAsks");
+        setPhase(returnPhase);
         setSelected(null);
         setDone(false);
       }
@@ -677,7 +666,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     if (busy) return;
     if (key.escape) {
       pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
-      setPhase("laneAsks");
+      setPhase(returnPhase);
       setSelected(null);
       return;
     }
@@ -706,25 +695,54 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
-          <Text bold color={CYAN} wrap="truncate-end">
-            zz work --assist -- pick a lane ({backend.name})
+          <Text bold wrap="truncate-end">
+            <Text color={lanePickerTab === "lanes" ? CYAN : MUTED}>1:lanes</Text>
+            {"  "}
+            <Text color={lanePickerTab === "unclaimed" ? CYAN : MUTED}>
+              2:unclaimed ({claimableList.length})
+            </Text>
+            <Text color={MUTED}> -- zz work --assist ({backend.name})</Text>
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-          <LaneList
-            snapshots={laneSnapshots}
-            maxRows={innerRows}
-            scrollOffset={0}
-            onSelect={(repo, laneId) => {
-              setLaneDetailTarget({ repo, laneId });
-              setPhase("laneAsks");
-            }}
-            extraRows={[{ ...UNCLAIMED_SENTINEL, label: "unclaimed (across all watched repos)", count: claimableList.length }]}
-          />
+          {lanePickerTab === "lanes" ? (
+            <LaneList
+              snapshots={laneSnapshots}
+              maxRows={innerRows}
+              scrollOffset={0}
+              onSelect={(repo, laneId) => {
+                setLaneDetailTarget({ repo, laneId });
+                setPhase("laneAsks");
+              }}
+            />
+          ) : (
+            <LaneDetail
+              repo=""
+              laneId=""
+              snapshots={laneSnapshots}
+              maxRows={innerRows}
+              identity={agent}
+              onPostAsk={onPostAsk}
+              onBack={() => setLanePickerTab("lanes")}
+              onEditingChange={setLaneEditing}
+              claimableEntries={claimableList}
+              allowPost={false}
+              onViewAsk={(entry) => {
+                setReturnPhase("lanePicker");
+                setPreviewing(entry);
+                setPhase("detail");
+              }}
+              onClaimAsk={(entry) => {
+                setReturnPhase("lanePicker");
+                setSelected(entry);
+                setPhase("session");
+              }}
+            />
+          )}
         </Box>
         <Box>
           <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
-            {flash ?? "↑/↓ select enter: view a lane's asks q/ctrl+c: quit"}
+            {flash ?? "←/→: tabs ↑/↓ select enter: view q/ctrl+c: quit"}
           </Text>
         </Box>
       </Box>
@@ -732,12 +750,11 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   }
 
   if (phase === "laneAsks" && laneDetailTarget) {
-    const isUnclaimed = laneDetailTarget.repo === UNCLAIMED_SENTINEL.repo;
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
           <Text bold color={CYAN} wrap="truncate-end">
-            {isUnclaimed ? "unclaimed across all watched repos" : `${laneDetailTarget.repo}/${laneDetailTarget.laneId}`} ({backend.name})
+            {laneDetailTarget.repo}/{laneDetailTarget.laneId} ({backend.name})
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
@@ -753,13 +770,13 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
               setPhase("lanePicker");
             }}
             onEditingChange={setLaneEditing}
-            claimableEntries={isUnclaimed ? claimableList : undefined}
-            allowPost={!isUnclaimed}
             onViewAsk={(entry) => {
+              setReturnPhase("laneAsks");
               setPreviewing(entry);
               setPhase("detail");
             }}
             onClaimAsk={(entry) => {
+              setReturnPhase("laneAsks");
               setSelected(entry);
               setPhase("session");
             }}
