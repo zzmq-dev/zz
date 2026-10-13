@@ -12,9 +12,9 @@
 // (restoring the normal screen first).
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, useStdin } from "ink";
-import { spawn } from "node:child_process";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { useMouse } from "./useMouse.js";
+import { copyToClipboard } from "./clipboard.js";
 import { exitFullscreen } from "./fullscreen.js";
 import { BACKDROP, PANEL, BORDER, MUTED, PINK } from "./theme.js";
 
@@ -28,14 +28,6 @@ export interface Tab {
 
 const CHROME_ROWS = 5; // title/tab bar (1) + blank (1) + content box border (2) + footer (1)
 const TAB_BAR_ROW = 1; // the tab bar is the very first rendered line
-
-function copyToClipboard(text: string): void {
-  // macOS only, matching this project's one supported platform -- pipe
-  // directly into pbcopy's stdin rather than shelling through a string.
-  const proc = spawn("pbcopy");
-  proc.stdin.write(text);
-  proc.stdin.end();
-}
 
 // Where each tab's clickable label actually sits on screen, in 1-indexed
 // terminal columns -- has to mirror the real layout below exactly

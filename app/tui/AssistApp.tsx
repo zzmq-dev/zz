@@ -46,6 +46,7 @@ import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { useMouse } from "./useMouse.js";
+import { copyToClipboard } from "./clipboard.js";
 import { BACKDROP, PANEL, BORDER, MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface AssistAppProps {
@@ -114,6 +115,11 @@ function transcriptLines(entries: TranscriptEntry[], live: { label: string; text
   return lines;
 }
 
+/** The full transcript as plain text, for ctrl+y's copy-to-clipboard -- there's no mouse-drag text selection available while the alt-screen mouse-reporting TUI owns the mouse (Option/Shift-drag still works, a standard terminal convention, but isn't discoverable), so this is the one-keystroke way to get a path, a diff, or anything else the model printed onto the real system clipboard. */
+function transcriptPlainText(entries: TranscriptEntry[]): string {
+  return entries.map((e) => `${roleLabel[e.role]}: ${e.content}`).join("\n\n");
+}
+
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
   const [phase, setPhase] = useState<"picking" | "session">("picking");
@@ -128,14 +134,24 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const [done, setDone] = useState(false);
   const [inputValue, setInputValue] = useState("");
   const [scroll, setScroll] = useState(0);
+  const [flash, setFlash] = useState<string | null>(null);
   const { rows, columns } = useTerminalSize();
-  // header (2: ask line + description) + content box border (2) +
-  // live-turn region (reserved below, sized separately) + status (1) +
-  // input (1) + footer help (1) -- matches TabView.tsx's own
-  // CHROME_ROWS convention, just with this view's own fixed rows.
-  const CHROME_ROWS = 7;
-  const contentHeight = Math.max(3, rows - CHROME_ROWS);
-  const pageSize = Math.max(1, contentHeight - 2);
+  // Fixed rows outside the scrollable content box: header (1 -- always
+  // exactly one line, wrap="truncate-end" below guarantees it, which
+  // is the whole point of keeping the ask's own description OUT of
+  // this header and in the scrollable log instead, see pushEntry below).
+  // The content box itself is sized by Yoga's own flexGrow (see its
+  // `flexGrow={1}` below), not a hand-computed height -- that's what
+  // makes it correctly fill whatever's actually left after the other
+  // (fixed, one-line-each) rows, on any terminal size, including one
+  // too small to fit a hardcoded guess. This row count is only ever
+  // used for JS-side pagination math (how many lines a Page Up jumps,
+  // how big the ctrl+y-free scroll window is) -- getting it slightly
+  // wrong just changes how far one page-scroll moves, not whether
+  // anything fits on screen.
+  const CHROME_ROWS = 8; // header(1) + border(2) + status(1) + input(1) + footer(1) + a little slack for Yoga's own rounding
+  const innerRows = Math.max(1, rows - CHROME_ROWS);
+  const pageSize = Math.max(1, innerRows - 1);
 
   const flowOptsRef = useRef<ScriptedFlowOptions | null>(null);
   const workResultRef = useRef<ContributorProposal | null>(null);
@@ -163,6 +179,12 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const scrollUp = () => setScroll((s) => s + 1);
   const scrollDown = () => setScroll((s) => Math.max(0, s - 1));
   useMouse({ onWheelUp: scrollUp, onWheelDown: scrollDown });
+
+  useEffect(() => {
+    if (!flash) return;
+    const id = setTimeout(() => setFlash(null), 1500);
+    return () => clearTimeout(id);
+  }, [flash]);
 
   // Picker polling -- claimableAcrossRepos itself (engine/workqueue.ts)
   // already encodes exactly the same scope/claim-holder rules the real
@@ -228,7 +250,15 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     flowOptsRef.current = flowOpts;
     workResultRef.current = null;
     reviewResultRef.current = null;
-    setEntries(selected.alreadyClaimed ? [{ role: "system", content: "Resuming -- you already hold this claim. Drafting against the current state of your shard." }] : []);
+    // The full ask description lives here, in the scrollable log, not
+    // in the fixed header above it -- a header whose height depends on
+    // how long a task description happens to be is exactly what broke
+    // the layout on a small terminal before (see CHROME_ROWS' own
+    // comment).
+    setEntries([
+      { role: "system", content: `Task: ${describeAsk(selected.ask)}` },
+      ...(selected.alreadyClaimed ? [{ role: "system" as const, content: "Resuming -- you already hold this claim. Drafting against the current state of your shard." }] : []),
+    ]);
     setLiveLabel("");
     setLiveText("");
     setDone(false);
@@ -414,6 +444,23 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       void onExit().then(() => process.exit(0));
       return;
     }
+    // ctrl+y, not a bare "y" -- a bare key would be indistinguishable
+    // from someone typing the letter "y" into a chat message (the same
+    // reason scroll deliberately never uses j/k either), and this needs
+    // to work regardless of phase/busy/done, unlike everything below.
+    if (key.ctrl && input === "y") {
+      if (phase === "picking") {
+        const c = claimableList[cursor];
+        if (c) {
+          copyToClipboard(`[${c.ask.kind}] ${c.repo}\n${describeAsk(c.ask)}`);
+          setFlash("copied to clipboard");
+        }
+      } else {
+        copyToClipboard(transcriptPlainText(entries));
+        setFlash("copied the transcript to clipboard");
+      }
+      return;
+    }
     if (phase === "picking") {
       if (input === "q") {
         void onExit().then(() => process.exit(0));
@@ -490,32 +537,53 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   });
 
   if (phase === "picking") {
+    // Estimate only, for pagination math (how many items fit around the
+    // cursor) -- the box itself is sized by Yoga's own flexGrow below,
+    // same reasoning as the session view's own innerRows.
+    const pickerInnerRows = Math.max(1, rows - 4);
+    // Windowed around the cursor -- rendering every claimable ask
+    // unconditionally overflowed a small terminal's actual height
+    // before, which is a big part of what made the whole picker look
+    // broken there.
+    const windowStart = Math.max(0, Math.min(cursor - Math.floor(pickerInnerRows / 2), Math.max(0, claimableList.length - pickerInnerRows)));
+    const visible = claimableList.slice(windowStart, windowStart + pickerInnerRows);
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
-          <Text bold color={CYAN}>
-            zz work --assist -- pick an ask
+          <Text bold color={CYAN} wrap="truncate-end">
+            zz work --assist -- pick an ask ({backend.name})
           </Text>
-          <Text color={MUTED}> ({backend.name})</Text>
         </Box>
-        <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={Math.max(3, rows - 4)} overflow="hidden" paddingX={1}>
+        <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
           {claimableList.length === 0 ? (
             <Text color={MUTED}>No claimable work/changeset_review asks right now across your watched repos. (refreshing every 2s)</Text>
           ) : (
-            claimableList.map((c, i) => (
-              <Box key={c.ask.id} flexDirection="column" marginBottom={1}>
-                <Text color={i === cursor ? CYAN : undefined}>
-                  {i === cursor ? "> " : "  "}
-                  <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text> {c.repo}
-                  {c.alreadyClaimed ? " (claimed by you)" : ""}
-                </Text>
-                <Text color={i === cursor ? undefined : MUTED}>{"    " + describeAsk(c.ask)}</Text>
-              </Box>
-            ))
+            visible.map((c, i) => {
+              const idx = windowStart + i;
+              return (
+                <Box key={c.ask.id}>
+                  <Text bold={idx === cursor} color={idx === cursor ? CYAN : undefined}>
+                    {idx === cursor ? "> " : "  "}
+                  </Text>
+                  <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text>
+                  <Text bold={idx === cursor} color={idx === cursor ? CYAN : undefined}>
+                    {" "}
+                    {c.repo}
+                  </Text>
+                  {c.alreadyClaimed && <Text color={MUTED}> (claimed)</Text>}
+                  <Text color={MUTED} wrap="truncate-end">
+                    {" "}
+                    -- {describeAsk(c.ask)}
+                  </Text>
+                </Box>
+              );
+            })
           )}
         </Box>
         <Box>
-          <Text color={MUTED}>↑/↓ select enter: start q/ctrl+c: quit</Text>
+          <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
+            {flash ?? "↑/↓ select enter: start ctrl+y: copy q/ctrl+c: quit"}
+          </Text>
         </Box>
       </Box>
     );
@@ -523,7 +591,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   const liveTurn = liveText ? { label: liveLabel, text: liveText } : null;
   const allLines = transcriptLines(entries, liveTurn);
-  const windowSize = Math.max(1, contentHeight);
+  const windowSize = innerRows;
   const maxOffset = Math.max(0, allLines.length - windowSize);
   const offset = Math.min(scroll, maxOffset);
   const end = allLines.length - offset;
@@ -531,32 +599,34 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
-      <Box backgroundColor={PANEL} paddingX={1} flexDirection="column">
-        <Text bold color={CYAN}>
-          {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId}
-          <Text color={MUTED}> ({backend.name})</Text>
+      <Box backgroundColor={PANEL} paddingX={1}>
+        <Text bold color={CYAN} wrap="truncate-end">
+          {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId} ({backend.name})
         </Text>
-        <Text color={MUTED}>{selected ? describeAsk(selected.ask) : ""}</Text>
       </Box>
-      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={contentHeight} overflow="hidden" paddingX={1}>
+      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
         {offset > 0 && <Text color={MUTED}>-- {offset} line(s) back (End to catch up) --</Text>}
         {shown.map((l, i) => (
-          <Text key={i} color={l.color} bold={l.bold}>
+          <Text key={i} color={l.color} bold={l.bold} wrap="truncate-end">
             {l.text || " "}
           </Text>
         ))}
       </Box>
-      <Text color={busy ? YELLOW : MUTED}>{status}</Text>
+      <Text color={flash ? GREEN : busy ? YELLOW : MUTED} wrap="truncate-end">
+        {flash ?? status}
+      </Text>
       {!done && (
-        <Box>
+        <Box width={columns}>
           <Text color={MUTED}>{"> "}</Text>
-          <Text>{inputValue}</Text>
+          <Text wrap="truncate-start">{inputValue}</Text>
           <Text color={MUTED}>{busy ? "" : "_"}</Text>
         </Box>
       )}
       {done && <Text color={MUTED}>enter/esc: back to the ask list</Text>}
       <Box>
-        <Text color={MUTED}>↑/↓ PgUp/PgDn Home/End or wheel: scroll esc: pause ctrl+c: quit</Text>
+        <Text color={MUTED} wrap="truncate-end">
+          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y: copy esc: pause ctrl+c: quit
+        </Text>
       </Box>
     </Box>
   );
