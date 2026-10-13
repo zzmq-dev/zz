@@ -21,18 +21,22 @@ config:
 nav:
     - title: "Overview"
       url: /docs/overview/
+    - title: "Install"
+      url: /docs/install/
+    - title: "Core Concepts"
+      url: /docs/nouns/
     - title: "Lanes & Ladders"
       url: /docs/lanes-and-ladders/
     - title: "Protocol"
       url: /docs/protocol/
     - title: "CLI"
       url: /docs/cli/
-    - title: "MCP"
-      url: /docs/mcp/
-    - title: "Core Concepts"
-      url: /docs/nouns/
+    - title: "Agent tools"
+      url: /docs/agent-tools/
     - title: "Data format"
       url: /docs/data-format/
+    - title: "Git compatibility"
+      url: /docs/git-compatibility/
     - title: "Architecture"
       url: /docs/architecture/
     - title: "Governance"
@@ -41,11 +45,19 @@ nav:
       url: /docs/prior-art/
     - title: "Name & background"
       url: /docs/name-and-background/
+
+# Design docs and plans from the build. Still published, listed
+# separately in the sidebar (see content/docs/archive/index.md).
+archive_nav:
     - title: "Competition plan"
-      url: /docs/competition-plan/
+      url: /docs/archive/competition-plan/
+    - title: "CLI sketch"
+      url: /docs/archive/cli-sketch/
+    - title: "Data format design"
+      url: /docs/archive/data-format-design/
     - title: "Ladder design"
-      url: /docs/ladder-design/
+      url: /docs/archive/ladder-design/
     - title: "Remote backend"
-      url: /docs/remote-backend/
-    - title: "Git compatibility"
-      url: /docs/git-compatibility/
+      url: /docs/archive/remote-backend/
+    - title: "Remote agents"
+      url: /docs/archive/remote-agents/

@@ -83,6 +83,9 @@ th { background: var(--code-bg); color: var(--muted); font-weight: 600; text-tra
   padding: 0.25rem 0;
 }
 .navlink.active, .navlink:hover { color: var(--pink); }
+.sidenav-archive { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.sidenav-archive .navlink { font-size: 0.85rem; }
+.navgroup { color: var(--muted); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .content { flex: 1 1 auto; min-width: 0; }
 .prose { max-width: 680px; }

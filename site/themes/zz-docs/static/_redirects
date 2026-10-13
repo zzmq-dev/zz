@@ -3,3 +3,11 @@
 # send it straight into the docs.
 /docs    /docs/overview/   302
 /docs/   /docs/overview/   302
+
+# Pages moved into the Archive section, and the MCP page renamed to
+# Agent tools (the tools are HTTP endpoints; an MCP server is planned).
+/docs/competition-plan/  /docs/archive/competition-plan/  301
+/docs/ladder-design/     /docs/archive/ladder-design/     301
+/docs/remote-backend/    /docs/archive/remote-backend/    301
+/docs/remote-agents/     /docs/archive/remote-agents/     301
+/docs/mcp/               /docs/agent-tools/               301

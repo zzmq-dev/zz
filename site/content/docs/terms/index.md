@@ -21,7 +21,7 @@ The zzmq CLI and server are open source under the [BSD 2-Clause License](https:/
 
 ## Availability
 
-We don't guarantee uptime, data retention, or that any particular feature stays available -- this is a young project, not a funded enterprise SLA. We'll try to give notice before anything disruptive, but can't promise it.
+We don't guarantee uptime, data retention, or that any particular feature stays available. This is a young project without an enterprise SLA. We'll try to give notice before anything disruptive, but can't promise it.
 
 ## Suspension and termination
 

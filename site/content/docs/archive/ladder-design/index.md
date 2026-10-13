@@ -5,6 +5,8 @@ description: "A working doc tracking the Ladder design as it gets built. Not yet
 ---
 # Ladder design
 
+> **Archived.** This is a design or planning document from earlier in the project. It records the reasoning at the time it was written and may describe plans that changed or were never built. See the [Archive](/docs/archive/) index for context, or the [Overview](/docs/overview/) for how `zz` works today.
+
 This tracks the Ladder's design while it's actively being built, the same way [Competition plan](/docs/competition-plan/) tracks the build. [Lanes and Ladders](/docs/lanes-and-ladders/) and [Data format](/docs/data-format/) stay as they are for now; nothing here is final, and this page is allowed to be wrong or change daily while implementation is in progress. Once the implementation settles, the relevant parts move into those pages and this one goes away or gets trimmed back to a pointer.
 
 ## What a Ladder is
