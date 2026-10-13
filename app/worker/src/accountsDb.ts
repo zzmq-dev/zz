@@ -324,6 +324,12 @@ export async function syncRepoRoleCache(db: D1Database, slug: string, grants: { 
   await db.batch(writes);
 }
 
+/** A principal's own explicit Role grant on one repo, straight from the D1 cache (null if ungranted -- the caller decides what that means: "viewer" on a public repo, no access at all on a private one). Reads the cache rather than roles.json directly for the same reason listRepoRolesForAgent does: this runs on the hot path (every remote tool call, handleApiCallTool), where a live Artifacts round-trip per call would be a real cost, not just migration 0004's own cross-repo-scan concern. */
+export async function getRepoRoleForPrincipal(db: D1Database, slug: string, principal: string): Promise<string | null> {
+  const row = await db.prepare("SELECT role FROM repo_roles WHERE repo_slug = ? AND principal = ?").bind(slug, principal).first<{ role: string }>();
+  return row?.role ?? null;
+}
+
 /** Repos (beyond ones owned outright) a principal has any repo-level Role grant on -- the profile page's "shared with you" list. Reads the D1 cache, not roles.json directly (see migration 0004's header for why a live cross-repo scan isn't affordable here). */
 export async function listRepoRolesForAgent(db: D1Database, principal: string): Promise<(RepoRow & { role: string })[]> {
   const result = await db

@@ -42,6 +42,7 @@ import {
   getAgentByEmail,
   getAgentToken,
   getRepoBySlug,
+  getRepoRoleForPrincipal,
   getValidSession,
   isTrackingRepo,
   listAgentsCreatedBy,
@@ -1670,9 +1671,25 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // poll came back 401 and was silently swallowed by useLaneSnapshots/
 // useLadderTrees's own "not reachable yet" catch, which looked
 // indistinguishable from "nothing to show" -- confirmed live. Nothing
-// else changes: a private repo, or any other (mutating) tool, still
-// requires real auth exactly as before.
+// else changes: a private repo still requires a real, granted Role
+// (not just "logged in as somebody," see the private-repo check
+// below), and commit_changeset/ladder_write_rung still require
+// Maintainer+ regardless of visibility (COORDINATOR_ONLY_REMOTE_TOOLS,
+// below) -- both enforced here now, not just by the CLI's own choice
+// of which tools to hand a model.
 const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree"]);
+
+// These two write committed content directly, with no further
+// per-call authority check of their own the way claim/answer have
+// (engine/lane.ts's answer() already checks lane.coordinators/
+// maintainers at the protocol level) -- held here to the same
+// Maintainer-or-above bar canPushRepo already holds a raw git push to,
+// since a direct commit_changeset bypasses the per-changeset review a
+// push would otherwise go through. Previously enforced only by zz
+// work's own choice of which tools to hand the model
+// (COORDINATOR_ONLY_TOOLS, agent/tools.ts) -- a direct API call
+// bypassed that entirely.
+const COORDINATOR_ONLY_REMOTE_TOOLS = new Set(["commit_changeset", "ladder_write_rung"]);
 
 async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
@@ -1680,6 +1697,25 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     if (!repo) throw new ApiError(404, "no such repo");
     const canAnonRead = repo.visibility === "public" && ANON_READ_TOOLS.has(toolName);
     const me = canAnonRead ? await resolveRequestAgent(request, env) : await requireApiAgent(request, env);
+
+    // Private repo: being logged in as *somebody* was never the real
+    // bar -- canReadRepo already holds every other read surface (the
+    // web repo page, git clone/fetch) to "has an actual Role grant,"
+    // and this JSON tool-call layer was the one place that fact didn't
+    // apply, letting any authenticated account read a private repo's
+    // Lane/Ladder/file content (or call a write tool on it) through
+    // here regardless of Role.
+    if (repo.visibility === "private") {
+      const role = me ? await getRepoRoleForPrincipal(env.DB, repo.slug, me.username) : null;
+      if (!role) throw new ApiError(403, `${me?.username ?? "anonymous"} has no Role on private repo ${slug}`);
+    }
+    if (COORDINATOR_ONLY_REMOTE_TOOLS.has(toolName)) {
+      const role = me ? await getRepoRoleForPrincipal(env.DB, repo.slug, me.username) : null;
+      if (!role || !repoAtLeast(role as RbacRole, "maintainer")) {
+        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Maintainer of ${slug} -- "${toolName}" requires at least Maintainer`);
+      }
+    }
+
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     for (const field of ["actor", "from"]) {
       if (field in body && me && body[field] !== me.username) throw new ApiError(403, `${field} must be your own username (${me.username}) -- a token only acts as the agent it belongs to`);
