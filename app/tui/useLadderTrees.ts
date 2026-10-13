@@ -21,17 +21,30 @@ export function useLadderTrees(repos: { repo: string; repoDir: string; stateDir:
 
   useEffect(() => {
     let cancelled = false;
+    // Remote resolution is a handful of sequential round trips (one
+    // per rung), slow enough that a single read() can still be in
+    // flight when the next interval tick fires -- without this guard,
+    // a slow remote repo piles up more and more overlapping reads over
+    // time instead of ever settling, which looks indistinguishable
+    // from "never shows anything" rather than "takes a few seconds."
+    let inFlight = false;
     const read = async () => {
-      const next: LadderSnapshot[] = [];
-      for (const { repo, repoDir, stateDir } of repos) {
-        try {
-          const { tree } = remote ? await resolveLadderTree((path) => callRemoteTool(repo, "ladder_read", { path }) as Promise<EmbeddedRung | null>) : await collectLadder(repoDir, stateDir);
-          next.push({ repo, tree });
-        } catch {
-          // repo not onboarded/bootstrapped/reachable yet -- skip rather than crash the view
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const next: LadderSnapshot[] = [];
+        for (const { repo, repoDir, stateDir } of repos) {
+          try {
+            const { tree } = remote ? await resolveLadderTree((path) => callRemoteTool(repo, "ladder_read", { path }) as Promise<EmbeddedRung | null>) : await collectLadder(repoDir, stateDir);
+            next.push({ repo, tree });
+          } catch {
+            // repo not onboarded/bootstrapped/reachable yet -- skip rather than crash the view
+          }
         }
+        if (!cancelled) setSnapshots(next);
+      } finally {
+        inFlight = false;
       }
-      if (!cancelled) setSnapshots(next);
     };
     read();
     const id = setInterval(read, intervalMs);

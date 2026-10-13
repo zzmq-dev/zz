@@ -35,8 +35,11 @@ export class MaintainerDO extends DurableObject<Env> {
   private artifactsName = "do";
   private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName, this.env.DB);
 
-  /** Which Artifacts repo this DO instance actually operates on -- set once, before any tool call, since the DO's own id (from idFromName) doesn't reverse back to the name that created it. */
+  /** Which Artifacts repo this DO instance actually operates on -- set once, before any tool call, since the DO's own id (from idFromName) doesn't reverse back to the name that created it.
+   *
+   * No-op when already configured for this same repo -- confirmed live: handleApiCallTool (every CLI/TUI tool call) calls this on EVERY single HTTP request, so rebuilding the Backend unconditionally threw away cloudflareBackend.ts's notesCache on every call, defeating it entirely for any multi-call sequence that crosses HTTP requests (e.g. the TUI resolving a Ladder tree one ladder_read per HTTP call -- 6 calls, 6 fresh checkouts of ref content 3 of those calls share). webApp.ts's own internal getLadderTree never hit this since it configures once then calls multiple times in-process; CLI/TUI calls, one HTTP request per tool call, always did. Staying configured for the same repo across calls means the cache (and cachedRootCommitOid, already durable-stored) actually survives for this DO instance's warm lifetime, not just one call -- a bounded, self-healing staleness window (any cold start/eviction clears it), same tradeoff already accepted for the durable root-oid cache. */
   async configure(artifactsName: string): Promise<void> {
+    if (this.artifactsName === artifactsName) return;
     this.artifactsName = artifactsName;
     this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName, this.env.DB);
   }
