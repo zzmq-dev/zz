@@ -25,6 +25,7 @@ import {
   type ReleaseRow,
 } from "../../engine/ingest.js";
 import { resolveModelBackend, type ModelBackend } from "../../engine/model.js";
+import type { Provider } from "../lib/resolveChatBackend.js";
 import { ask, answer, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
 import type { Rung } from "../../engine/ladder.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
@@ -34,6 +35,9 @@ import type { LaneRef } from "../../engine/types.js";
 
 export interface BuildOptions {
   force?: boolean;
+  /** Same meaning as zz work's own --provider/--model: ollama (default, needs nothing else running) or gemini/groq/cloudflare (needs that provider's own API key). */
+  provider?: Provider;
+  model?: string;
 }
 
 const AGENT = process.env.ZZ_AGENT ?? "zz-local";
@@ -141,7 +145,7 @@ async function buildDependency(repoDir: string, stateDir: string, origin: LaneRe
 export async function ladderBuild(slug: string, options: BuildOptions): Promise<void> {
   const repo = resolveRepo(slug);
   ensureCloned(repo);
-  const model = await resolveModelBackend();
+  const model = await resolveModelBackend(options.provider, options.model);
   console.error(`model backend: ${model.name}`);
 
   // The repo is its own long-lived Lane: proposed once, transitioned to

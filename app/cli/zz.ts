@@ -11,6 +11,7 @@ import { version, BANNER } from "./lib/banner.js";
 import { registerLocalBackendFactory } from "../engine/backend.js";
 import { createLocalBackend } from "../engine/localBackend.js";
 import { ladderBuild } from "./commands/ladder-build.js";
+import type { Provider } from "./lib/resolveChatBackend.js";
 import { ladderDump, type DumpFormat } from "./commands/ladder-dump.js";
 import { ladderReplayCommits } from "./commands/ladder-replay-commits.js";
 import { laneLog, type LaneLogFormat } from "./commands/lane-log.js";
@@ -52,8 +53,10 @@ ladder
   .command("build <repo>")
   .description("onboard a real GitHub repo (owner/repo) into a Ladder, from its real git history and issue/PR/release data")
   .option("--force", "rebuild the file tree and overwrite any existing asks/releases/contributors instead of leaving them alone")
-  .action(async (repo: string, opts: { force?: boolean }) => {
-    await ladderBuild(repo, { force: opts.force });
+  .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare -- same meaning as zz work --provider")
+  .option("--model <name>", "model name for whichever provider -- see zz work --help for each provider's own default")
+  .action(async (repo: string, opts: { force?: boolean; provider?: Provider; model?: string }) => {
+    await ladderBuild(repo, { force: opts.force, provider: opts.provider, model: opts.model });
   });
 
 ladder

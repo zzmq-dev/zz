@@ -16,7 +16,7 @@ import { resolveCliBackendMode } from "../lib/backendMode.js";
 import { resolveWatchedRepoSlugs } from "../lib/watchedRepoResolution.js";
 import { createRepoWatchStore } from "../lib/watchedRepos.js";
 import { authedCloneUrl } from "../lib/credentials.js";
-import { resolveBackend, type Provider } from "./work.js";
+import { resolveBackend, type Provider } from "../lib/resolveChatBackend.js";
 import type { WorkScope } from "../../engine/workqueue.js";
 import { AssistApp } from "../../tui/AssistApp.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
