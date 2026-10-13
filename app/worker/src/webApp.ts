@@ -97,6 +97,11 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/** An Ask/Answer payload, pretty-printed instead of dumped as one unreadable JSON.stringify() line -- a scrollable box so a large field (e.g. a proposal's full file contents) doesn't blow out the rest of the page's layout. */
+function jsonBlock(value: unknown): string {
+  return `<pre class="json-blob">${esc(JSON.stringify(value ?? {}, null, 2))}</pre>`;
+}
+
 // A deliberately small markdown-to-HTML renderer for README display --
 // not a CommonMark implementation, just headers/bold/italic/inline and
 // fenced code/links/lists/paragraphs, which covers the overwhelming
@@ -255,12 +260,12 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .md pre code{background:none;padding:0}
 .blob-header{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.75rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:8px 8px 0 0;margin-bottom:0}
 .blob-header a{color:var(--cyan)}
-.blob-path{color:var(--fg);font-weight:600;margin-left:auto}
-.download-btn{font-size:.85rem;font-weight:700;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--pink);background:var(--pink);color:#1A0F2E !important}
+.download-btn{margin-left:auto;font-size:.85rem;font-weight:700;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--pink);background:var(--pink);color:#1A0F2E !important}
 .download-btn:hover{background:#ff58a8;text-decoration:none}
 .blob-body{border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;overflow:hidden}
 .blob-body pre{margin:0;border:none;border-radius:0}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
+.json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -975,7 +980,7 @@ async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> 
     .map(
       (it) => `<li class="stack">
         <div class="row"><a href="/${esc(it.repoSlug)}" class="mono" style="color:var(--pink)">${esc(it.repoSlug)}</a><span class="badge badge-muted">${esc(it.laneId)}</span><span class="badge badge-yellow">${esc(it.ask.kind)}</span></div>
-        <div class="muted">${esc(JSON.stringify(it.ask.payload ?? {}))}</div>
+        ${jsonBlock(it.ask.payload)}
         <form method="post" action="/work/claim" class="inline">
           <input type="hidden" name="repo_slug" value="${esc(it.repoSlug)}">
           <input type="hidden" name="lane_id" value="${esc(it.laneId)}">
@@ -1721,7 +1726,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .slice()
     .reverse()
     .map((e) => {
-      if (e.type === "ASK") return `<li class="row"><span class="badge badge-yellow">ASK</span> ${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")} -- ${esc(JSON.stringify(e.payload ?? {}))} <span class="muted">${esc(e.at)}</span></li>`;
+      if (e.type === "ASK") return `<li class="stack"><div class="row"><span class="badge badge-yellow">ASK</span> ${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")} <span class="muted">${esc(e.at)}</span></div>${jsonBlock(e.payload)}</li>`;
       if (e.type === "ANSWER") return `<li class="row"><span class="badge badge-green">ANSWER</span> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
       return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${esc(e.text)} <span class="muted">${esc(e.at)}</span></li>`;
     })
@@ -1914,25 +1919,25 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
     .join("");
 
   const navHtml = `<div class="commit-nav">
-    ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}">&larr; older</a>` : "<span></span>"}
-    ${newer ? `<a href="/${esc(slug)}/commit/${esc(newer.hash)}">newer &rarr;</a>` : "<span></span>"}
+    ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}" class="mono">&larr; prev ${esc(older.slice(0, 8))}</a>` : "<span></span>"}
+    ${newer ? `<a href="/${esc(slug)}/commit/${esc(newer.hash)}" class="mono">next ${esc(newer.hash.slice(0, 8))} &rarr;</a>` : "<span></span>"}
   </div>`;
 
   return layout(
-    `${sha.slice(0, 8)} \xb7 ${slug}`,
+    sha.slice(0, 8),
     me,
     `<div class="card">
       <h2>Commit</h2>
       <p class="mono">${esc(sha)}</p>
       <p>${esc(commit.message)}</p>
       <p class="muted">${esc(commit.author.name)} &lt;${esc(commit.author.email)}&gt; -- ${esc(new Date(commit.authoredAt * 1000).toISOString())}</p>
-      <p><a href="/${esc(slug)}">&larr; ${esc(slug)}</a></p>
       ${navHtml}
     </div>
     <div class="card">
       <h2>Tree at this commit</h2>
       <ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>
     </div>`,
+    { titleHtml: ` \xb7 <a href="/${esc(slug)}">${esc(slug)}</a>` },
   );
 }
 
@@ -1981,7 +1986,6 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   const headerHtml = `<div class="blob-header">
     <a href="/${esc(slug)}">${esc(slug)}</a>
     ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
-    <span class="blob-path mono">${esc(path)}</span>
     <a href="/${esc(slug)}/download/${esc(path)}" class="download-btn" download>Download</a>
   </div>`;
 
