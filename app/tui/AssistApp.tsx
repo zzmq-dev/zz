@@ -5,23 +5,24 @@
 // human-in-the-loop counterpart to `zz work`'s own fully autonomous
 // claim-draft-verify-submit loop, not a replacement for it.
 //
-// Deliberately NOT a full-screen/alt-buffer dashboard (see
-// cli/commands/workAssist.ts, which never calls enterFullscreen) --
-// the chat transcript renders via ink's own <Static>, which prints
-// permanently into the terminal's real scrollback and is never
-// re-rendered once written. That's what makes scrolling back through
-// earlier turns just work (your terminal's own scrollback, not a
-// bespoke one this app would otherwise have to build), and it's the
-// same shape Claude Code's own CLI uses. Only the "current turn in
-// progress" region below the transcript re-renders on every state
-// change (streaming tokens, the input box).
+// A real full-screen frame (cli/commands/workAssist.ts calls
+// enterFullscreen, same as `zz top`/`zz work`'s own TUIs), not a plain
+// scrolling CLI session -- but the transcript still needs to scroll
+// back through earlier turns, which an alt-screen app can't get from
+// the terminal's own scrollback (there isn't one in the alternate
+// buffer). So this owns its own scroll offset exactly the way
+// TabView.tsx's content panes do: flatten the transcript into lines,
+// window it by `scroll`, and let arrows/Page Up/Down/Home/End/mouse
+// wheel move that offset (see useMouse.ts) -- deliberately never j/k,
+// unlike TabView's own read-only panes, since those are free characters
+// in a chat message here.
 //
 // Nothing is cloned until an ask is actually picked
 // (proposeContributorWork's own shard-clone step handles that, same as
 // the autonomous path); the picker itself only ever reads lane_list
 // across the watched repos.
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Static, Text, useInput } from "ink";
+import { Box, Text, useInput } from "ink";
 import { claimableAcrossRepos, type WorkScope, type ClaimableEntry } from "../engine/workqueue.js";
 import type { ChatBackend } from "../agent/chatBackend.js";
 import {
@@ -42,7 +43,9 @@ import { remoteCallTool } from "../cli/lib/remoteTools.js";
 import { diffFileSets } from "../cli/lib/fileDiff.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
-import { MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
+import { useTerminalSize } from "./useTerminalSize.js";
+import { useMouse } from "./useMouse.js";
+import { BACKDROP, PANEL, BORDER, MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface AssistAppProps {
   watch: RepoWatchStore;
@@ -82,6 +85,27 @@ function formatDecision(d: ReviewProposal): string {
 const roleLabel: Record<TranscriptEntry["role"], string> = { assistant: "model", user: "you", system: "system" };
 const roleColor: Record<TranscriptEntry["role"], string> = { assistant: GREEN, user: CYAN, system: RED };
 
+interface Line {
+  text: string;
+  color?: string;
+  bold?: boolean;
+}
+
+/** Flattens the transcript (plus the in-flight streaming turn, if any) into individual lines for scroll windowing -- a single entry (a whole file diff, several files) can be many lines, and TabView's own convention (see its header comment) scrolls by line, not by entry. */
+function transcriptLines(entries: TranscriptEntry[], live: { label: string; text: string } | null): Line[] {
+  const lines: Line[] = [];
+  for (const e of entries) {
+    lines.push({ text: `${roleLabel[e.role]}:`, color: roleColor[e.role], bold: true });
+    for (const l of e.content.split("\n")) lines.push({ text: l });
+    lines.push({ text: "" });
+  }
+  if (live) {
+    lines.push({ text: `${live.label}:`, color: YELLOW, bold: true });
+    for (const l of live.text.split("\n")) lines.push({ text: l });
+  }
+  return lines;
+}
+
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
   const [phase, setPhase] = useState<"picking" | "session">("picking");
@@ -95,6 +119,15 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [inputValue, setInputValue] = useState("");
+  const [scroll, setScroll] = useState(0);
+  const { rows, columns } = useTerminalSize();
+  // header (2: ask line + description) + content box border (2) +
+  // live-turn region (reserved below, sized separately) + status (1) +
+  // input (1) + footer help (1) -- matches TabView.tsx's own
+  // CHROME_ROWS convention, just with this view's own fixed rows.
+  const CHROME_ROWS = 7;
+  const contentHeight = Math.max(3, rows - CHROME_ROWS);
+  const pageSize = Math.max(1, contentHeight - 2);
 
   const flowOptsRef = useRef<ScriptedFlowOptions | null>(null);
   const workResultRef = useRef<ContributorProposal | null>(null);
@@ -110,6 +143,18 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   function pushEntry(role: TranscriptEntry["role"], content: string): void {
     setEntries((e) => [...e, { role, content }]);
   }
+
+  // Snap back to the live edge (scroll=0) whenever a new turn actually
+  // lands -- not on every streaming token (that would make scrolling up
+  // mid-stream pointless, since the view would yank back down on the
+  // very next token), just when pushEntry's array actually grows.
+  useEffect(() => {
+    setScroll(0);
+  }, [entries.length]);
+
+  const scrollUp = () => setScroll((s) => s + 1);
+  const scrollDown = () => setScroll((s) => Math.max(0, s - 1));
+  useMouse({ onWheelUp: scrollUp, onWheelDown: scrollDown });
 
   // Picker polling -- claimableAcrossRepos itself (engine/workqueue.ts)
   // already encodes exactly the same scope/claim-holder rules the real
@@ -370,7 +415,34 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       }
       return;
     }
-    // session phase
+    // session phase -- scrolling (arrows/Page Up/Down/Home/End) always
+    // available, independent of busy/done, and deliberately never j/k
+    // (those are free characters in a chat message here, unlike
+    // TabView's own read-only content panes).
+    if (key.upArrow) {
+      scrollUp();
+      return;
+    }
+    if (key.downArrow) {
+      scrollDown();
+      return;
+    }
+    if (key.pageUp) {
+      setScroll((s) => s + pageSize);
+      return;
+    }
+    if (key.pageDown) {
+      setScroll((s) => Math.max(0, s - pageSize));
+      return;
+    }
+    if (key.home) {
+      setScroll(Number.MAX_SAFE_INTEGER); // clamped to the real max when rendered
+      return;
+    }
+    if (key.end) {
+      setScroll(0);
+      return;
+    }
     if (done) {
       if (key.return || key.escape) {
         setPhase("picking");
@@ -407,11 +479,13 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   if (phase === "picking") {
     return (
-      <Box flexDirection="column">
-        <Text color={CYAN} bold>
-          zz work --assist -- pick an ask
-        </Text>
-        <Box marginTop={1} flexDirection="column">
+      <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
+        <Box backgroundColor={PANEL} paddingX={1}>
+          <Text bold color={CYAN}>
+            zz work --assist -- pick an ask
+          </Text>
+        </Box>
+        <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={Math.max(3, rows - 4)} overflow="hidden" paddingX={1}>
           {claimableList.length === 0 ? (
             <Text color={MUTED}>No claimable work/changeset_review asks right now across your watched repos. (refreshing every 2s)</Text>
           ) : (
@@ -427,37 +501,37 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
             ))
           )}
         </Box>
-        <Text color={MUTED}>↑/↓ select enter: start q/ctrl+c: quit</Text>
+        <Box>
+          <Text color={MUTED}>↑/↓ select enter: start q/ctrl+c: quit</Text>
+        </Box>
       </Box>
     );
   }
 
+  const liveTurn = liveText ? { label: liveLabel, text: liveText } : null;
+  const allLines = transcriptLines(entries, liveTurn);
+  const windowSize = Math.max(1, contentHeight);
+  const maxOffset = Math.max(0, allLines.length - windowSize);
+  const offset = Math.min(scroll, maxOffset);
+  const end = allLines.length - offset;
+  const shown = allLines.slice(Math.max(0, end - windowSize), end);
+
   return (
-    <Box flexDirection="column">
-      <Static items={entries}>
-        {(e, i) => (
-          <Box key={i} flexDirection="column" marginBottom={1}>
-            <Text color={roleColor[e.role]} bold>
-              {roleLabel[e.role]}:
-            </Text>
-            <Text>{e.content}</Text>
-          </Box>
-        )}
-      </Static>
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color={CYAN} bold>
+    <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
+      <Box backgroundColor={PANEL} paddingX={1} flexDirection="column">
+        <Text bold color={CYAN}>
           {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId}
         </Text>
         <Text color={MUTED}>{selected ? describeAsk(selected.ask) : ""}</Text>
       </Box>
-      {liveText && (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text color={YELLOW} bold>
-            {liveLabel}:
+      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={contentHeight} overflow="hidden" paddingX={1}>
+        {offset > 0 && <Text color={MUTED}>-- {offset} line(s) back (End to catch up) --</Text>}
+        {shown.map((l, i) => (
+          <Text key={i} color={l.color} bold={l.bold}>
+            {l.text || " "}
           </Text>
-          <Text>{liveText}</Text>
-        </Box>
-      )}
+        ))}
+      </Box>
       <Text color={busy ? YELLOW : MUTED}>{status}</Text>
       {!done && (
         <Box>
@@ -467,6 +541,9 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         </Box>
       )}
       {done && <Text color={MUTED}>enter/esc: back to the ask list</Text>}
+      <Box>
+        <Text color={MUTED}>↑/↓ PgUp/PgDn Home/End or wheel: scroll esc: pause ctrl+c: quit</Text>
+      </Box>
     </Box>
   );
 }
