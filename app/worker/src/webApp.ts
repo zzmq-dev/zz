@@ -270,6 +270,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
 .summary-detail ul,.summary-detail p{margin-top:.5rem}
+.shard-group{margin-top:.4rem;font-size:.85rem}
+.shard-group summary{cursor:pointer;color:var(--muted);user-select:none}
+.shard-group ul.list{margin-top:.4rem;padding-left:1.1rem;border-left:2px solid var(--border)}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -382,7 +385,7 @@ document.querySelectorAll('[data-copy]').forEach(function (btn) {
 });
 `;
 
-function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string } = {}): Response {
+function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string; h1Html?: string } = {}): Response {
   // Same items, same order, as the docs site's own nav (site/themes/zz-docs/fragments/header.html) --
   // Explore/Work/Docs/Source always present, then whatever's auth-dependent.
   const navHead = `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/docs/">Docs</a><a href="https://github.com/zzmq-dev/zz">Source</a>`;
@@ -391,7 +394,7 @@ function layout(title: string, agent: Agent | null, body: string, opts: { cookie
 <style>${WEB_CSS}</style></head><body>
 <header class="topbar"><a href="/" class="brand">zz<span>_</span></a><nav class="links">${nav}</nav></header>
 <main>
-<h1>${esc(title)}${opts.titleHtml ?? ""}</h1>
+<h1>${opts.h1Html ?? esc(title)}${opts.titleHtml ?? ""}</h1>
 ${body}
 </main>
 <script>${WEB_JS}</script>
@@ -859,12 +862,28 @@ async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, 
 async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("read", 120);
-  const info = await artifactsRepo.info();
-  const roles = await readRepoRoles(info.remote, token);
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
-  await env.ARTIFACTS.delete(repo.artifacts_name);
+
+  try {
+    using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+    const token = await artifactsRepo.createToken("read", 120);
+    const info = await artifactsRepo.info();
+    const roles = await readRepoRoles(info.remote, token);
+    if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+    await env.ARTIFACTS.delete(repo.artifacts_name);
+  } catch (e) {
+    // The Artifacts-side repo being gone already (confirmed live:
+    // "ArtifactsError: Repository not found") means this D1 row is an
+    // orphan -- left over from some earlier delete that removed the
+    // Artifacts repo but failed before clearing this row. There's
+    // nothing left to check roles against via Artifacts in that case,
+    // so fall back to the D1 row's own recorded owner rather than
+    // leaving the orphan permanently stuck. Any other failure
+    // (a real role check, a real network error) surfaces as before.
+    if (e instanceof ApiError) throw e;
+    if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
+    if (actor.username !== repo.owner_username) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  }
+
   await deleteRepoRow(env.DB, repo.slug);
 }
 
@@ -938,10 +957,27 @@ async function getLadderTree(env: WebEnv, artifactsName: string): Promise<Ladder
   return root ? resolve(root) : null;
 }
 
+// Fixed display order for the Ladder tab -- children of a node are
+// accumulated over time in whatever order rungs happened to get
+// written (a file touched by an early commit, then a changeset from a
+// much later one, then another file, ...), which reads as shuffled.
+// Grouping same-kind rungs together (all files, then all changesets,
+// ...) makes the tab scannable without changing anything about the
+// underlying tree.
+const LADDER_KIND_ORDER: Record<string, number> = {
+  repo: 0, directory: 1, file: 2, package: 3, release: 4,
+  dependencies: 5, contributor: 6, changeset: 7, filechange: 8,
+  function: 9, lines: 10, linechange: 11, ask: 12, answer: 13,
+};
+
 function renderLadderNode(node: LadderNode, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
-  return [self, ...node.children.map((c) => renderLadderNode(c, depth + 1))].join("");
+  // An ask's children are a conversation thread (ask/answer/ask/...)
+  // in chronological order -- that sequence is the whole point, so
+  // it's left alone rather than grouped by kind like everything else.
+  const children = node.kind === "ask" ? node.children : [...node.children].sort((a, b) => (LADDER_KIND_ORDER[a.kind] ?? 99) - (LADDER_KIND_ORDER[b.kind] ?? 99));
+  return [self, ...children.map((c) => renderLadderNode(c, depth + 1))].join("");
 }
 
 // One rung read directly by its own path -- the commit/file view's
@@ -1146,7 +1182,14 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
     await resolveRequestAgent(request, env),
     `${card(
        "Repos",
-       `<ul class="list">${visible.map((r) => `<li><a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${esc(r.description)}</div>` : ""}</li>`).join("") || '<li class="empty">No public repos.</li>'}</ul>`,
+       `<ul class="list">${
+         shardGroupedListHtml(
+           visible,
+           (r) => r.slug,
+           (r) => r.shard_of_slug,
+           (r) => `<a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${esc(r.description)}</div>` : ""}`,
+         ) || '<li class="empty">No public repos.</li>'
+       }</ul>`,
      )}`,
   );
 }
@@ -1185,9 +1228,12 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
      ${card(
        "Repos",
        `<ul class="list">${
-         repoRows
-           .map(({ repo, role }) => `<li class="row"><a href="/${esc(repo.slug)}" class="mono" style="color:var(--pink)">${esc(repo.slug)}</a>${roleBadge(role)}</li>`)
-           .join("") || '<li class="empty">None yet.</li>'
+         shardGroupedListHtml(
+           repoRows,
+           ({ repo }) => repo.slug,
+           ({ repo }) => repo.shard_of_slug,
+           ({ repo, role }) => `<a href="/${esc(repo.slug)}" class="mono" style="color:var(--pink)">${esc(repo.slug)}</a>${roleBadge(role)}`,
+         ) || '<li class="empty">None yet.</li>'
        }</ul>`,
        { addModal: "modal-create-repo" },
      )}
@@ -1554,8 +1600,50 @@ async function handleApiLadderSearch(request: Request, env: WebEnv): Promise<Res
   });
 }
 
+function repoRowHtml(r: RepoRow): string {
+  return `<span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}`;
+}
+
 function repoResultHtml(r: RepoRow): string {
-  return `<li class="row"><span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}</li>`;
+  return `<li class="row">${repoRowHtml(r)}</li>`;
+}
+
+interface ShardNode<T> {
+  item: T;
+  children: ShardNode<T>[];
+}
+
+/** Groups a flat row list into a parent -> shard tree by walking shard_of_slug pointers (a shard's parent can itself be a shard, so this nests arbitrarily deep). A row whose parent isn't in this same list -- the viewer can't see it, or it's just not part of this particular listing -- is treated as top-level, since there's nothing here to nest it under. */
+function groupByShard<T>(rows: T[], slugOf: (t: T) => string, parentSlugOf: (t: T) => string | null): ShardNode<T>[] {
+  const slugs = new Set(rows.map(slugOf));
+  const childrenOf = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const r of rows) {
+    const parent = parentSlugOf(r);
+    if (parent && slugs.has(parent)) {
+      const list = childrenOf.get(parent) ?? [];
+      list.push(r);
+      childrenOf.set(parent, list);
+    } else {
+      roots.push(r);
+    }
+  }
+  const build = (item: T): ShardNode<T> => ({ item, children: (childrenOf.get(slugOf(item)) ?? []).map(build) });
+  return roots.map(build);
+}
+
+/** A repo listing with shard repos nested -- collapsed by default -- under the repo they were forked from, instead of sitting flat alongside it. Shared by both profile pages and Explore's repo results, since a shard is exactly as real a repo as its parent in either listing, just one that belongs grouped rather than browsed as a peer. */
+function shardGroupedListHtml<T>(rows: T[], slugOf: (t: T) => string, parentSlugOf: (t: T) => string | null, renderRow: (t: T) => string): string {
+  const render = (nodes: ShardNode<T>[]): string =>
+    nodes
+      .map((n) => {
+        const nested = n.children.length
+          ? `<details class="shard-group"><summary>${n.children.length} shard${n.children.length === 1 ? "" : "s"}</summary><ul class="list">${render(n.children)}</ul></details>`
+          : "";
+        return `<li class="stack"><div class="row">${renderRow(n.item)}</div>${nested}</li>`;
+      })
+      .join("");
+  return render(groupByShard(rows, slugOf, parentSlugOf));
 }
 
 function agentResultHtml(a: Agent): string {
@@ -1584,10 +1672,10 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
     // plain browsing where "recently active repos" is the actually
     // useful default view.
     const repos = await listRecentRepos(env.DB, 50, me?.username ?? null);
-    bodyHtml = `<ul class="list">${repos.map(repoResultHtml).join("") || '<li class="empty">No repos yet.</li>'}</ul>`;
+    bodyHtml = `<ul class="list">${shardGroupedListHtml(repos, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml) || '<li class="empty">No repos yet.</li>'}</ul>`;
   } else {
     const { repos, agents, ladderHits } = await searchExplore(env.DB, q, 25, me?.username ?? null);
-    const rows = [...repos.map(repoResultHtml), ...agents.map(agentResultHtml), ...ladderHits.map(ladderResultHtml)];
+    const rows = [shardGroupedListHtml(repos, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml), ...agents.map(agentResultHtml), ...ladderHits.map(ladderResultHtml)];
     bodyHtml = `<ul class="list">${rows.join("") || '<li class="empty">No matches.</li>'}</ul>`;
   }
 
@@ -1759,7 +1847,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     )
     .join("");
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<span class="badge badge-${ROLE_BADGE_VARIANT[g.role] ?? "muted"} mono">${esc(g.principal)}: ${esc(g.role)}</span>`).join(" ");
+  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row"><a href="/${esc(g.principal)}" class="mono">${esc(g.principal)}</a>${roleBadge(g.role)}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
 
@@ -1822,12 +1910,13 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const cloneUrl = `${origin}/${slug}`;
   const workCmd = `zz work --repos ${slug}`;
 
+  const [ownerUsername, repoNameSegment] = slug.split("/");
   return layout(
     slug,
     me,
     `<div class="card">
        <div class="card-head">
-         <div class="row">${rolesHtml}</div>
+         <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
          ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
        <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
@@ -1846,7 +1935,10 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
      ${tabGroup("files", fileTabs)}
      ${tabGroup("act", activityTabs)}`,
-    { titleHtml: `<span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>` },
+    {
+      h1Html: `<a href="/${esc(ownerUsername)}">${esc(ownerUsername)}</a>/${esc(repoNameSegment)}`,
+      titleHtml: `<span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>`,
+    },
   );
 }
 
