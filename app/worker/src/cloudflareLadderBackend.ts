@@ -78,7 +78,7 @@ async function anchorShaForFile(repo: ArtifactsRepoHandle, path: string): Promis
 // repo, a real limitation for anything with deeper history -- walking
 // further back would need repo.log's pagination, not added here since
 // nothing in the live agent loop has needed it yet.
-async function rootCommitOid(repo: ArtifactsRepoHandle): Promise<string> {
+export async function rootCommitOid(repo: ArtifactsRepoHandle): Promise<string> {
   const history = await repo.log({ ref: "main", limit: 1000 });
   const root = history[history.length - 1];
   if (!root) throw new Error("repo has no commits yet");
@@ -130,10 +130,30 @@ export async function writeRung(remote: string, token: { plaintext: string } | s
   await pushNote(remote, token, fs, dir, ref, anchorSha, embed(rung));
 }
 
-export async function readRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, kind: SimpleRung["kind"], path: string, explicitAnchorSha?: string): Promise<EmbeddedRung | null> {
+// One repo-wide Ladder read (the "_repo" root plus each of its
+// top-level file/changeset children, resolved one DO call at a time
+// by webApp.ts's getLadderTree) used to re-run scopedNotesCheckout
+// from scratch for every single one of those calls -- even though
+// every "file"/"directory"/"function"/"lines" rung shares the exact
+// same notes ref ("code"), so three file children meant fetching that
+// identical ref three separate times. Confirmed live: this, not any
+// one slow call, was the real cost of the Ladder tab (~2.8s of a
+// ~3.4s fetch, for a repo with only 5 top-level children). A cache
+// keyed by ref name, shared across every readRung call that passes
+// the SAME NotesCache object, fixes that -- callers that want this
+// sharing pass one cache instance across a batch of reads (see
+// cloudflareBackend.ts's readAnchorFor); nothing requires it.
+export type NotesCache = Map<string, { fs: ReturnType<typeof createMemFs>; dir: string; hadExisting: boolean }>;
+
+export async function readRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, kind: SimpleRung["kind"], path: string, explicitAnchorSha?: string, cache?: NotesCache): Promise<EmbeddedRung | null> {
   const ref = notesRefFor(kind);
   const anchorSha = explicitAnchorSha ?? (await anchorShaForRung(repo, { kind, path, sources: [] }));
-  const { fs, dir, hadExisting } = await scopedNotesCheckout(remote, token, ref);
+  let checkout = cache?.get(ref);
+  if (!checkout) {
+    checkout = await scopedNotesCheckout(remote, token, ref);
+    cache?.set(ref, checkout);
+  }
+  const { fs, dir, hadExisting } = checkout;
   if (!hadExisting) return null;
   try {
     const raw = await git.readNote({ fs, dir, ref, oid: anchorSha });

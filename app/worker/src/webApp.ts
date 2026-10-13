@@ -47,6 +47,7 @@ import {
   listRecentRepos,
   listReposOwnedBy,
   listRepoRolesForAgent,
+  listShardsOf,
   listTokensForAgent,
   pollAndConsumeCliLoginSession,
   refreshAgentProfile,

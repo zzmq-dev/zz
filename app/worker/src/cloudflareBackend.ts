@@ -15,7 +15,7 @@ import { resolveLadderTree, type ResolvedRung } from "../../engine/ladderRender.
 import type { CommitRow, FileChangeRow } from "../../engine/ingest.js";
 import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtCommitImpl, type ArtifactsNamespace, type ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
-import { writeRung, readRung, appendRepoChildren as appendRepoChildrenImpl, type SimpleRung } from "./cloudflareLadderBackend.js";
+import { writeRung, readRung, appendRepoChildren as appendRepoChildrenImpl, rootCommitOid, type SimpleRung, type NotesCache } from "./cloudflareLadderBackend.js";
 import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
 
 interface RepoInfo {
@@ -75,6 +75,39 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
     sql.exec("INSERT OR REPLACE INTO lanes (id, data) VALUES (?, ?)", lane.id, JSON.stringify(lane));
   }
 
+  // The repo's root (first) commit never changes once a repo has any
+  // history -- every later commit only extends the chain forward, so
+  // re-deriving it from scratch on every single "_repo" rung read
+  // (rootCommitOid's own repo.log(limit:1000) fetch) was pure waste.
+  // Confirmed live: this one call was the dominant cost of a repo
+  // page's Ladder-tab fetch, well past what the zz-meta branch fetch
+  // (webApp.ts's own earlier fix) cost on its own. Cached in this DO's
+  // own durable storage, not an in-memory closure -- configure()
+  // rebuilds this whole Backend object on every call, so a closure
+  // variable would never survive past the request that set it.
+  async function cachedRootCommitOid(repo: ArtifactsRepoHandle): Promise<string> {
+    const cached = await storage.get<string>("rootCommitOid");
+    if (cached) return cached;
+    const oid = await rootCommitOid(repo);
+    await storage.put("rootCommitOid", oid);
+    return oid;
+  }
+
+  // Shared across every readAnchorFor call this Backend object
+  // handles (i.e. for as long as this DO instance stays configured
+  // for this one repo -- see MaintainerDO.configure, which only
+  // rebuilds this whole Backend, and so this cache, on an actual repo
+  // change). The Ladder tab's getLadderTree (webApp.ts) resolves the
+  // "_repo" root's several top-level children (one DO call each) in
+  // sequence without re-configuring in between, and several of those
+  // children share the exact same underlying notes ref (every
+  // file/directory/function/lines rung uses the one "code" ref) --
+  // without this, each of those calls re-ran scopedNotesCheckout's
+  // real git fetch of that identical ref from scratch. Confirmed live:
+  // for a repo with 3 files + 2 changesets at the top level, that was
+  // 5 redundant checkouts instead of 2.
+  const notesCache: NotesCache = new Map();
+
   // Extracted out of the `readAnchor` method itself so reindexLadder
   // (below) can drive the same path-resolution logic through
   // resolveLadderTree without going through `this` -- a plain closure,
@@ -97,13 +130,13 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       // fell through to "file", which tried to resolve the path as a
       // real tree entry and failed ("not found in the repo at HEAD").
       if (path === "_repo") {
-        return (await readRung(remote, token, repo, "repo", path)) as RealEmbeddedRung | null;
+        return (await readRung(remote, token, repo, "repo", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
       }
       if (path.startsWith("changesets/")) {
         const sha = path.slice("changesets/".length);
-        return (await readRung(remote, token, repo, "changeset", path, sha)) as RealEmbeddedRung | null;
+        return (await readRung(remote, token, repo, "changeset", path, sha, notesCache)) as RealEmbeddedRung | null;
       }
-      return (await readRung(remote, token, repo, "file", path)) as RealEmbeddedRung | null;
+      return (await readRung(remote, token, repo, "file", path, undefined, notesCache)) as RealEmbeddedRung | null;
     });
   }
 
