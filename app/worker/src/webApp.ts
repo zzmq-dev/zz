@@ -363,9 +363,10 @@ document.querySelectorAll('[data-copy]').forEach(function (btn) {
 `;
 
 function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string } = {}): Response {
-  const nav = agent
-    ? `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/${esc(agent.username)}">${esc(agent.username)}</a><a href="/logout">Log out</a>`
-    : `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/login">Log in</a>`;
+  // Same items, same order, as the docs site's own nav (site/themes/zz-docs/fragments/header.html) --
+  // Explore/Work/Docs/Source always present, then whatever's auth-dependent.
+  const navHead = `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/docs/">Docs</a><a href="https://github.com/zzmq-dev/zz">Source</a>`;
+  const nav = agent ? `${navHead}<a href="/${esc(agent.username)}">${esc(agent.username)}</a><a href="/logout">Log out</a>` : `${navHead}<a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
 <header class="topbar"><a href="/" class="brand">zz<span>_</span></a><nav class="links">${nav}</nav></header>
