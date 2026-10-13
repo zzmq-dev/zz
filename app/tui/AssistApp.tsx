@@ -40,13 +40,16 @@ import {
   type ReviewProposal,
   type ScriptedFlowOptions,
 } from "../agent/scriptedWork.js";
-import { remoteCallTool } from "../cli/lib/remoteTools.js";
+import { remoteCallTool, callRemoteTool } from "../cli/lib/remoteTools.js";
 import { diffFileSets } from "../cli/lib/fileDiff.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
+import { ask } from "../engine/lane.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { useMouse } from "./useMouse.js";
 import { copyToClipboard } from "./clipboard.js";
+import { useLaneSnapshots } from "./useLaneSnapshots.js";
+import { LaneList } from "./LaneList.js";
 import { BACKDROP, PANEL, BORDER, MUTED, CYAN, YELLOW, GREEN, RED } from "./theme.js";
 
 export interface AssistAppProps {
@@ -137,7 +140,8 @@ function transcriptPlainText(entries: TranscriptEntry[]): string {
 
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
-  const [phase, setPhase] = useState<"picking" | "detail" | "session">("picking");
+  const [phase, setPhase] = useState<"picking" | "lanes" | "detail" | "session">("picking");
+  const [laneEditing, setLaneEditing] = useState(false);
   const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
   const [cursor, setCursor] = useState(0);
   const [previewing, setPreviewing] = useState<ClaimableEntry | null>(null);
@@ -179,6 +183,24 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     .get()
     .map((r) => r.slug)
     .join(",");
+
+  // "n" from the picker -- browse lanes across the same watched repos
+  // and post a plain "work" ask into whichever one you pick, same
+  // payload shape `zz repo ask`/zz top's own lane tab post, reusing
+  // LaneList's own interactive mode directly rather than building a
+  // second picker.
+  const laneSnapshots = useLaneSnapshots(
+    watch.get().map((r) => ({ repo: r.slug, stateDir: r.stateDir })),
+    2000,
+    useRemote,
+  );
+  const onPostAsk = async (repoSlug: string, laneId: string, description: string): Promise<void> => {
+    if (useRemote) {
+      await callRemoteTool(repoSlug, "ask_post", { lane_id: laneId, kind: "work", from: agent, payload: { description }, depends_on: [] });
+    } else {
+      await ask(repoSlug, laneId, { kind: "work", from: agent, payload: { description } });
+    }
+  };
 
   function pushEntry(role: TranscriptEntry["role"], content: string): void {
     setEntries((e) => [...e, { role, content }]);
@@ -483,15 +505,22 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           copyToClipboard(`[${previewing.ask.kind}] ${previewing.repo}\n${describeAsk(previewing.ask)}`);
           setFlash("copied to clipboard");
         }
-      } else {
+      } else if (phase === "session") {
         copyToClipboard(transcriptPlainText(entries));
         setFlash("copied the transcript to clipboard");
       }
+      // phase === "lanes": nothing to copy at this outer level (LaneList
+      // manages its own selection internally, not exposed up here) --
+      // a no-op rather than copying something irrelevant.
       return;
     }
     if (phase === "picking") {
       if (input === "q") {
         void onExit().then(() => process.exit(0));
+        return;
+      }
+      if (input === "n") {
+        setPhase("lanes");
         return;
       }
       if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
@@ -505,6 +534,15 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         setPreviewing(claimableList[cursor]);
         setPhase("detail");
       }
+      return;
+    }
+    if (phase === "lanes") {
+      // Composing (LaneList's own text box) owns the keyboard entirely
+      // -- even esc, which LaneList interprets itself as "cancel
+      // composing," not "leave this screen." Only when merely
+      // browsing does esc belong to this outer handler.
+      if (laneEditing) return;
+      if (key.escape) setPhase("picking");
       return;
     }
     if (phase === "detail") {
@@ -656,8 +694,26 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         </Box>
         <Box>
           <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
-            {flash ?? "↑/↓ select enter: view ctrl+y: copy q/ctrl+c: quit"}
+            {flash ?? "↑/↓ select enter: view n: post a new ask ctrl+y: copy q/ctrl+c: quit"}
           </Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (phase === "lanes") {
+    return (
+      <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
+        <Box backgroundColor={PANEL} paddingX={1}>
+          <Text bold color={CYAN} wrap="truncate-end">
+            post a new ask -- pick a lane ({backend.name})
+          </Text>
+        </Box>
+        <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
+          <LaneList snapshots={laneSnapshots} maxRows={innerRows} scrollOffset={0} onPostAsk={onPostAsk} identity={agent} onEditingChange={setLaneEditing} />
+        </Box>
+        <Box>
+          <Text color={MUTED} wrap="truncate-end">esc: back to the ask list</Text>
         </Box>
       </Box>
     );
