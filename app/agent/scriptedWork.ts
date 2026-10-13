@@ -266,17 +266,19 @@ export async function runContributorWorkAsk(opts: ScriptedFlowOptions): Promise<
   // instead of left to the model to decide. Without this, Ladder
   // content is written every time but never read back into a
   // decision anywhere -- "ecosystem-wide intelligence" that's
-  // generated but never consulted.
+  // generated but never consulted. Goes through resolveBackend(), not
+  // a direct API call -- works in both modes this way: remote mode
+  // resolves to remoteBackend (a real cross-repo D1 search), local
+  // mode to LocalBackend's own real search over whatever's cloned
+  // under demo-repos/, not just remote.
   let relevantBlock = "";
-  if (authedCloneUrlFor) {
-    try {
-      const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(description)}&limit=5`);
-      if (hits.length) {
-        relevantBlock = `\n\nPotentially relevant existing code elsewhere in the ecosystem -- consider depending on one of these instead of reimplementing it (add it to this repo's dependencies and import/reference it in your FILE output):\n${hits.map((h) => `- ${h.repo_slug} ${h.path} (${h.kind}): ${h.summary}`).join("\n")}`;
-      }
-    } catch {
-      // best-effort -- a search failure should never block the actual work
+  try {
+    const hits = await resolveBackend().searchLadder(description, 5);
+    if (hits.length) {
+      relevantBlock = `\n\nPotentially relevant existing code elsewhere in the ecosystem -- consider depending on one of these instead of reimplementing it (add it to this repo's dependencies and import/reference it in your FILE output):\n${hits.map((h) => `- ${h.repo} ${h.path} (${h.kind}): ${h.summary}`).join("\n")}`;
     }
+  } catch {
+    // best-effort -- a search failure should never block the actual work
   }
 
   let proposal: ParsedFileProposal;

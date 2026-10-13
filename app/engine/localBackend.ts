@@ -4,7 +4,7 @@
 // paths: that logic used to live in cli/lib/repo.ts and get threaded
 // through every call site by the caller; it lives here now, since a
 // path is something only a *local* backend has at all.
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,12 +13,19 @@ import type { Lane } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import { writeLadder, appendRepoChildren as appendRepoChildrenImpl, readAnchor as readAnchorImpl } from "./ladderNotes.js";
+import { collectLadder, type ResolvedRung } from "./ladderRender.js";
 import { listCommitsChronological, commitFileChanges, fileContentAtCommit, type CommitRow, type FileChangeRow } from "./ingest.js";
 import { commitChangeset as commitChangesetImpl, type ChangesetFile, type CommitAuthor } from "./changeset.js";
 import { readLane as readLaneImpl, writeLane as writeLaneImpl, listLanes as listLanesImpl, withLane as withLaneImpl } from "./store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = join(here, "..");
+
+/** Every "file"/"repo" kind rung in an already-resolved tree -- same filter as cloudflareBackend.ts's collectSearchableRungs (a changeset/filechange rung is a historical per-commit entry, not a holistic current-state description), just over ResolvedRung (local, children already resolved from notes refs) instead of SimpleRung (remote, embedded inline). */
+function collectSearchableRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
+  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  for (const child of rung.children) collectSearchableRungs(child, out);
+}
 
 function parseSlug(slug: string): { name: string } {
   if (typeof slug !== "string" || !slug) {
@@ -78,8 +85,36 @@ export function createLocalBackend(): Backend {
       await appendRepoChildrenImpl(repoDirOf(repo), stateDirOf(repo), children);
     },
 
-    async searchLadder(): Promise<LadderSearchHit[]> {
-      throw new Error("ladder_search isn't available in local/demo mode -- there's no cross-repo index there, only each repo's own git notes.");
+    // No D1/FTS5 here -- a plain multi-term substring match (every
+    // query word must appear in the summary, case-insensitive) over
+    // every repo currently cloned under demo-repos/, scanned fresh on
+    // every call rather than kept in a maintained index. Not as sharp
+    // as the remote backend's BM25 ranking, but the same feature,
+    // genuinely working locally -- not a stub. "repo" in each hit is
+    // just the directory name (demo-repos/<name>), not a real
+    // "owner/repo" slug: local mode has no account/ownership concept
+    // to reconstruct one from, only ever the bare name a repo was
+    // cloned under.
+    async searchLadder(query, limit): Promise<LadderSearchHit[]> {
+      const demoReposDir = join(appRoot, "demo-repos");
+      if (!existsSync(demoReposDir)) return [];
+      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const hits: LadderSearchHit[] = [];
+      for (const entry of readdirSync(demoReposDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        try {
+          const { tree } = await collectLadder(join(demoReposDir, entry.name), join(appRoot, "state", entry.name));
+          const candidates: ResolvedRung[] = [];
+          collectSearchableRungs(tree, candidates);
+          for (const c of candidates) {
+            const haystack = c.summary.toLowerCase();
+            if (terms.every((t) => haystack.includes(t))) hits.push({ repo: entry.name, path: c.path, kind: c.kind, summary: c.summary });
+          }
+        } catch {
+          // repo not onboarded/bootstrapped yet -- skip rather than fail the whole search
+        }
+      }
+      return hits.slice(0, limit);
     },
 
     async readLane(repo, laneId): Promise<Lane | null> {

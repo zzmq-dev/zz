@@ -144,7 +144,7 @@ const ladderRead: ToolDef = {
 const ladderSearch: ToolDef = {
   name: "ladder_search",
   description:
-    "Full-text search over every repo's Ladder (file/repo rung summaries -- what each file currently does, holistically) across the whole ecosystem, not just this repo. Use this before writing new code for something that might already exist elsewhere, so you can add a dependency and reference it instead of reimplementing it. Remote mode only -- not available in --local/demo runs.",
+    "Full-text search over every repo's Ladder (file/repo rung summaries -- what each file currently does, holistically) across the whole ecosystem, not just this repo. Use this before writing new code for something that might already exist elsewhere, so you can add a dependency and reference it instead of reimplementing it. Works in both remote mode (a real D1-backed cross-repo index) and --local/demo mode (a plain scan over whatever's cloned under demo-repos/).",
   parameters: { type: "object", properties: { query: { type: "string" }, limit: { type: "number" } }, required: ["query"] },
   async execute({ query, limit }) {
     return resolveBackend().searchLadder(query as string, (limit as number) || 10);
