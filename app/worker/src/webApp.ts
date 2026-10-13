@@ -368,7 +368,7 @@ function layout(title: string, agent: Agent | null, body: string, opts: { cookie
     : `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
-<header class="topbar"><a href="/explore" class="brand">zz<span>.dev</span></a><nav class="links">${nav}</nav></header>
+<header class="topbar"><a href="/" class="brand">zz<span>_</span></a><nav class="links">${nav}</nav></header>
 <main>
 <h1>${esc(title)}${opts.titleHtml ?? ""}</h1>
 ${body}
