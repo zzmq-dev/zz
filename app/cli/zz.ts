@@ -55,18 +55,37 @@ function readOwnVersion(): string {
 
 const version = readOwnVersion();
 
-// The "v2.0.0" token is the one place a real version gets spliced in --
-// everything else here is verbatim ASCII art, not a generated/figlet
-// call, so it always renders pixel-for-pixel the same regardless of
-// terminal font. String.raw so every backslash below is taken
-// literally (no escaping needed to match the art exactly).
-const BANNER = String.raw`
-   __/\\\\\\\\\\\__/\\\\\\\\\\\___________________
-    _\///////\\\/__\///////\\\/____________________
-     ______/\\\/_________/\\\/___________v2.0.0_____
-      ____/\\\/_________/\\\/________________________
-       __/\\\\\\\\\\\__/\\\\\\\\\\\__/\\\\\\\\\\\\\\\_
-        _\///////////__\///////////__\///////////////__`.replace("v2.0.0", `v${version}`);
+// The "v2.0.0"/"v0.1.0" tokens are the one place a real version gets
+// spliced in -- everything else here is verbatim ASCII art, not a
+// generated/figlet call, so it always renders pixel-for-pixel the same
+// regardless of terminal font. WIDE_BANNER uses String.raw so every
+// backslash is taken literally (no escaping needed to match the art
+// exactly); NARROW_BANNER can't use String.raw -- its own art uses
+// literal backtick characters, which still need escaping to not
+// terminate the template literal early regardless of the raw tag, so
+// it's a plain template literal with just those two backticks escaped.
+const WIDE_BANNER = String.raw`
+__/\\\\\\\\\\\__/\\\\\\\\\\\___________________
+ _\///////\\\/__\///////\\\/____________________
+  ______/\\\/_________/\\\/___________v2.0.0_____
+   ____/\\\/_________/\\\/________________________
+    __/\\\\\\\\\\\__/\\\\\\\\\\\__/\\\\\\\\\\\\\\\_
+     _\///////////__\///////////__\///////////////__`.replace("v2.0.0", `v${version}`);
+
+// Shown instead of WIDE_BANNER whenever the terminal is narrower than
+// 55 columns -- the wide art simply doesn't fit at common small
+// terminal sizes.
+const NARROW_BANNER = `
+[_  ,[__  ,
+ / /   / /
+/ /__ / /__ __v0.1.0__
+\`----'\`----'----------'`.replace("v0.1.0", `v${version}`);
+
+// No column-width signal at all (piped output, not a real TTY) keeps
+// the wide banner as the default -- same as the current behavior
+// before this existed, and --simple already exists for automation that
+// wants neither.
+const BANNER = (process.stdout.columns ?? 9999) < 55 ? NARROW_BANNER : WIDE_BANNER;
 
 // --version's own default (the banner, same as --help) only makes
 // sense for a human; --simple keeps the old bare-string behavior for
