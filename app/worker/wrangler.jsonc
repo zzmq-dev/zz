@@ -10,15 +10,14 @@
   // specifically because zzmq.dev's DNS isn't provisioned yet, so the
   // new route serves nothing reachable until that's done.
   "workers_dev": true,
-  // Left on the old *.workers.dev URI deliberately -- the Cloudflare and
-  // Google OAuth app registrations (their own dashboards, not anything
-  // in this repo) still only allow that redirect URI. Flip these to
-  // https://zzmq.dev/auth/callback/{cloudflare,google} together with
-  // updating both dashboards' allowed redirect URIs, not before --
-  // changing only this side breaks login immediately.
+  // Both OAuth dashboards (Cloudflare's and Google's, neither in this
+  // repo) were updated to allow the zzmq.dev callback, so this side
+  // was flipped to match. Login now only works from zzmq.dev -- the
+  // old *.workers.dev host breaks unless its redirect URI is also
+  // still registered on both dashboards.
   "vars": {
-    "CF_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/cloudflare",
-    "GOOGLE_OAUTH_REDIRECT_URI": "https://zz-maintainer.thoward37.workers.dev/auth/callback/google"
+    "CF_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/cloudflare",
+    "GOOGLE_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/google"
   },
   "routes": [
     // Exact root ("/") belongs to the docs worker's landing page (see
