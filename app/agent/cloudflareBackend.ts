@@ -20,10 +20,17 @@ function accountId(): string {
 }
 
 export function createCloudflareBackend(model: string): ChatBackend {
+  // Both resolved eagerly (accountId() already was; apiToken() now is
+  // too) -- callers (zz work/--assist) call this before
+  // resolveCliBackendMode/enterFullscreen, specifically so a missing
+  // credential fails fast as a plain CLI error instead of surfacing
+  // deep inside a TUI session on the first draft attempt.
+  const account = accountId();
+  const token = apiToken();
   return createOpenAiCompatBackend({
     name: `cloudflare:${model}`,
-    url: `https://api.cloudflare.com/client/v4/accounts/${accountId()}/ai/v1/chat/completions`,
+    url: `https://api.cloudflare.com/client/v4/accounts/${account}/ai/v1/chat/completions`,
     model,
-    apiKey: apiToken,
+    apiKey: () => token,
   });
 }

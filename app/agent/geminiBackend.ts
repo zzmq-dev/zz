@@ -73,13 +73,19 @@ function fromGeminiResponse(data: { candidates?: { content?: { parts?: GeminiPar
 }
 
 export function createGeminiBackend(model: string): ChatBackend {
+  // Resolved eagerly, not inside chat() -- callers (zz work/--assist)
+  // call this before resolveCliBackendMode/enterFullscreen,
+  // specifically so a missing key fails fast as a plain CLI error
+  // instead of surfacing deep inside a TUI session on the first draft
+  // attempt.
+  const key = apiKey();
   return {
     name: `gemini:${model}`,
     async chat(messages, tools, onPartial) {
       const { systemInstruction, contents } = toGeminiContents(messages);
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": apiKey() },
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
         body: JSON.stringify({ contents, systemInstruction, ...(tools.length ? { tools: toGeminiTools(tools) } : {}) }),
       });
       if (!res.ok) throw new Error(`gemini chat failed: ${res.status} ${await res.text()}`);

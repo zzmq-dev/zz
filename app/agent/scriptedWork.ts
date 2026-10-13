@@ -284,7 +284,17 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
     await callTool("ask_claim", { repo: parentResolved.slug, lane_id: parentLaneId, ask_id: theAsk.id, actor: agent });
   }
 
-  const description = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
+  // priorAttempt is a separate field, not folded into description
+  // itself -- description feeds the shard's own task-name/objective and
+  // the Ladder search query below, both of which want the short task
+  // text, not a whole rejected file dump riding along; the UI's own
+  // describeAsk (tui/AssistApp.tsx) reads description too, for the same
+  // reason (a one-line picker/header summary, not a wall of code).
+  const payload = theAsk.payload as { description?: string; priorAttempt?: { reason: string; files: { path: string; content: string }[] } } | undefined;
+  const description = payload?.description ?? JSON.stringify(theAsk.payload);
+  const priorAttemptBlock = payload?.priorAttempt
+    ? `\n\nA Maintainer requested changes on a previous submission for this task: ${payload.priorAttempt.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${payload.priorAttempt.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`
+    : "";
 
   // Remote contributor work always happens in a task shard: a real
   // forked repo scoped to this one task, owned by this agent (see
@@ -360,7 +370,7 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
       // instead of giving it a real chance to account for what changed.
       const files = currentRepoFiles(resolved);
       const contextBlob = files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-      const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}${relevantBlock}`;
+      const userPrompt = `Repo: ${resolved.slug}\nTask: ${description}\n\nCurrent files:\n${contextBlob}${relevantBlock}${priorAttemptBlock}`;
       return lastFailure ? `${userPrompt}\n\nYour previous proposal's test run failed:\n${lastFailure}` : userPrompt;
     },
   });
@@ -821,14 +831,20 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // path that already knows how to handle one (zz work's autonomous
   // loop, --assist) picks it up with no special-casing.
   const payload = theAsk.payload as ChangesetReviewPayload;
-  const filesBlock = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  // description stays short and clean (the UI's own describeAsk, plus
+  // proposeContributorWork's shard-naming/Ladder-search, all read this
+  // field expecting a one-line task summary, not a wall of code) --
+  // the rejected draft and the reason live in priorAttempt instead,
+  // which proposeContributorWork folds into the model's own prompt
+  // without it ever reaching a display surface.
   const followup = (await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
     kind: "work",
     from: agent,
     payload: {
-      description: `${payload.taskDescription}\n\nA Maintainer requested changes on the previous submission: ${proposal.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${filesBlock}`,
+      description: payload.taskDescription,
+      priorAttempt: { reason: proposal.reason, files: payload.files },
     },
     depends_on: [],
   })) as AskEntry;

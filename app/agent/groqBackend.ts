@@ -12,10 +12,17 @@ function apiKey(): string {
 }
 
 export function createGroqBackend(model: string): ChatBackend {
+  // Resolved eagerly, not passed as a lazy callback -- callers (zz
+  // work/--assist) call this before resolveCliBackendMode/
+  // enterFullscreen, specifically so a missing key fails fast as a
+  // plain CLI error instead of surfacing deep inside a TUI session on
+  // the first draft attempt (confirmed live: that's exactly what used
+  // to happen).
+  const key = apiKey();
   return createOpenAiCompatBackend({
     name: `groq:${model}`,
     url: "https://api.groq.com/openai/v1/chat/completions",
     model,
-    apiKey,
+    apiKey: () => key,
   });
 }
