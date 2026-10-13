@@ -266,6 +266,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .blob-body pre{margin:0;border:none;border-radius:0}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 .json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
+.ladder-detail{margin-top:1rem;font-size:.82rem}
+.ladder-detail summary{cursor:pointer;color:var(--muted);user-select:none}
+.ladder-detail ul{margin-top:.5rem}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -932,6 +935,35 @@ function renderLadderNode(node: LadderNode, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
   return [self, ...node.children.map((c) => renderLadderNode(c, depth + 1))].join("");
+}
+
+// One rung read directly by its own path -- the commit/file view's
+// "related Ladder" panel, not the whole-repo Ladder tab (getLadderTree
+// above). A changeset rung's path IS the commit sha
+// ("changesets/<sha>"), so this is a single direct read, no searching;
+// same for a file rung (path IS the file's path). Non-ask children
+// (a changeset's filechange entries, a file's function/line rungs)
+// come back embedded already -- this doesn't walk further than that,
+// since it's a small "related" panel, not a full tree resolve.
+async function readLadderRung(env: WebEnv, artifactsName: string, path: string): Promise<EmbeddedRung | null> {
+  const stub = doStub(env, artifactsName);
+  await stub.configure(artifactsName);
+  return (await stub.callTool("ladder_read", { repo: artifactsName, path })) as EmbeddedRung | null;
+}
+
+function renderLadderDetail(rung: EmbeddedRung, depth = 0): string {
+  const indent = "&nbsp;&nbsp;".repeat(depth);
+  const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(rung.kind)}</span> <span class="muted">${esc(rung.summary)}</span></li>`;
+  // Ask-thread refs stay unresolved here -- this panel is a quick
+  // "related" summary, not a place to follow conversation threads.
+  const children = rung.children.filter((c): c is EmbeddedRung => !isRef(c)).map((c) => renderLadderDetail(c, depth + 1));
+  return [self, ...children].join("");
+}
+
+/** Collapsed-by-default <details> block, smaller text than the rest of the page -- shown under a commit's or file's own view so its Ladder summary is there without competing with the main content for space. */
+function ladderDetailHtml(rung: EmbeddedRung | null): string {
+  if (!rung) return "";
+  return `<details class="ladder-detail"><summary>Ladder</summary><ul class="list">${renderLadderDetail(rung)}</ul></details>`;
 }
 
 // --- Work: every claimable Ask across every repo the viewer can see,
@@ -1895,6 +1927,12 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
+  // Started here, awaited down by the render -- a separate DO
+  // round-trip with no dependency on the Artifacts reads that follow,
+  // so there's no reason to serialize behind them. A changeset rung's
+  // path IS "changesets/<sha>", so this is one direct read.
+  const ladderRung = readLadderRung(env, ctx.repoRow.artifacts_name, `changesets/${sha}`);
+
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const info = await repo.info();
   const commit = await repo.readCommit(sha);
@@ -1923,6 +1961,8 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
     ${newer ? `<a href="/${esc(slug)}/commit/${esc(newer.hash)}" class="mono">next ${esc(newer.hash.slice(0, 8))} &rarr;</a>` : "<span></span>"}
   </div>`;
 
+  const ladderHtml = ladderDetailHtml(await ladderRung);
+
   return layout(
     sha.slice(0, 8),
     me,
@@ -1932,6 +1972,7 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
       <p>${esc(commit.message)}</p>
       <p class="muted">${esc(commit.author.name)} &lt;${esc(commit.author.email)}&gt; -- ${esc(new Date(commit.authoredAt * 1000).toISOString())}</p>
       ${navHtml}
+      ${ladderHtml}
     </div>
     <div class="card">
       <h2>Tree at this commit</h2>
@@ -1977,6 +2018,12 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
+  // Started here, awaited down by the render -- a separate DO
+  // round-trip with no dependency on the Artifacts reads that follow.
+  // A file rung's path IS the file's own path, so this is one direct
+  // read, no searching.
+  const ladderRung = readLadderRung(env, ctx.repoRow.artifacts_name, path);
+
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const info = await repo.info();
   const [blob, [head]] = await Promise.all([repo.readFile({ ref: info.defaultBranch, path }), repo.log({ ref: info.defaultBranch, limit: 1 })]);
@@ -1989,9 +2036,10 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
     ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
     <a href="/${esc(slug)}/download/${esc(path)}" class="download-btn" download>Download</a>
   </div>`;
+  const ladderHtml = ladderDetailHtml(await ladderRung);
 
   if (looksBinary(bytes)) {
-    return layout(path, me, `${headerHtml}<div class="card">Binary file not shown.</div>`);
+    return layout(path, me, `${headerHtml}${ladderHtml}<div class="card">Binary file not shown.</div>`);
   }
 
   const text = new TextDecoder().decode(bytes);
@@ -2007,7 +2055,7 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   return layout(
     path,
     me,
-    `${headerHtml}
+    `${headerHtml}${ladderHtml}
      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/atom-one-dark.min.css">
      <div class="blob-body">${codeHtml}</div>
      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
