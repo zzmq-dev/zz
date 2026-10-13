@@ -253,6 +253,14 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .md pre{margin:.6rem 0}
 .md code{font-family:var(--mono);background:var(--code-bg);padding:.1rem .35rem;border-radius:4px;font-size:.88em}
 .md pre code{background:none;padding:0}
+.blob-header{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.75rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:8px 8px 0 0;margin-bottom:0}
+.blob-header a{color:var(--cyan)}
+.blob-path{color:var(--fg);font-weight:600;margin-left:auto}
+.download-btn{font-size:.85rem;font-weight:700;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--pink);background:var(--pink);color:#1A0F2E !important}
+.download-btn:hover{background:#ff58a8;text-decoration:none}
+.blob-body{border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;overflow:hidden}
+.blob-body pre{margin:0;border:none;border-radius:0}
+.commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -1716,7 +1724,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .join("");
 
   const commitsHtml = commits
-    .map((c) => `<li class="row"><span class="mono">${esc(c.hash.slice(0, 8))}</span> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
+    .map((c) => `<li class="row"><a href="/${esc(slug)}/commit/${esc(c.hash)}" class="mono">${esc(c.hash.slice(0, 8))}</a> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
     .join("");
 
   const fileTabs = [
@@ -1859,13 +1867,32 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
   const me = await resolveRequestAgent(request, env);
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const info = await repo.info();
   const commit = await repo.readCommit(sha);
   if (!commit) return new Response("no such commit", { status: 404 });
   const tree: TreeEntry[] = (await repo.readTree(commit.treeHash)) ?? [];
 
+  // Forward/back through the log: a commit doesn't know its own newer
+  // neighbor natively (only `parents`, which only ever points older),
+  // so finding "newer" means walking the first-parent chain from HEAD
+  // and noting whichever commit came right before this one. Bounded,
+  // not a full history walk -- a commit older than this window only
+  // gets a "back" link (via its own `parents[0]`), not a "forward" one;
+  // fine at this project's scale, same spirit as the Commits tab's own
+  // 30-commit cap.
+  const log = await repo.log({ ref: info.defaultBranch, limit: 1000 });
+  const i = log.findIndex((c) => c.hash === sha);
+  const newer = i > 0 ? log[i - 1] : null;
+  const older: string | null = i >= 0 && i < log.length - 1 ? log[i + 1].hash : (commit.parents[0] ?? null);
+
   const fileListHtml = tree
     .map((e) => `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${e.type !== "tree" ? `<a href="/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`}</li>`)
     .join("");
+
+  const navHtml = `<div class="commit-nav">
+    ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}">&larr; older</a>` : "<span></span>"}
+    ${newer ? `<a href="/${esc(slug)}/commit/${esc(newer.hash)}">newer &rarr;</a>` : "<span></span>"}
+  </div>`;
 
   return layout(
     `${sha.slice(0, 8)} \xb7 ${slug}`,
@@ -1876,6 +1903,7 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
       <p>${esc(commit.message)}</p>
       <p class="muted">${esc(commit.author.name)} &lt;${esc(commit.author.email)}&gt; -- ${esc(new Date(commit.authoredAt * 1000).toISOString())}</p>
       <p><a href="/${esc(slug)}">&larr; ${esc(slug)}</a></p>
+      ${navHtml}
     </div>
     <div class="card">
       <h2>Tree at this commit</h2>
@@ -1884,7 +1912,8 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
   );
 }
 
-async function handleBlob(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+/** The file's actual bytes, unchanged from what /blob/ used to serve directly -- the viewer's download button and anything else that wants the real file content (not an HTML page) points here now. */
+async function handleDownload(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
@@ -1893,6 +1922,67 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   const blob = await repo.readFile({ ref: info.defaultBranch, path });
   if (!blob) return new Response("not found", { status: 404 });
   return new Response(blob, { headers: { "content-type": blob.type || "application/octet-stream" } });
+}
+
+// highlight.js's language-detection aliases are mostly just the file
+// extension already -- this only needs to cover the handful where
+// they genuinely differ.
+const HLJS_LANG_BY_EXT: Record<string, string> = {
+  js: "javascript", mjs: "javascript", cjs: "javascript",
+  ts: "typescript", tsx: "typescript", jsx: "javascript",
+  py: "python", rb: "ruby", rs: "rust", sh: "bash", yml: "yaml",
+  md: "markdown", cs: "csharp", kt: "kotlin",
+};
+
+function looksBinary(bytes: Uint8Array): boolean {
+  const sample = bytes.subarray(0, 8000);
+  for (const b of sample) if (b === 0) return true;
+  return false;
+}
+
+/** The file viewer page: syntax-highlighted (via highlight.js from cdnjs -- a real CDN dependency, not hand-rolled, since this is a normal deployed website, not a sandboxed Artifact), line-numbered, with a header (repo, latest commit, path, download). GitHub's /blob/ convention -- this is the page a file link lands on; /download/ is the actual bytes now. */
+async function handleBlob(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  const me = await resolveRequestAgent(request, env);
+
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const info = await repo.info();
+  const [blob, [head]] = await Promise.all([repo.readFile({ ref: info.defaultBranch, path }), repo.log({ ref: info.defaultBranch, limit: 1 })]);
+  if (!blob) return new Response("not found", { status: 404 });
+
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const ext = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : "";
+  const headerHtml = `<div class="blob-header">
+    <a href="/${esc(slug)}">${esc(slug)}</a>
+    ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
+    <span class="blob-path mono">${esc(path)}</span>
+    <a href="/${esc(slug)}/download/${esc(path)}" class="download-btn" download>Download</a>
+  </div>`;
+
+  if (looksBinary(bytes)) {
+    return layout(path, me, `${headerHtml}<div class="card">Binary file not shown.</div>`);
+  }
+
+  const text = new TextDecoder().decode(bytes);
+  const lang = HLJS_LANG_BY_EXT[ext] ?? ext;
+  const codeHtml = `<pre><code id="blob-code" class="language-${esc(lang)}">${esc(text)}</code></pre>`;
+
+  return layout(
+    path,
+    me,
+    `${headerHtml}
+     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/atom-one-dark.min.css">
+     <div class="blob-body">${codeHtml}</div>
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlightjs-line-numbers.js/2.8.0/highlightjs-line-numbers.min.js"></script>
+     <script>
+       var block = document.getElementById('blob-code');
+       hljs.highlightElement(block);
+       hljs.lineNumbersBlock(block);
+     </script>`,
+  );
 }
 
 async function handleArchive(slug: string, request: Request, env: WebEnv): Promise<Response> {
@@ -2075,6 +2165,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
     if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/download\/(.+)$/);
+    if (m) return handleDownload(`${m[1]}/${m[2]}`, m[3], request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]+)$/);
