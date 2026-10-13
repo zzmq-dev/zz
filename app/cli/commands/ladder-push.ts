@@ -12,7 +12,7 @@
 // from the local notes -- no model calls, no GitHub API calls here).
 import { execFileSync } from "node:child_process";
 import { resolveRepo } from "../lib/repo.js";
-import { readAnchor, type EmbeddedRung } from "../../engine/ladderNotes.js";
+import { readAnchor, isRef, type EmbeddedRung, type EmbeddedRef } from "../../engine/ladderNotes.js";
 import { remoteCallTool } from "../lib/remoteTools.js";
 import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
 
@@ -36,8 +36,25 @@ async function collectAnchors(repoDir: string, stateDir: string, path: string, o
   if (!rung) return;
   out.push({ path, rung });
   for (const child of rung.children) {
-    if ("ref" in child) await collectAnchors(repoDir, stateDir, child.ref, out, seen);
+    if (isRef(child)) await collectAnchors(repoDir, stateDir, child.ref, out, seen);
   }
+}
+
+// ladder_write_rung expects real, fully-embedded Rung objects as
+// children -- never the {ref: path} shorthand the local notes store
+// uses for a nested anchor (confirmed live: "_repo" AND every
+// "directory" rung store their own file/subdirectory children this
+// way, not just "_repo" -- a flat, no-subdirectory test repo never
+// exposed this). Resolves every {ref} against the already-collected
+// anchor map rather than re-reading notes, recursively, so a deeply
+// nested directory's whole subtree round-trips through one write.
+function embedChildren(rung: EmbeddedRung, byPath: Map<string, EmbeddedRung>): (EmbeddedRung | EmbeddedRef)[] {
+  return rung.children.map((child) => {
+    if (!isRef(child)) return child;
+    const resolved = byPath.get(child.ref);
+    if (!resolved) return child;
+    return { ...resolved, children: embedChildren(resolved, byPath) };
+  });
 }
 
 export async function ladderPush(sourceSlug: string, targetSlug: string): Promise<void> {
@@ -58,6 +75,7 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
   const anchors: FlatAnchor[] = [];
   await collectAnchors(source.repoDir, source.stateDir, "_repo", anchors, new Set());
   console.error(`found ${anchors.length} rung(s) to push`);
+  const byPath = new Map(anchors.map(({ path, rung }) => [path, rung]));
 
   let done = 0;
   for (const { rung } of anchors) {
@@ -70,18 +88,7 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
     // remote Ladder backend roots them to a fixed point instead of a
     // blob (cloudflareLadderBackend.ts's own ROOT_ANCHORED_KINDS).
     const sources = rung.sources.length ? rung.sources : (rung.kind === "repo" || rung.kind === "directory" ? [{ kind: "commit" as const, ref: rootCommit, title: "onboarded via zz ladder build/push", author: "zz-local", at: new Date().toISOString() }] : rung.sources);
-    // ladder_write_rung expects real, fully-embedded Rung objects as
-    // children (or none) -- never the {ref: path} shorthand the local
-    // notes store uses for an anchor's own already-written children
-    // (confirmed live: sending "_repo"'s own stored ref list this way
-    // got coerced into garbage empty rungs and rejected for an empty
-    // summary/path). "_repo" is the only rung here that ever has
-    // children at all (every other kind is a leaf, by construction of
-    // how zz ladder build writes them) -- strip them and let
-    // mergeLaneLadder's own appendRepoChildren (triggered automatically
-    // by every other push below) rebuild the real list incrementally,
-    // the same way the original local build did it one item at a time.
-    const children = rung.path === "_repo" ? [] : rung.children;
+    const children = embedChildren(rung, byPath);
     await remoteCallTool("ladder_write_rung", { repo: targetSlug, rung: { path: rung.path, kind: rung.kind, summary: rung.summary, sources, children } });
     done += 1;
     if (done % 10 === 0 || done === anchors.length) console.error(`  pushed ${done}/${anchors.length}`);

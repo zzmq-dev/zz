@@ -88,13 +88,27 @@ function tokenString(token: { plaintext: string } | string): string {
   return typeof token === "string" ? token.split("?")[0] : token.plaintext;
 }
 
+// repo.readTree only ever returns one level -- confirmed live (threw
+// "app/LICENSE not found" for a real file one directory down, even
+// though it exists) once onboarding started writing file rungs
+// outside a flat, single-directory repo. Walks one path segment at a
+// time rather than flattening the whole tree (cloudflareGitBackend.ts's
+// own flattenTree, built for a different caller that needs every path
+// at once): this only ever needs the one entry being anchored.
 async function anchorShaForFile(repo: ArtifactsRepoHandle, path: string): Promise<string> {
   const [headCommit] = await repo.log({ ref: "main", limit: 1 });
   if (!headCommit) throw new Error("repo has no commits yet");
-  const tree = await repo.readTree(headCommit.treeHash);
-  const entry = tree?.find((e) => e.name === path);
-  if (!entry) throw new Error(`"${path}" not found in the repo at HEAD`);
-  return entry.hash;
+  const segments = path.split("/");
+  let treeHash = headCommit.treeHash;
+  for (let i = 0; i < segments.length; i++) {
+    const tree = await repo.readTree(treeHash);
+    const entry = tree?.find((e) => e.name === segments[i]);
+    if (!entry) throw new Error(`"${path}" not found in the repo at HEAD`);
+    if (i === segments.length - 1) return entry.hash;
+    if (entry.type !== "tree") throw new Error(`"${path}" not found in the repo at HEAD`);
+    treeHash = entry.hash;
+  }
+  throw new Error(`"${path}" not found in the repo at HEAD`);
 }
 
 // The repo's first commit (no parents) -- a fixed point that never
