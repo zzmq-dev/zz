@@ -266,9 +266,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .blob-body pre{margin:0;border:none;border-radius:0}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 .json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
-.ladder-detail{margin-top:1rem;font-size:.82rem}
-.ladder-detail summary{cursor:pointer;color:var(--muted);user-select:none}
-.ladder-detail ul{margin-top:.5rem}
+.summary-detail{margin-top:.5rem;font-size:.82rem}
+.summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
+.summary-detail ul,.summary-detail p{margin-top:.5rem}
 `;
 
 function card(heading: string, innerHtml: string, opts: { addModal?: string; extraClass?: string } = {}): string {
@@ -960,10 +960,15 @@ function renderLadderDetail(rung: EmbeddedRung, depth = 0): string {
   return [self, ...children].join("");
 }
 
-/** Collapsed-by-default <details> block, smaller text than the rest of the page -- shown under a commit's or file's own view so its Ladder summary is there without competing with the main content for space. */
+/** Collapsed-by-default <details>, smaller text than the rest of the page -- one rung's own summary, attached directly to the thing it's about (a file, a commit), not a combined dump. */
+function summaryDetailHtml(summary: string): string {
+  return `<details class="summary-detail"><summary>Summary</summary><p class="muted">${esc(summary)}</p></details>`;
+}
+
+/** Same, but keeps a rung's own embedded (non-ask) children nested inside it -- only used where there's nowhere more specific yet to attach them (e.g. a file rung's function-level children, until line-anchored summaries exist). A commit's filechange children get attached to their own file row instead (handleCommit), not nested here. */
 function ladderDetailHtml(rung: EmbeddedRung | null): string {
   if (!rung) return "";
-  return `<details class="ladder-detail"><summary>Ladder</summary><ul class="list">${renderLadderDetail(rung)}</ul></details>`;
+  return `<details class="summary-detail"><summary>Summary</summary><ul class="list">${renderLadderDetail(rung)}</ul></details>`;
 }
 
 // --- Work: every claimable Ask across every repo the viewer can see,
@@ -1952,16 +1957,32 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
   const newer = i > 0 ? log[i - 1] : null;
   const older: string | null = i >= 0 && i < log.length - 1 ? log[i + 1].hash : (commit.parents[0] ?? null);
 
+  // Each filechange rung is about one specific file in this commit, so
+  // its summary belongs on that file's own row in the tree below, not
+  // bundled into one combined block up here -- the changeset rung's
+  // OWN summary is the only one that's actually about the commit as a
+  // whole. A filechange's path is "changesets/<sha>/<filename>" (or
+  // sometimes just "<filename>"), so match on the last path segment
+  // either way.
+  const changesetRung = await ladderRung;
+  const fileSummaries = new Map<string, string>();
+  for (const child of changesetRung?.children ?? []) {
+    if (isRef(child)) continue;
+    fileSummaries.set(child.path.split("/").pop() ?? child.path, child.summary);
+  }
+
   const fileListHtml = tree
-    .map((e) => `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${e.type !== "tree" ? `<a href="/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`}</li>`)
+    .map((e) => {
+      const label = e.type !== "tree" ? `<a href="/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`;
+      const summary = fileSummaries.get(e.name);
+      return `<li class="stack"><div class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</div>${summary ? summaryDetailHtml(summary) : ""}</li>`;
+    })
     .join("");
 
   const navHtml = `<div class="commit-nav">
     ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}" class="mono">&larr; prev ${esc(older.slice(0, 8))}</a>` : "<span></span>"}
     ${newer ? `<a href="/${esc(slug)}/commit/${esc(newer.hash)}" class="mono">next ${esc(newer.hash.slice(0, 8))} &rarr;</a>` : "<span></span>"}
   </div>`;
-
-  const ladderHtml = ladderDetailHtml(await ladderRung);
 
   return layout(
     sha.slice(0, 8),
@@ -1971,8 +1992,8 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
       <p class="mono">${esc(sha)}</p>
       <p>${esc(commit.message)}</p>
       <p class="muted">${esc(commit.author.name)} &lt;${esc(commit.author.email)}&gt; -- ${esc(new Date(commit.authoredAt * 1000).toISOString())}</p>
+      ${changesetRung ? summaryDetailHtml(changesetRung.summary) : ""}
       ${navHtml}
-      ${ladderHtml}
     </div>
     <div class="card">
       <h2>Tree at this commit</h2>
