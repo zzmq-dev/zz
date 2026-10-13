@@ -131,7 +131,7 @@ export function TopApp({
         </Text>
       }
       tabs={[
-        { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
+        { label: "explore", content: (maxRows) => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} maxRows={maxRows} /> },
         {
           label: "lanes",
           content: (maxRows, scrollOffset) =>

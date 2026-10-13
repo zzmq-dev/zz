@@ -19,9 +19,33 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { apiFetch } from "../cli/lib/api.js";
 import { isLocallyOnboarded, inferGitHubSlugFromDir, resolveRepo } from "../cli/lib/repo.js";
+import { WIDE_BANNER, NARROW_BANNER } from "../cli/lib/banner.js";
 import { collectLadder } from "../engine/ladderRender.js";
 import { listLanes } from "../engine/store.js";
-import { MUTED, PINK, GREEN, YELLOW, CYAN } from "./theme.js";
+import { useTerminalSize } from "./useTerminalSize.js";
+import { MUTED, BORDER, PINK, GREEN, YELLOW, CYAN } from "./theme.js";
+
+/** Below this column width WIDE_BANNER's own art starts clipping -- same reasoning as banner.ts's own 55-column cutoff for the full-terminal case, just a separate threshold since this renders inside a narrower, bordered pane rather than the raw terminal. */
+const LOGO_NARROW_COLUMNS = 60;
+
+/** The zz wordmark, centered, filling the bottom third of whatever empty space is passed in -- shown in Explore's idle state (no query typed, no results yet) so that normally-blank area isn't just dead space. Purely decorative (not signal), so it uses the same muted border tone as the pane's own chrome rather than a saturated accent color. */
+function IdleLogo({ columns }: { columns: number }) {
+  const banner = columns < LOGO_NARROW_COLUMNS ? NARROW_BANNER : WIDE_BANNER;
+  const lines = banner.trim().split("\n");
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexGrow={1} />
+      <Box flexGrow={1} />
+      <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center">
+        {lines.map((line, i) => (
+          <Text key={i} color={BORDER}>
+            {line}
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
 
 interface RepoHit {
   slug: string;
@@ -37,8 +61,8 @@ interface RepoPreview {
   error: string | null;
 }
 
-export function Explore({ local, onTrack, onEditingChange }: { local: boolean; onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void }) {
-  return local ? <LocalExplore onTrack={onTrack} /> : <RemoteExplore onTrack={onTrack} onEditingChange={onEditingChange} />;
+export function Explore({ local, onTrack, onEditingChange, maxRows }: { local: boolean; onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void; maxRows: number }) {
+  return local ? <LocalExplore onTrack={onTrack} /> : <RemoteExplore onTrack={onTrack} onEditingChange={onEditingChange} maxRows={maxRows} />;
 }
 
 /** Anonymous POST to one repo's tool-call endpoint -- allowAnonymous works here specifically because the server now allows lane_list/ladder_tree with no auth for a PUBLIC repo (see webApp.ts's ANON_READ_TOOLS); any other tool, or a private repo, would 401 same as before. */
@@ -59,7 +83,7 @@ async function loadPreview(hit: RepoHit): Promise<RepoPreview> {
   }
 }
 
-function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void }) {
+function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void; maxRows: number }) {
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<RepoHit[]>([]);
@@ -69,6 +93,7 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
   const [preview, setPreview] = useState<RepoPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const { isRawModeSupported } = useStdin();
+  const { columns } = useTerminalSize();
 
   useEffect(() => onEditingChange(editing), [editing, onEditingChange]);
 
@@ -180,8 +205,10 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
     );
   }
 
+  const idle = results.length === 0 && !query.trim();
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={maxRows}>
       <Text color={MUTED}>
         {editing ? <Text color={YELLOW}>search: {query}█</Text> : <>search: {query || <Text color={MUTED}>(press / to search)</Text>}</>}
       </Text>
@@ -203,6 +230,7 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
           </Box>
         ))}
       </Box>
+      {idle ? <IdleLogo columns={columns} /> : <Box flexGrow={1} />}
       <Box marginTop={1}>
         <Text color={MUTED}>/: search   ↑/↓: select   enter: view   (while typing: enter: search, esc: cancel)</Text>
       </Box>
