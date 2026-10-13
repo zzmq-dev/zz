@@ -17,6 +17,8 @@ import { resolveCliBackendMode } from "../lib/backendMode.js";
 import { apiFetch } from "../lib/api.js";
 import { createRepoWatchStore } from "../lib/watchedRepos.js";
 import { resolveWatchedRepoSlugs } from "../lib/watchedRepoResolution.js";
+import { login } from "./login.js";
+import { clearCredentials } from "../lib/credentials.js";
 import { TopApp } from "../../tui/TopApp.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 
@@ -59,6 +61,25 @@ export async function top(options: TopOptions): Promise<void> {
     watch.add(resolveRepo(slug));
   };
 
+  // Works the same regardless of --local: login/logout is always
+  // about the real remote identity (~/.zz/credentials.json), which
+  // other commands read independently of whatever backend *this*
+  // session happens to be watching with.
+  const onLogin = () => login({ quiet: true });
+  const onLogout = () => {
+    clearCredentials();
+  };
+
   enterFullscreen();
-  render(React.createElement(TopApp, { watch, remote: mode.useRemote, local: !mode.useRemote, onTrack }));
+  render(
+    React.createElement(TopApp, {
+      watch,
+      remote: mode.useRemote,
+      local: !mode.useRemote,
+      onTrack,
+      identityUsername: mode.identity?.username ?? null,
+      onLogin,
+      onLogout,
+    }),
+  );
 }

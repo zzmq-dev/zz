@@ -29,14 +29,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function login(opts: { apiBase?: string; timeoutMs?: number } = {}): Promise<void> {
+export async function login(opts: { apiBase?: string; timeoutMs?: number; quiet?: boolean } = {}): Promise<string> {
   const base = opts.apiBase ?? apiBase();
   const startResp = await fetch(`${base}/api/login/start`, { method: "POST" });
   if (!startResp.ok) throw new Error(`could not start login: ${startResp.status} ${await startResp.text()}`);
   const { nonce, url } = (await startResp.json()) as LoginStartResponse;
 
-  console.log(`Opening ${url}`);
-  console.log("(if it doesn't open automatically, paste that URL into a browser)");
+  // Suppressed for a caller rendering an alt-screen TUI (zz top's own
+  // login hotkey) -- a stray console.log writes into the alt-screen
+  // buffer at whatever the cursor's own position happens to be,
+  // visually corrupting the rest of the frame instead of appearing as
+  // a normal terminal line the way it does for `zz login` on its own.
+  if (!opts.quiet) {
+    console.log(`Opening ${url}`);
+    console.log("(if it doesn't open automatically, paste that URL into a browser)");
+  }
   tryOpenBrowser(url);
 
   const deadline = Date.now() + (opts.timeoutMs ?? 5 * 60 * 1000);
@@ -47,8 +54,8 @@ export async function login(opts: { apiBase?: string; timeoutMs?: number } = {})
     const poll = (await pollResp.json()) as LoginPollResponse;
     if (poll.status === "ready" && poll.token && poll.agent) {
       writeCredentials({ apiBase: base, token: poll.token, username: poll.agent.username });
-      console.log(`Logged in as ${poll.agent.username}.`);
-      return;
+      if (!opts.quiet) console.log(`Logged in as ${poll.agent.username}.`);
+      return poll.agent.username;
     }
   }
   throw new Error("timed out waiting for login to complete -- run `zz login` again");

@@ -73,7 +73,7 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
       <Text color={MUTED}>
         filter: repo=[<Text color={repoFilter === "all" ? MUTED : PINK}>{repoFilter}</Text>](r) lane=[<Text color={laneFilter === "all" ? MUTED : PINK}>{laneFilter}</Text>](L) kind=[
         <Text color={kindFilter === "all" ? MUTED : PINK}>{kindFilter}</Text>](t) role=[<Text color={scope === "all" ? MUTED : PINK}>{scope}</Text>](s) --{" "}
-        {offset > 0 ? `${offset} line(s) back from live (End to catch up)` : `showing ${shown.length}/${filtered.length}, live`}
+        {filtered.length === 0 ? "no events yet" : `showing ${Math.max(0, end - windowSize) + 1}-${end} of ${filtered.length}${offset > 0 ? ` -- ${offset} back (End to catch up)` : ", live"}`}
       </Text>
       {shown.length === 0 ? (
         <Text color={MUTED}>(nothing matches)</Text>

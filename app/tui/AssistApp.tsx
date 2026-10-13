@@ -524,12 +524,25 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         setScroll((s) => Math.max(0, s - pageSize));
         return;
       }
+      if (key.home) {
+        setScroll(Number.MAX_SAFE_INTEGER); // clamped to the real max when rendered
+        return;
+      }
+      if (key.end) {
+        setScroll(0);
+        return;
+      }
       if (key.escape) {
         setPreviewing(null);
         setPhase("picking");
         return;
       }
-      if ((key.return || input === "c") && previewing) {
+      // "c" only, not key.return -- enter means exactly one thing
+      // everywhere in the picker/detail flow (view detail), and a
+      // separate key means claim, so pressing enter twice in a row
+      // (e.g. to view, then reflexively confirm) never accidentally
+      // claims something you only meant to look at.
+      if (input === "c" && previewing) {
         setSelected(previewing);
         setPreviewing(null);
         setPhase("session");
@@ -654,7 +667,13 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     const detailTextWidth = Math.max(10, columns - 4);
     const detailLines: Line[] = [];
     for (const l of describeAsk(previewing.ask).split("\n")) for (const w of wrapText(l, detailTextWidth)) detailLines.push({ text: w });
-    const detailInnerRows = Math.max(1, rows - 6); // header(1) + border(2) + footer(1) + a little slack
+    // -1 reserves the "showing X-Y of Z" indicator's own row -- always
+    // visible, not just once scrolled, specifically so a single-line
+    // scroll move has something concrete to confirm it actually
+    // happened (the content itself can look unchanged near a blank
+    // line, which is what made 1-line scrolling feel like it was doing
+    // nothing).
+    const detailInnerRows = Math.max(1, rows - 7); // header(1) + border(2) + indicator(1) + footer(1) + a little slack
     const dMaxOffset = Math.max(0, detailLines.length - detailInnerRows);
     const dOffset = Math.min(scroll, dMaxOffset);
     const dEnd = detailLines.length - dOffset;
@@ -668,14 +687,17 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-          {dOffset > 0 && <Text color={MUTED}>-- {dOffset} line(s) back --</Text>}
+          <Text color={MUTED}>
+            showing {Math.max(0, dEnd - dShown.length) + 1}-{dEnd} of {detailLines.length}
+            {dOffset > 0 ? ` -- ${dOffset} back (End to catch up)` : ""}
+          </Text>
           {dShown.map((l, i) => (
             <Text key={i}>{l.text || " "}</Text>
           ))}
         </Box>
         <Box>
           <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
-            {flash ?? "↑/↓ PgUp/PgDn: scroll c/enter: claim and start ctrl+y: copy esc: back to list"}
+            {flash ?? "↑/↓ PgUp/PgDn Home/End: scroll c: claim and start ctrl+y: copy esc: back to list"}
           </Text>
         </Box>
       </Box>
@@ -688,7 +710,12 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   const textWidth = Math.max(10, columns - 4);
   const liveTurn = liveText ? { label: liveLabel, text: liveText } : null;
   const allLines = transcriptLines(entries, liveTurn, textWidth);
-  const windowSize = innerRows;
+  // -1 reserves the "showing X-Y of Z" indicator's own row, always
+  // visible rather than only once scrolled -- a single-line scroll move
+  // needs something concrete to confirm it actually happened, since the
+  // content itself can look unchanged near a blank line (what made
+  // 1-line scrolling feel like it was doing nothing).
+  const windowSize = Math.max(1, innerRows - 1);
   const maxOffset = Math.max(0, allLines.length - windowSize);
   const offset = Math.min(scroll, maxOffset);
   const end = allLines.length - offset;
@@ -702,7 +729,10 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         </Text>
       </Box>
       <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-        {offset > 0 && <Text color={MUTED}>-- {offset} line(s) back (End to catch up) --</Text>}
+        <Text color={MUTED}>
+          showing {Math.max(0, end - shown.length) + 1}-{end} of {allLines.length}
+          {offset > 0 ? ` -- ${offset} back (End to catch up)` : ", live"}
+        </Text>
         {shown.map((l, i) => (
           <Text key={i} color={l.color} bold={l.bold}>
             {l.text || " "}
@@ -722,7 +752,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       {done && <Text color={MUTED}>enter/esc: back to the ask list</Text>}
       <Box>
         <Text color={MUTED} wrap="truncate-end">
-          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y: copy esc: pause ctrl+c: quit
+          ↑/↓ PgUp/PgDn Home/End or wheel: scroll ctrl+y or option/shift-drag: copy esc: pause ctrl+c: quit
         </Text>
       </Box>
     </Box>

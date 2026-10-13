@@ -59,6 +59,7 @@ export function TabView({
   onExit,
   inputPaused,
   initialTab,
+  headerRight,
 }: {
   title: string;
   tabs: Tab[];
@@ -67,6 +68,8 @@ export function TabView({
   inputPaused?: boolean;
   /** Which tab is active on first render -- defaults to 0 (unchanged for every existing caller). zz top's own Explore tab is always tabs[0] (reachable at any time, regardless of which tab opens first) but should only be the one that actually opens first when there's nothing else to show yet (see TopApp.tsx). */
   initialTab?: number;
+  /** Rendered flush right in the header bar, e.g. zz top's own [username]/[anon] login indicator -- deliberately generic here (TabView has no idea what identity means) rather than baking that concept into a component WorkApp also uses. */
+  headerRight?: React.ReactNode;
 }) {
   const [active, setActive] = useState(initialTab ?? 0);
   const [scroll, setScroll] = useState(0);
@@ -141,25 +144,32 @@ export function TabView({
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
-      <Box backgroundColor={PANEL} paddingX={1} overflow="hidden">
-        <Text bold color={PINK} wrap="truncate-end">
-          {title}
-        </Text>
-        <Text>{"  "}</Text>
-        {tabs.map((t, i) => (
-          <Box key={t.label} marginRight={2} flexShrink={0}>
-            <Text bold={i === active} color={i === active ? PINK : MUTED} underline={i === active} wrap="truncate-end">
-              {i + 1}:{t.label}
-            </Text>
+      <Box backgroundColor={PANEL} paddingX={1} justifyContent="space-between">
+        <Box overflow="hidden" flexShrink={1}>
+          <Text bold color={PINK} wrap="truncate-end">
+            {title}
+          </Text>
+          <Text>{"  "}</Text>
+          {tabs.map((t, i) => (
+            <Box key={t.label} marginRight={2} flexShrink={0}>
+              <Text bold={i === active} color={i === active ? PINK : MUTED} underline={i === active} wrap="truncate-end">
+                {i + 1}:{t.label}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+        {headerRight && (
+          <Box flexShrink={0} marginLeft={1}>
+            {headerRight}
           </Box>
-        ))}
+        )}
       </Box>
       <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
         {tabs[active]?.content(pageSize, scroll)}
       </Box>
       <Box>
         <Text color={MUTED} wrap="truncate-end">
-          {flash ?? (isRawModeSupported ? "←/→ or 1-9 or click: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y: copy tab   q: quit" : "(non-interactive terminal -- controls disabled)")}
+          {flash ?? (isRawModeSupported ? "←/→ or 1-9 or click: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y or option/shift-drag: copy   q: quit" : "(non-interactive terminal -- controls disabled)")}
         </Text>
       </Box>
     </Box>

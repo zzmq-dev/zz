@@ -4,7 +4,8 @@
 // purely a watcher. Plus Explore, reachable as an ordinary tab at any
 // time (the plan's own requirement), for finding more repos to watch
 // without quitting and hand-editing ~/.zz/config.json.
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
+import { Text, useInput } from "ink";
 import { TabView } from "./TabView.js";
 import { LaneList } from "./LaneList.js";
 import { LiveLog } from "./LiveLog.js";
@@ -14,6 +15,7 @@ import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { useLadderTrees } from "./useLadderTrees.js";
 import { flattenEvents } from "./types.js";
 import { laneListText, liveLogText, ladderText } from "./textExport.js";
+import { GREEN, MUTED, YELLOW } from "./theme.js";
 
 // Loose structural shape, not an import of cli/lib/watchedRepos.js's
 // RepoWatchStore -- see WorkApp.tsx's identical comment for why
@@ -31,6 +33,9 @@ export function TopApp({
   remote,
   local,
   onTrack,
+  identityUsername,
+  onLogin,
+  onLogout,
 }: {
   watch: RepoWatch;
   /** Mirrors WorkApp's own prop: in remote mode, Lane/Ladder state lives on the deployed Worker, not in a local clone's flat files/git notes -- see useLaneSnapshots.ts/useLadderTrees.ts's own `remote` param. */
@@ -39,12 +44,56 @@ export function TopApp({
   local: boolean;
   /** Explore's "track" action -- top.ts builds this once, closing over whichever of (the track API, ~/.zz/config.json) actually applies, so Explore itself never needs to know the mode-specific rule. */
   onTrack: (slug: string) => Promise<void>;
+  /** Whoever `zz login` already resolved to before this ever rendered (null if not logged in, or in --local mode) -- the "l" hotkey below can change this at runtime, so it's only the *initial* value. */
+  identityUsername: string | null;
+  /** Opens a browser for the OAuth flow and resolves once it completes -- `cli/commands/login.ts`'s own `login()`, called with `quiet: true` so its normal console.log output doesn't corrupt the alt-screen frame. */
+  onLogin: () => Promise<string>;
+  onLogout: () => void;
 }) {
   const watchedRepos = useSyncExternalStore(watch.subscribe, watch.get);
   const repos = watchedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir }));
   const snapshots = useLaneSnapshots(repos, 500, remote);
   const ladders = useLadderTrees(repos, 2000, remote);
   const [exploreEditing, setExploreEditing] = useState(false);
+  const [identity, setIdentity] = useState(identityUsername);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // "l": log in if anon, log out if not -- a single toggle key rather
+  // than separate ones, since only one of the two actions is ever
+  // actually available at a time. Gated on !exploreEditing the same
+  // way TabView's own hotkeys are (passed down as inputPaused below):
+  // Explore's search box is free text, and "l" is a letter someone
+  // might actually type into a search query.
+  // NOTE: logging in as a different identity doesn't re-resolve which
+  // repos this session watches -- that list was fixed by top.ts before
+  // this ever rendered (resolveWatchedRepoSlugs), same as `zz work`'s
+  // own agent identity. Switching accounts mid-session changes what
+  // `l` shows and what future track/login-gated actions act as, but
+  // not the existing watch list; restart `zz top` to pick up a
+  // different account's own repos.
+  useInput(
+    (input) => {
+      if (input !== "l" || authBusy) return;
+      if (identity) {
+        onLogout();
+        setIdentity(null);
+        return;
+      }
+      setAuthBusy(true);
+      setAuthError(null);
+      onLogin()
+        .then((username) => {
+          setIdentity(username);
+          setAuthBusy(false);
+        })
+        .catch((err) => {
+          setAuthBusy(false);
+          setAuthError(err instanceof Error ? err.message : String(err));
+        });
+    },
+    { isActive: !exploreEditing },
+  );
   // Explore is always tabs[0] -- reachable the same way regardless of
   // mode -- but which tab actually opens first depends on whether
   // there's anything else worth looking at yet: nothing tracked (the
@@ -56,11 +105,25 @@ export function TopApp({
   // yank the user back to lanes mid-session.
   const [initialTab] = useState(() => (watchedRepos.length === 0 ? 0 : 1));
 
+  useEffect(() => {
+    if (!authError) return;
+    const id = setTimeout(() => setAuthError(null), 4000);
+    return () => clearTimeout(id);
+  }, [authError]);
+
   return (
     <TabView
       title="zz top"
       inputPaused={exploreEditing}
       initialTab={initialTab}
+      headerRight={
+        <Text>
+          <Text color={authError ? YELLOW : identity ? GREEN : MUTED} bold>
+            {authError ? "[login failed]" : authBusy ? "[logging in...]" : `[${identity ?? "anon"}]`}
+          </Text>
+          <Text color={MUTED}> ({identity ? "l: logout" : "l: login"})</Text>
+        </Text>
+      }
       tabs={[
         { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
         { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
