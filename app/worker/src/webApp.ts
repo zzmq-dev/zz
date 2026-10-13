@@ -206,7 +206,11 @@ ul.list>li:last-child{border-bottom:none}
 .repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
 .repo-item .desc{color:var(--muted);font-size:.9rem}
 input,select,textarea{font-family:var(--sans);font-size:.95rem;padding:.55rem .7rem;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--fg)}
-select{padding-right:1.6rem}
+/* Native select arrows ignore padding-right entirely in Chrome/Safari
+   (it's drawn as part of the OS-chrome widget, not CSS content) -- a
+   real custom arrow via appearance:none is the only way to control
+   its gutter at all. */
+select{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23B4A3D6' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .75rem center;background-size:.65em;padding-right:2rem}
 input::placeholder,textarea::placeholder{color:var(--muted)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--pink);box-shadow:0 0 0 2px rgba(255,46,146,.25)}
 textarea{width:100%;min-height:4.5rem;resize:vertical;display:block}
@@ -223,9 +227,15 @@ form.inline{display:inline}
 .muted{color:var(--muted);font-size:.9rem}
 .hint{color:var(--muted);font-size:.88rem;margin:0 0 1rem}
 .empty{color:var(--muted);font-style:italic;padding:.5rem 0}
-.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.6rem}
 .card-head h2{margin:0}
-.icon-btn{width:1.8rem;height:1.8rem;padding:0;border-radius:999px;font-size:1.1rem;line-height:0;display:inline-flex;align-items:center;justify-content:center}
+.card-head p{margin:0;flex:1;min-width:0}
+/* padding-bottom, not padding:0 all round -- line-height:0 alone
+   still leaves the glyph sitting visibly below the circle's true
+   centerline (confirmed live), and flex centers the content box, so
+   a bit of extra bottom padding shifts that box (and the glyph in
+   it) up without disturbing the horizontal centering. */
+.icon-btn{width:1.8rem;height:1.8rem;padding:0 0 .12rem;border-radius:999px;font-size:1.1rem;line-height:0;display:inline-flex;align-items:center;justify-content:center}
 dialog.modal{border:none;border-radius:12px;padding:0;background:var(--surface);color:var(--fg);border:1px solid var(--border);max-width:460px;width:92vw}
 dialog.modal::backdrop{background:rgba(10,6,20,.65)}
 dialog.modal .modal-body{padding:1.25rem 1.4rem}
@@ -239,17 +249,18 @@ dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;marg
 .tab-btn{background:none;border:none;color:var(--muted);font-weight:600;padding:.5rem .9rem;border-bottom:2px solid transparent;border-radius:0;cursor:pointer}
 .tab-btn.active{color:var(--pink);border-bottom-color:var(--pink)}
 .tab-btn:hover{color:var(--fg);background:none}
-select.role-select{appearance:none;-webkit-appearance:none;background:transparent;border:1px solid var(--border);color:var(--fg);padding:.2rem .5rem;border-radius:6px;font-size:.85rem}
-select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background:rgba(180,163,214,.08)}
+select.role-select{appearance:none;-webkit-appearance:none;background-color:transparent;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23B4A3D6' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .45rem center;background-size:.6em;border:1px solid var(--border);color:var(--fg);padding:.2rem 1.4rem .2rem .5rem;border-radius:6px;font-size:.85rem}
+select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08)}
 .split{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
 .split>div{flex:1 1 16rem;min-width:0}
 .align-right{text-align:right}
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
 h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
-.clone-row{position:relative}
+.clone-row{margin-bottom:.6rem}
+.clone-row .pre-wrap{position:relative}
 .clone-row pre{margin:0;padding:.33rem 2.3rem .33rem .66rem;overflow-x:auto}
-.clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem}
+.clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem;padding:0}
 .log-feed{font-family:var(--mono);font-size:.85rem;line-height:1.8}
 .log-line{white-space:nowrap;overflow-x:auto}
 .log-line .t-ask{color:var(--yellow);font-weight:600}
@@ -2032,25 +2043,25 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     slug,
     me,
     `<div class="card">
-       ${
-         isOwner
-           ? `<div class="card-head" style="justify-content:flex-end"><a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a></div>`
-           : ""
-       }
-       <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
-       <div class="clone-row">
-         <pre>git clone ${esc(cloneUrl)}</pre>
-         <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
-         <a href="${origin}/${esc(slug)}/archive.zip"><button class="secondary">Download .zip</button></a>
+       <div class="card-head">
+         <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+         ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
        <div class="clone-row">
-         <pre>${esc(workCmd)}</pre>
-         <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+         <div class="pre-wrap">
+           <pre>git clone ${esc(cloneUrl)}</pre>
+           <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
+         </div>
        </div>
-       <details class="summary-detail"><summary>Info</summary>
-         <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
-         <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
-       </details>
+       <div class="clone-row">
+         <div class="pre-wrap">
+           <pre>${esc(workCmd)}</pre>
+           <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+         </div>
+       </div>
+       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
+       <a href="${origin}/${esc(slug)}/archive.zip" style="display:inline-block;margin-bottom:.75rem"><button class="secondary">Download .zip</button></a>
        <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
        ${shardsHtml}
      </div>
