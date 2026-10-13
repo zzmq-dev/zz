@@ -26,7 +26,15 @@ export interface Tab {
   getFullText?: () => string;
 }
 
-const CHROME_ROWS = 5; // title/tab bar (1) + blank (1) + content box border (2) + footer (1)
+// title/tab bar (1) + blank (1) + content box border (2) + footer (1)
+// -- used only to estimate pageSize (how many rows a Page Up/Down
+// jumps, passed to each tab's own content() as maxRows for its own
+// windowing math), not to size the content box itself: that box uses
+// flexGrow (below) so Yoga fills whatever's actually left on any
+// terminal size, rather than this fixed guess deciding it and getting
+// it visibly wrong on a small one (see tui/AssistApp.tsx's own fix for
+// the exact same issue, confirmed live there).
+const CHROME_ROWS = 5;
 const TAB_BAR_ROW = 1; // the tab bar is the very first rendered line
 
 // Where each tab's clickable label actually sits on screen, in 1-indexed
@@ -133,24 +141,24 @@ export function TabView({
 
   return (
     <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
-      <Box backgroundColor={PANEL} paddingX={1}>
-        <Text bold color={PINK}>
+      <Box backgroundColor={PANEL} paddingX={1} overflow="hidden">
+        <Text bold color={PINK} wrap="truncate-end">
           {title}
         </Text>
         <Text>{"  "}</Text>
         {tabs.map((t, i) => (
-          <Box key={t.label} marginRight={2}>
-            <Text bold={i === active} color={i === active ? PINK : MUTED} underline={i === active}>
+          <Box key={t.label} marginRight={2} flexShrink={0}>
+            <Text bold={i === active} color={i === active ? PINK : MUTED} underline={i === active} wrap="truncate-end">
               {i + 1}:{t.label}
             </Text>
           </Box>
         ))}
       </Box>
-      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={contentHeight} overflow="hidden" paddingX={1}>
+      <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
         {tabs[active]?.content(pageSize, scroll)}
       </Box>
       <Box>
-        <Text color={MUTED}>
+        <Text color={MUTED} wrap="truncate-end">
           {flash ?? (isRawModeSupported ? "←/→ or 1-9 or click: tabs   ↑/↓ wheel PgUp/PgDn Home/End: scroll   y: copy tab   q: quit" : "(non-interactive terminal -- controls disabled)")}
         </Text>
       </Box>
