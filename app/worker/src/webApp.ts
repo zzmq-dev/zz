@@ -962,13 +962,13 @@ function renderLadderDetail(rung: EmbeddedRung, depth = 0): string {
 
 /** Collapsed-by-default <details>, smaller text than the rest of the page -- one rung's own summary, attached directly to the thing it's about (a file, a commit), not a combined dump. */
 function summaryDetailHtml(summary: string): string {
-  return `<details class="summary-detail"><summary>Summary</summary><p class="muted">${esc(summary)}</p></details>`;
+  return `<details class="summary-detail"><summary>Ladder Summary</summary><p class="muted">${esc(summary)}</p></details>`;
 }
 
 /** Same, but keeps a rung's own embedded (non-ask) children nested inside it -- only used where there's nowhere more specific yet to attach them (e.g. a file rung's function-level children, until line-anchored summaries exist). A commit's filechange children get attached to their own file row instead (handleCommit), not nested here. */
 function ladderDetailHtml(rung: EmbeddedRung | null): string {
   if (!rung) return "";
-  return `<details class="summary-detail"><summary>Summary</summary><ul class="list">${renderLadderDetail(rung)}</ul></details>`;
+  return `<details class="summary-detail"><summary>Ladder Summary</summary><ul class="list">${renderLadderDetail(rung)}</ul></details>`;
 }
 
 // --- Work: every claimable Ask across every repo the viewer can see,
