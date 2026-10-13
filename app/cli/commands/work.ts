@@ -10,6 +10,7 @@
 // asks it's merely allowed to pick up).
 import React from "react";
 import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { render } from "ink";
 import { ensureCloned, resolveRepo, syncClone, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
@@ -20,7 +21,18 @@ import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js"
 import type { AskEntry, Lane } from "../../engine/types.js";
 import { ALL_TOOLS, CONTRIBUTOR_TOOLS } from "../../agent/tools.js";
 import { runAgent } from "../../agent/loop.js";
-import { runContributorWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, runChangesetReview } from "../../agent/scriptedWork.js";
+import {
+  runContributorWorkAsk,
+  runCoordinatorSubmitChangeset,
+  runResolveConflict,
+  runChangesetReview,
+  proposeContributorWork,
+  acceptContributorWork,
+  denyContributorWork,
+  proposeReview,
+  acceptReview,
+  type ScriptedFlowOptions,
+} from "../../agent/scriptedWork.js";
 import type { ChatBackend } from "../../agent/chatBackend.js";
 import { createOllamaBackend } from "../../agent/ollamaBackend.js";
 import { createGeminiBackend } from "../../agent/geminiBackend.js";
@@ -277,6 +289,87 @@ async function runClaimedAsk(
   onLog(`done with ${theAsk.id}: ${result.turns} turns, ${result.finished ? "finished on its own" : "hit the turn limit"}.`);
 }
 
+// `zz work --assist`: a single-ask-at-a-time interactive CLI session,
+// not the continuous poll loop above -- drafts via the same
+// agent/scriptedWork.ts flows runClaimedAsk already uses for "work"/
+// "changeset_review" asks, but pauses right after a verified/drafted
+// proposal (proposeContributorWork/proposeReview) for a human to
+// look at before anything gets written (acceptContributorWork/
+// acceptReview/denyContributorWork) -- "I still made every decision,
+// I just didn't type most of it," in the demo's own words. Handles
+// whatever's claimable right now, one ask at a time, then exits
+// (never idles/polls -- this is a human sitting at the terminal, not
+// a headless loop).
+async function runAssistSession(watch: RepoWatchStore, agent: string, scope: WorkScope, backend: ChatBackend, useRemote: boolean, identity: { apiBase: string; token: string } | null): Promise<void> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const remoteCall = useRemote ? remoteCallTool : undefined;
+  const onLog = (line: string) => console.error(`[assist] ${line}`);
+  try {
+    for (;;) {
+      const watched = watch.get();
+      const claimable = (await claimableAcrossRepos(watched.map((r) => ({ repo: r.slug })), agent, scope)).filter((c) => c.ask.kind === "work" || c.ask.kind === "changeset_review");
+      if (claimable.length === 0) {
+        console.log("Nothing claimable (work or changeset_review) right now.");
+        return;
+      }
+      const next = claimable[0];
+      const resolved = watched.find((r) => r.slug === next.repo)!;
+      if (useRemote) syncClone(resolved);
+
+      const flowOpts: ScriptedFlowOptions = {
+        resolved,
+        laneId: next.laneId,
+        theAsk: next.ask,
+        agent,
+        alreadyClaimed: next.alreadyClaimed,
+        backend,
+        onLog,
+        callTool: remoteCall,
+        authedCloneUrlFor: identity ? (slug: string) => authedCloneUrl(identity.apiBase, identity.token, slug) : undefined,
+        onShardReady: (repo) => watch.add(repo),
+      };
+
+      if (next.ask.kind === "work") {
+        console.log(`\n${"=".repeat(72)}\nwork ${next.ask.id} in ${next.repo}/${next.laneId} -- ${JSON.stringify(next.ask.payload)}\ndrafting...`);
+        const proposed = await proposeContributorWork(flowOpts);
+        if (!proposed.ok) {
+          console.log(`Couldn't produce a verified change: ${proposed.denialReason}`);
+          const ans = (await rl.question("deny this ask? (y/n) ")).trim().toLowerCase();
+          if (ans === "y") await denyContributorWork(flowOpts, proposed.denialReason);
+          continue;
+        }
+        const { proposal } = proposed.result;
+        console.log(`\nSummary: ${proposal.summary}\nMessage: ${proposal.message}`);
+        for (const f of proposal.files) console.log(`\n--- ${f.path} ---\n${f.content}`);
+        console.log("=".repeat(72));
+        const choice = (await rl.question("accept (a) / reject (r)? ")).trim().toLowerCase();
+        if (choice === "a") {
+          await acceptContributorWork(flowOpts, proposed.result);
+          console.log(`Submitted ${next.ask.id} for review.`);
+        } else {
+          const reason = (await rl.question("reason: ")).trim() || "rejected by human";
+          await denyContributorWork(flowOpts, reason);
+        }
+      } else {
+        console.log(`\n${"=".repeat(72)}\nchangeset_review ${next.ask.id} in ${next.repo}/${next.laneId}\ndrafting a decision...`);
+        const proposal = await proposeReview(flowOpts);
+        console.log(`\nDecision: ${proposal.decision}\nReason: ${proposal.reason}`);
+        console.log("=".repeat(72));
+        const choice = (await rl.question("accept this decision? (y/n -- n lets you override it) ")).trim().toLowerCase();
+        if (choice === "y") {
+          await acceptReview(flowOpts, proposal);
+        } else {
+          const decisionInput = (await rl.question("approve or request_changes? ")).trim();
+          const reason = (await rl.question("reason: ")).trim();
+          await acceptReview(flowOpts, { decision: decisionInput === "approve" ? "approve" : "request_changes", reason });
+        }
+      }
+    }
+  } finally {
+    rl.close();
+  }
+}
+
 export interface WorkOptions {
   agent?: string;
   /** --as <name>: act as a managed agent instead of yourself -- "<name>" expands to "<your username>[<name>]" and its token comes from the local registry `zz agent create`/`zz agent token` populated (see lib/identity.ts). Mutually exclusive with --agent in practice (both end up setting the same acting identity); --as is the one meant for everyday use, --agent remains for the local/demo path and edge cases (acting as something not in the local registry, e.g. via ZZ_ID). */
@@ -290,6 +383,8 @@ export interface WorkOptions {
   provider?: Provider;
   /** Forces the original local/demo backend (a real local clone, state in .zz/) instead of the default: a deployed Worker's real protocol state, driven entirely over callRemoteTool. Default is remote because that's the real coordination layer this project is about; local stays fully supported for the demo/cascade-case-study path, which has no reason to involve the network at all. */
   local?: boolean;
+  /** A single interactive session instead of the continuous headless loop: drafts one "work"/"changeset_review" ask at a time via a model, shows you the draft, and only commits/submits/merges on your explicit accept (or lets you reject/override) -- see runAssistSession's own header comment. Never renders the TUI, ignores --stdio/--poll-ms/--max-turns (there's no loop or turn budget to apply them to). */
+  assist?: boolean;
 }
 
 export async function work(options: WorkOptions): Promise<void> {
@@ -356,6 +451,17 @@ export async function work(options: WorkOptions): Promise<void> {
   if (!useRemote) {
     registerRunningProcess(watch.get().map((r) => r.slug));
     watch.subscribe(() => registerRunningProcess(watch.get().map((r) => r.slug)));
+  }
+
+  if (options.assist) {
+    console.error(`zz work --assist: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
+    try {
+      await mode.run(() => runAssistSession(watch, config.agent, scope, backend, useRemote, identity));
+    } finally {
+      unregisterRunningProcess();
+      await mode.cleanup();
+    }
+    return;
   }
 
   const logBuffer = new LogBuffer();

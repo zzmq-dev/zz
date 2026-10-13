@@ -156,7 +156,8 @@ program
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare (remote, each needs its own API key -- see app/.env)")
   .option("--model <name>", 'model name for whichever provider -- default is "qwen2.5:14b-instruct" (ollama), "gemini-3.8-flash" (gemini), "openai/gpt-oss-120b" (groq), or "@cf/meta/llama-3.3-70b-instruct-fp8-fast" (cloudflare). Run `zz models` to see what\'s available locally for ollama.')
   .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your resolved identity's real protocol state on the deployed Worker")
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean }) => {
+  .option("--assist", "a single interactive session instead of the headless loop: drafts one work/changeset_review ask at a time via a model, shows you the draft, and only writes anything on your explicit accept (or lets you reject/override) -- never the TUI, ignores --stdio/--poll-ms/--max-turns")
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean }) => {
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
       process.exitCode = 1;
@@ -178,6 +179,7 @@ program
       model: opts.model,
       provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
       local: opts.local,
+      assist: opts.assist,
     });
   });
 
