@@ -1,8 +1,14 @@
 // `zz lane log <owner/repo>`: a chronological feed of every ASK/ANSWER
 // across every Lane for a repo -- the protocol trail `ladder dump` shows
 // the resulting content for, but not the process that produced it.
+// Remote by default, like work/review/top -- confirmed live this was
+// the one command that never got this treatment (always read the
+// local flat-file store regardless of where the repo actually lived),
+// so this showed nothing at all for any repo only ever touched on the
+// deployed Worker.
 import { resolveRepo } from "../lib/repo.js";
 import { listLanes } from "../../engine/store.js";
+import { callRemoteTool } from "../lib/remoteTools.js";
 import type { HistoryEntry, Lane } from "../../engine/types.js";
 
 export type LaneLogFormat = "text" | "json";
@@ -11,6 +17,7 @@ export interface LaneLogOptions {
   format?: LaneLogFormat;
   lane?: string;
   out?: string;
+  local?: boolean;
 }
 
 interface LogRow {
@@ -82,13 +89,15 @@ function renderText(lanes: Lane[], rows: LogRow[]): string {
 }
 
 export async function laneLog(slug: string, options: LaneLogOptions): Promise<void> {
-  const repo = resolveRepo(slug);
-  let lanes = listLanes(repo.stateDir);
+  // allowAnonymous: lane_list is one of the server's own ANON_READ_TOOLS
+  // for a public repo (webApp.ts) -- works the same with or without a
+  // `zz login` session, same as `zz top`'s own reads.
+  let lanes = options.local ? listLanes(resolveRepo(slug).stateDir) : ((await callRemoteTool(slug, "lane_list", {}, true)) as Lane[]);
   if (options.lane) lanes = lanes.filter((l) => l.id === options.lane);
   const rows = flatten(lanes);
 
   const format = options.format ?? "text";
-  const output = format === "json" ? JSON.stringify({ repo: repo.slug, lanes, events: rows }, null, 2) : renderText(lanes, rows);
+  const output = format === "json" ? JSON.stringify({ repo: slug, lanes, events: rows }, null, 2) : renderText(lanes, rows);
 
   if (options.out) {
     await import("node:fs").then((fs) => fs.writeFileSync(options.out!, output));

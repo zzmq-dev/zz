@@ -49,23 +49,62 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const staged = git(["diff", "--cached", "--name-only"])
+    // Staged-but-uncommitted is the primary case, but committing first
+    // (`git add && git commit`, then this) is the more natural thing
+    // for a human to actually do -- confirmed live: the demo run
+    // sheet's own Stage 1 steps do exactly that, and it silently found
+    // "nothing staged" before this fallback existed. Falls back to the
+    // last commit's own diff against its parent, using the parent (not
+    // HEAD) as baseCommit, so either workflow produces the same
+    // changeset_review/submit_changeset payload.
+    let changed = git(["diff", "--cached", "--name-only"])
       .split("\n")
       .filter(Boolean);
-    if (staged.length === 0) {
-      console.error("Nothing staged. Edit your files, `git add` the ones you changed, then run this again.");
-      process.exitCode = 1;
-      return;
+    let baseCommit: string;
+    if (changed.length > 0) {
+      baseCommit = git(["rev-parse", "HEAD"]);
+    } else {
+      let parent: string;
+      try {
+        parent = git(["rev-parse", "HEAD~1"]);
+      } catch {
+        console.error("Nothing staged, and HEAD has no parent commit to diff against. `git add` the files you changed (or commit them), then run this again.");
+        process.exitCode = 1;
+        return;
+      }
+      changed = git(["diff", "--name-only", parent, "HEAD"]).split("\n").filter(Boolean);
+      if (changed.length === 0) {
+        console.error("Nothing staged, and the last commit didn't change anything. `git add` the files you changed (or commit them), then run this again.");
+        process.exitCode = 1;
+        return;
+      }
+      baseCommit = parent;
     }
 
-    const files = staged.map((path) => ({ path, content: readFileSync(path, "utf8") }));
-    const baseCommit = git(["rev-parse", "HEAD"]);
-    const message = opts.message ?? `Changes to ${staged.join(", ")}`;
+    const files = changed.map((path) => ({ path, content: readFileSync(path, "utf8") }));
+    const message = opts.message ?? `Changes to ${changed.join(", ")}`;
 
     const lane = (await callRemoteTool(slug, "lane_get", { lane_id: laneId })) as Lane | null;
     if (!lane) throw new Error(`no such lane "${laneId}" in ${slug}`);
-    const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
-    if (!theAsk) throw new Error(`no such ask "${askId}" in ${slug}/${laneId}`);
+    // The ask being submitted against usually lives in laneId's own
+    // origin, not laneId itself -- `zz ask claim` opens a fresh Lane
+    // ("my workstream") for the work, but claiming doesn't move the
+    // original ask into it. Check laneId directly first (the plain
+    // case: no separate work Lane was ever opened), then its origin.
+    // lane.origin.repo is the artifacts_name the server injected into
+    // the lane_propose call that created this lane (repoMeta.ts's own
+    // internal repo key), not the "owner/repo" slug -- compare against
+    // lane.repo (the same artifacts_name, on this same Lane record),
+    // not slug, or this never matches for the single-repo (no shard)
+    // case repoSubmit is actually used for.
+    let askLaneId = laneId;
+    let theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
+    if (!theAsk && lane.origin && lane.origin.repo === lane.repo) {
+      const originLane = (await callRemoteTool(slug, "lane_get", { lane_id: lane.origin.lane })) as Lane | null;
+      theAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
+      if (theAsk) askLaneId = lane.origin.lane;
+    }
+    if (!theAsk) throw new Error(`no such ask "${askId}" in ${slug}/${laneId}${lane.origin ? ` or its origin ${lane.origin.lane}` : ""}`);
     const taskDescription = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
 
     const review = (await callRemoteTool(slug, "ask_post", {
@@ -76,23 +115,30 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
       depends_on: [],
     })) as AskEntry;
 
+    // Not askId here when it lives in a different lane (askLaneId !==
+    // laneId): depends_on resolution only ever checks within the one
+    // lane an ask's own history lives in (see agent/tools.ts's
+    // ask_claim, which checks `lane!.history`, never a cross-lane
+    // lookup) -- a cross-lane id here could never resolve. Harmless to
+    // drop: askId gets marked complete directly below regardless of
+    // this dependency list.
     await callRemoteTool(slug, "ask_post", {
       lane_id: laneId,
       kind: "submit_changeset",
       from: identity.username,
       payload: { files, message, summary: message, baseCommit },
-      depends_on: [askId, review.id],
+      depends_on: askLaneId === laneId ? [askId, review.id] : [review.id],
     });
 
     await callRemoteTool(slug, "ask_answer", {
-      lane_id: laneId,
+      lane_id: askLaneId,
       ask_id: askId,
       actor: identity.username,
       action: "complete",
       payload: { summary: message },
     });
 
-    console.log(`Submitted ${staged.length} file(s) for review (changeset_review ${review.id}) and marked ${askId} complete.`);
+    console.log(`Submitted ${changed.length} file(s) for review (changeset_review ${review.id}) and marked ${askId} complete.`);
     console.log(`Next: a Maintainer needs to \`zz review\` and approve it; once granted, a coordinator's \`zz work\` run merges it for real.`);
   } finally {
     await cleanup();

@@ -25,6 +25,8 @@ import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
+import { askClaim } from "./commands/ask-claim.js";
+import { ladderEdit } from "./commands/ladder-edit.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -88,6 +90,17 @@ ladder
     await ladderReplayCommits(repo, { limit: opts.limit, force: opts.force, maxFiles: opts.maxFiles });
   });
 
+ladder
+  .command("edit <repo> <path>")
+  .description('write one Ladder rung by hand -- e.g. after a manual commit, describe what changed at the repo/file/function level. Anchors to the current directory\'s HEAD commit unless --commit is given.')
+  .requiredOption("--kind <kind>", "repo, file, function, lines, release, package, changeset, filechange, linechange, contributor, or dependencies")
+  .requiredOption("--summary <text>", "what this rung describes, holistically -- not just what changed")
+  .option("--commit <sha>", "anchor to this commit instead of the current directory's HEAD")
+  .option("--as <name>", "write as a managed agent instead of yourself")
+  .action(async (repo: string, path: string, opts: { kind: string; summary: string; commit?: string; as?: string }) => {
+    await ladderEdit(repo, path, opts);
+  });
+
 const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");
 
 lane
@@ -96,14 +109,15 @@ lane
   .option("--format <format>", "text or json", "text")
   .option("--lane <id>", "show only one lane")
   .option("--out <path>", "write to a file instead of stdout")
-  .action(async (repo: string, opts: { format: string; lane?: string; out?: string }) => {
+  .option("--local", "read the original local/demo backend instead of the default: the deployed Worker's real protocol state")
+  .action(async (repo: string, opts: { format: string; lane?: string; out?: string; local?: boolean }) => {
     const format = opts.format as LaneLogFormat;
     if (format !== "text" && format !== "json") {
       console.error(`unknown format "${opts.format}"; expected text or json`);
       process.exitCode = 1;
       return;
     }
-    await laneLog(repo, { format, lane: opts.lane, out: opts.out });
+    await laneLog(repo, { format, lane: opts.lane, out: opts.out, local: opts.local });
   });
 
 const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");
@@ -118,6 +132,15 @@ askCmd
   .option("--priority <n>", "higher = more urgent at query time", (v) => parseInt(v, 10))
   .action(async (repo: string, laneId: string, opts: { kind?: string; from?: string; description?: string; payload?: string; priority?: number }) => {
     await askPost(repo, laneId, opts);
+  });
+
+askCmd
+  .command("claim <repo> <ask-id>")
+  .description("claim an Ask by hand and open a new Lane for the work (prints its id) -- the manual-CLI counterpart to an agent's own claim step")
+  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo", where `zz repo ask` always posts)')
+  .option("--as <name>", "claim as a managed agent instead of yourself")
+  .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
+    await askClaim(repo, askId, opts);
   });
 
 program

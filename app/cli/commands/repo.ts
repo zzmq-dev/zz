@@ -18,6 +18,7 @@ interface RepoRow {
 }
 
 interface LaneHistoryEntry {
+  id: string;
   type: "ASK" | "ANSWER" | "INSIGHT";
   kind?: string;
   from?: string;
@@ -62,9 +63,9 @@ export async function repoAsks(slug: string): Promise<void> {
     return;
   }
   for (const e of history) {
-    if (e.type === "ASK") console.log(`[ASK] (${e.kind}) from ${e.from} -- ${JSON.stringify(e.payload)} @ ${e.at}`);
-    else if (e.type === "ANSWER") console.log(`[ANSWER] ${e.action} by ${e.from} on ${e.ask} @ ${e.at}`);
-    else console.log(`[INSIGHT] ${JSON.stringify(e.payload)} @ ${e.at}`);
+    if (e.type === "ASK") console.log(`[ASK ${e.id}] (${e.kind}) from ${e.from} -- ${JSON.stringify(e.payload)} @ ${e.at}`);
+    else if (e.type === "ANSWER") console.log(`[ANSWER ${e.id}] ${e.action} by ${e.from} on ${e.ask} @ ${e.at}`);
+    else console.log(`[INSIGHT ${e.id}] ${JSON.stringify(e.payload)} @ ${e.at}`);
   }
 }
 
