@@ -22,6 +22,7 @@ import type { AskEntry } from "../../engine/types.js";
 import { authedCloneUrl } from "../lib/credentials.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import { resolveCliBackendMode } from "../lib/backendMode.js";
+import { registerRunningProcess, unregisterRunningProcess } from "../lib/processRegistry.js";
 
 export interface ReviewOptions {
   agent?: string;
@@ -67,8 +68,14 @@ export async function review(options: ReviewOptions): Promise<void> {
   // SIGINT reaches this handler on Ctrl+C -- unlike work.ts's TUI
   // path, no separate onExit prop is needed. mode.cleanup is
   // idempotent (backendMode.ts), safe to call from both handlers.
-  process.on("SIGINT", () => void mode.cleanup().then(() => process.exit(0)));
-  process.on("SIGTERM", () => void mode.cleanup().then(() => process.exit(0)));
+  process.on("SIGINT", () => {
+    unregisterRunningProcess();
+    void mode.cleanup().then(() => process.exit(0));
+  });
+  process.on("SIGTERM", () => {
+    unregisterRunningProcess();
+    void mode.cleanup().then(() => process.exit(0));
+  });
 
   // See work.ts's identical comment: in remote mode your identity IS
   // your resolved credential, not a separate (and easily mismatched)
@@ -82,6 +89,10 @@ export async function review(options: ReviewOptions): Promise<void> {
   // for the original --local/demo path, matching its previous behavior.
   if (!useRemote) {
     for (const r of resolvedRepos) ensureCloned(r);
+    // Local mode only -- see processRegistry.ts's own header. No
+    // shards here (review never creates work, just answers asks), so
+    // a one-time registration at startup is the whole story.
+    registerRunningProcess(resolvedRepos.map((r) => r.slug));
   } else {
     for (const r of resolvedRepos) ensureCloned(r, authedCloneUrl(identity!.apiBase, identity!.token, r.slug));
   }
@@ -138,6 +149,7 @@ export async function review(options: ReviewOptions): Promise<void> {
     await mode.run(mainLoop);
   } finally {
     rl.close();
+    unregisterRunningProcess();
     await mode.cleanup();
   }
 }

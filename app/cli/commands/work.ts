@@ -33,6 +33,7 @@ import { authedCloneUrl } from "../lib/credentials.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { createRepoWatchStore, type RepoWatchStore } from "../lib/watchedRepos.js";
 import { resolveCliBackendMode } from "../lib/backendMode.js";
+import { registerRunningProcess, unregisterRunningProcess } from "../lib/processRegistry.js";
 
 export type Provider = "ollama" | "gemini" | "groq" | "cloudflare";
 
@@ -311,8 +312,14 @@ export async function work(options: WorkOptions): Promise<void> {
   // for that one, so WorkApp gets this same function as an onExit
   // prop instead -- see its own call below). mode.cleanup is
   // idempotent (backendMode.ts), safe to call from both handlers.
-  process.on("SIGINT", () => void mode.cleanup().then(() => process.exit(0)));
-  process.on("SIGTERM", () => void mode.cleanup().then(() => process.exit(0)));
+  process.on("SIGINT", () => {
+    unregisterRunningProcess();
+    void mode.cleanup().then(() => process.exit(0));
+  });
+  process.on("SIGTERM", () => {
+    unregisterRunningProcess();
+    void mode.cleanup().then(() => process.exit(0));
+  });
 
   // In remote mode your identity IS your resolved credential -- default
   // --agent to it rather than silently falling through to a separate
@@ -341,6 +348,15 @@ export async function work(options: WorkOptions): Promise<void> {
   // cli/lib/watchedRepos.ts's own header); both the TUI and mainLoop's
   // own polling read from this one store, not a separate copy each.
   const watch = createRepoWatchStore(resolvedRepos);
+  // Local mode only -- remote mode has the server's own /api/me/repos
+  // for `zz top`'s discovery; this is the local-mode equivalent (see
+  // processRegistry.ts's own header). Re-registers whenever the
+  // watched set grows (a task shard) so a `zz top --local` started
+  // after that still sees the full picture.
+  if (!useRemote) {
+    registerRunningProcess(watch.get().map((r) => r.slug));
+    watch.subscribe(() => registerRunningProcess(watch.get().map((r) => r.slug)));
+  }
 
   const logBuffer = new LogBuffer();
   const statusRef = { current: "starting..." };
@@ -350,7 +366,11 @@ export async function work(options: WorkOptions): Promise<void> {
     console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
   } else {
     enterFullscreen();
-    render(React.createElement(WorkApp, { agent: config.agent, watch, remote: useRemote, logBuffer, statusRef, onExit: mode.cleanup }));
+    const onExit = async () => {
+      unregisterRunningProcess();
+      await mode.cleanup();
+    };
+    render(React.createElement(WorkApp, { agent: config.agent, watch, remote: useRemote, logBuffer, statusRef, onExit }));
   }
 
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
@@ -391,6 +411,7 @@ export async function work(options: WorkOptions): Promise<void> {
   try {
     await mode.run(mainLoop);
   } finally {
+    unregisterRunningProcess();
     await mode.cleanup();
   }
 }

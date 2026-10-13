@@ -51,7 +51,7 @@ function tabClickRanges(title: string, tabs: Tab[]): { start: number; end: numbe
   return ranges;
 }
 
-export function TabView({ title, tabs, onExit }: { title: string; tabs: Tab[]; onExit?: () => Promise<void> | void }) {
+export function TabView({ title, tabs, onExit, inputPaused }: { title: string; tabs: Tab[]; onExit?: () => Promise<void> | void; /** True while the active tab's own content owns the keyboard (e.g. Explore's search box mid-query) -- every single-character hotkey below (q/h/l/y/digits) would otherwise collide with free-text typing. TabView's own scroll/tab-switch/quit/copy keys are suppressed entirely until this goes back to false; the content itself is responsible for its own escape hatch back out of that state. */ inputPaused?: boolean }) {
   const [active, setActive] = useState(0);
   const [scroll, setScroll] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
@@ -82,6 +82,10 @@ export function TabView({ title, tabs, onExit }: { title: string; tabs: Tab[]; o
 
   useInput(
     (input, key) => {
+      // Ctrl+C always quits, even mid-typing -- everything else below
+      // is a single-character hotkey that would otherwise collide
+      // with free-text entry in whatever's capturing input right now.
+      if (inputPaused && !(key.ctrl && input === "c")) return;
       if (input === "q" || (key.ctrl && input === "c")) {
         // Raw mode swallows the OS-level SIGINT translation for a
         // keypress, so this is the only place Ctrl+C is ever actually

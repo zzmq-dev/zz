@@ -21,6 +21,7 @@ import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
 import { login } from "./commands/login.js";
+import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
@@ -203,6 +204,13 @@ program
   .option("--api-base <url>", "override the Worker URL (default: ~/.zz/credentials.json's, or the built-in default)")
   .action(async (opts: { apiBase?: string }) => {
     await login({ apiBase: opts.apiBase });
+  });
+
+program
+  .command("logout")
+  .description("drop the local ~/.zz/credentials.json -- for testing the not-logged-in experience, or switching which account you're acting as")
+  .action(() => {
+    logout();
   });
 
 const agentCmd = program.command("agent").description("manage Agents on the remote backend -- full parity with /profile's agent section");

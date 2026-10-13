@@ -7,6 +7,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readAnchor } from "../../engine/ladderNotes.js";
+import { REPO_RUNG_PATH } from "../../engine/ladder.js";
 
 // `~/.zz/repos`/`~/.zz/state`, not anywhere relative to this module's own
 // location -- same convention as credentials.ts/config.ts's ~/.zz/*.json.
@@ -67,4 +69,36 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
 export function syncClone(repo: ResolvedRepo): void {
   execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
   execFileSync("git", ["-C", repo.repoDir, "reset", "--quiet", "--hard", "origin/main"], { stdio: "inherit" });
+}
+
+/** Same definition `zz ladder build` itself uses to decide whether the file tree already got onboarded (cli/commands/ladder-build.ts's own isPresent check on REPO_RUNG_PATH) -- not a new check, just this one reused so `zz top --local`'s discovery agrees with onboarding about what "onboarded" means. No existsSync short-circuit on stateDir: confirmed live that readAnchor finds real content (it's a git note on repoDir's own clone) even when stateDir doesn't exist on disk at all, so a "does the directory exist" guard here only produces false negatives. */
+export async function isLocallyOnboarded(repo: ResolvedRepo): Promise<boolean> {
+  return (await readAnchor(repo.repoDir, repo.stateDir, REPO_RUNG_PATH)) !== null;
+}
+
+/** Walks up from `dir` (default: cwd) to find the enclosing git repo (if any) and parses its `origin` remote as a GitHub "owner/repo" slug. Null for a non-git directory, a git repo with no `origin`, or an origin that isn't github.com -- `zz ladder build` itself only supports GitHub-hosted repos (clones from github.com, fetches issues/PRs via the GitHub API), so there's no onboarding command to suggest for anything else; callers should say so plainly rather than inventing one. */
+export function inferGitHubSlugFromDir(dir: string = process.cwd()): string | null {
+  let root: string;
+  try {
+    root = execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+  } catch {
+    return null; // not inside a git repo
+  }
+  let remote: string;
+  try {
+    remote = execFileSync("git", ["-C", root, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+  } catch {
+    return null; // no "origin" remote
+  }
+  const match = remote.match(/github\.com[:/]([^/]+)\/([^/]+?)(\.git)?$/);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+/** `inferGitHubSlugFromDir`, defaulted to the process's own cwd -- kept as a separate named export since most callers (top.ts's startup discovery) want exactly that and shouldn't have to pass `process.cwd()` explicitly. */
+export function inferGitHubSlugFromCwd(): string | null {
+  return inferGitHubSlugFromDir();
 }

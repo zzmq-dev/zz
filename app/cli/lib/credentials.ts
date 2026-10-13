@@ -2,7 +2,7 @@
 // bearer token from `zz login`, separate from config.ts's
 // "which repos do I care about" local config (a different concern:
 // this is who you are to the remote API, that's what you watch).
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveUserPath } from "./paths.js";
@@ -42,6 +42,14 @@ export function requireCredentials(): ZzCredentials {
   const creds = readCredentials();
   if (!creds) throw new Error(`not logged in -- run \`zz login\` first (looked for credentials at ${credentialsPath()})`);
   return creds;
+}
+
+/** `zz logout`: drops the local credentials file -- no server-side token revocation (the OAuth-minted token just stops being used locally; it's not a managed-agent token like identity.ts's --as path, which does get revoked). Returns the username that was logged out, or null if nothing was there to begin with. */
+export function clearCredentials(): string | null {
+  const creds = readCredentials();
+  if (!creds) return null;
+  rmSync(credentialsPath(), { force: true });
+  return creds.username;
 }
 
 export function writeCredentials(creds: ZzCredentials): void {

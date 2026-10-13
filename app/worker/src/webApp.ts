@@ -1534,6 +1534,18 @@ async function handleApiMyRepos(request: Request, env: WebEnv): Promise<Response
   });
 }
 
+/** Same trackRepo/untrackRepo handleTrackForm already calls for the web UI's own button -- a JSON sibling since that one only ever returns an HTML redirect, which the CLI/TUI's Explore "track" action (zz top) needs a real {ok:true}/{error} response from instead. */
+async function handleApiTrack(repoSlug: string, tracking: boolean, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const repo = await getRepoBySlug(env.DB, repoSlug);
+    if (!repo) throw new ApiError(404, "no such repo");
+    if (tracking) await trackRepo(env.DB, me.username, repoSlug);
+    else await untrackRepo(env.DB, me.username, repoSlug);
+    return json({ ok: true });
+  });
+}
+
 async function handleApiCreateAgent(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
@@ -2513,6 +2525,14 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/tools\/([^/]+)$/);
     if (m && request.method === "POST") return handleApiCallTool(`${m[1]}/${m[2]}`, m[3], request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/track$/);
+    if (m && request.method === "POST") return handleApiTrack(`${m[1]}/${m[2]}`, true, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/untrack$/);
+    if (m && request.method === "POST") return handleApiTrack(`${m[1]}/${m[2]}`, false, request, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);
