@@ -127,6 +127,24 @@ const ladderRead: ToolDef = {
   },
 };
 
+// The WHOLE resolved Ladder tree in one call -- the Ladder tab/zz
+// top's own view. Deliberately separate from ladder_read (one rung by
+// path): walking a tree one ladder_read per rung means one real
+// round trip per rung for any caller outside the Worker itself (the
+// CLI/TUI, dispatched through the generic remote tool-calling loop --
+// confirmed live as the actual cause of `zz top`'s Ladder tab being
+// unusably slow, and only getting worse on a repo with many files/
+// changesets). readLadderTree lets each Backend implement its own
+// best strategy for "give me everything at once" instead.
+const ladderTree: ToolDef = {
+  name: "ladder_tree",
+  description: "Read the repo's full resolved Ladder tree in one call, not one ladder_read per rung -- use this instead of walking the tree yourself whenever you want the whole thing (e.g. to display it), not one specific rung.",
+  parameters: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] },
+  async execute({ repo }) {
+    return resolveBackend().readLadderTree(repo as string);
+  },
+};
+
 // Cross-repo -- searches across every repo's Ladder at once, unlike
 // every other tool here which is scoped to whatever `repo` arg it's
 // given. Goes through resolveBackend() like everything else (NOT a
@@ -635,7 +653,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

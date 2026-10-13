@@ -20,6 +20,7 @@
 import type { Backend, LadderSearchHit } from "../../engine/backend.js";
 import type { Lane } from "../../engine/types.js";
 import type { EmbeddedRung } from "../../engine/ladderNotes.js";
+import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { callRemoteTool } from "./remoteTools.js";
 import { apiFetch } from "./api.js";
 
@@ -45,6 +46,17 @@ export const remoteBackend: Backend = {
   commitChangeset: () => notSupported("commitChangeset"),
   async readAnchor(repo, path) {
     return (await callRemoteTool(repo, "ladder_read", { path })) as EmbeddedRung | null;
+  },
+  // One tool call, server-side resolved and cached -- NOT the client-
+  // side resolveLadderTree(readAnchor) walk this repo used to drive
+  // (tui/useLadderTrees.ts), which meant one real HTTP round trip per
+  // rung. Confirmed live: that was the actual cause of `zz top`'s
+  // Ladder tab being unusably slow, and would only get worse on a
+  // repo with many files/changesets -- this collapses it to one call
+  // regardless of tree size, server-side cached so repeat polls of an
+  // unchanged tree are nearly free.
+  async readLadderTree(repo) {
+    return (await callRemoteTool(repo, "ladder_tree", {})) as ResolvedRung | null;
   },
   writeLadder: () => notSupported("writeLadder"),
   appendRepoChildren: () => notSupported("appendRepoChildren"),

@@ -13,6 +13,7 @@ import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import type { CommitRow, FileChangeRow } from "./ingest.js";
 import type { ChangesetFile, CommitAuthor } from "./changeset.js";
+import type { ResolvedRung } from "./ladderRender.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 export interface LadderSearchHit {
@@ -42,6 +43,8 @@ export interface Backend {
 
   // the Ladder (git notes)
   readAnchor(repo: string, path: string): Promise<EmbeddedRung | null>;
+  /** The WHOLE resolved tree in one call, not one readAnchor per rung -- the Ladder tab/zz top's own view. Exists specifically because walking the tree one rung at a time (engine/ladderRender.ts's resolveLadderTree, driven externally) means N round trips for a backend where each readAnchor is a real network call -- fine for a handful of rungs, ruinous for a repo with hundreds of files and changesets. Each backend implements its own best strategy (LocalBackend: no network cost to begin with, just resolve fresh; CloudflareBackend: a durable, write-invalidated cache, since it's the one backend where a single readAnchor is genuinely expensive and repeat reads of an unchanged tree are the common case -- a live dashboard/TUI poll, not a one-off). Null only if the repo has no "_repo" rung at all yet (never onboarded). */
+  readLadderTree(repo: string): Promise<ResolvedRung | null>;
   /** A Rung, or several top-level Rungs at once -- the array case used to be handled one level up (engine/lane.ts's mergeLaneLadder); it lives here now so every caller goes through one method. */
   writeLadder(repo: string, rung: Rung | Rung[]): Promise<void>;
   appendRepoChildren(repo: string, children: { path: string; kind: RungKind }[]): Promise<void>;

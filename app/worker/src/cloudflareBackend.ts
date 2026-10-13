@@ -108,6 +108,24 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
   // 5 redundant checkouts instead of 2.
   const notesCache: NotesCache = new Map();
 
+  // The WHOLE resolved tree, cached durably and invalidated only on an
+  // actual write (writeLadder/appendRepoChildren below) -- not
+  // time-based, so a repo nobody's touching stays servable from cache
+  // indefinitely, and a repo that just got written to recomputes
+  // fresh exactly once before caching again. Durable storage, not an
+  // in-memory field, so it survives this DO instance being evicted
+  // and cold-starting later -- the in-memory notesCache above only
+  // needs to survive one burst of calls (it's just dedup within a
+  // resolve), but this is the actual "don't make a user wait on N
+  // real git-notes fetches to see an unchanged Ladder tab" fix, so it
+  // should outlive the JS instance, not just one request. Direct
+  // instruction: "cache at every level and invalidate cache only on
+  // ladder updates so that it can be warmed" -- this is that cache.
+  const LADDER_TREE_CACHE_KEY = "resolvedLadderTree";
+  async function invalidateLadderTreeCache(): Promise<void> {
+    await storage.delete(LADDER_TREE_CACHE_KEY);
+  }
+
   // Extracted out of the `readAnchor` method itself so reindexLadder
   // (below) can drive the same path-resolution logic through
   // resolveLadderTree without going through `this` -- a plain closure,
@@ -216,12 +234,31 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       return readAnchorFor(path);
     },
 
+    // The one real fix for "the Ladder tab/zz top is slow" -- see
+    // engine/backend.ts's own doc comment on this method for why a
+    // Cloudflare-backed repo needs this where LocalBackend doesn't.
+    // Cache-first: a cache hit is one durable-storage read, no
+    // Artifacts/git calls at all, regardless of how many rungs the
+    // real tree has.
+    async readLadderTree(): Promise<ResolvedRung | null> {
+      const cached = await storage.get<ResolvedRung>(LADDER_TREE_CACHE_KEY);
+      if (cached) return cached;
+      const { tree } = await resolveLadderTree(readAnchorFor);
+      await storage.put(LADDER_TREE_CACHE_KEY, tree);
+      return tree;
+    },
+
     async writeLadder(_repo, rung: Rung | Rung[]): Promise<void> {
       const rungs = (Array.isArray(rung) ? rung : [rung]).map(toSimpleRung);
       await withRepo(artifacts, artifactsName, async (repo, remote) => {
         const token = await repo.createToken("write", 3600);
         for (const one of rungs) await writeRung(remote, token, repo, one);
       });
+      // Any write can change what the resolved tree looks like (a
+      // new/changed rung, however deep) -- invalidate unconditionally
+      // rather than trying to decide whether THIS particular write
+      // affected it. The next read recomputes once, then re-caches.
+      await invalidateLadderTreeCache();
       // Index after the real write succeeds, not before -- a search
       // hit should never point at content that didn't actually land.
       const searchable: SimpleRung[] = [];
@@ -241,6 +278,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("write", 3600);
         await appendRepoChildrenImpl(remote, token, repo, children);
       });
+      await invalidateLadderTreeCache();
     },
 
     async searchLadder(query, limit) {

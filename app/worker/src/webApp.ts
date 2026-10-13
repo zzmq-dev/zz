@@ -86,6 +86,7 @@ import { ensureMeta, readRepoMeta, readRepoMetaAndRoles, readRepoRoles, repoAtLe
 import { LICENSES, LICENSE_ORDER, type LicenseOption } from "./licenses.js";
 import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
+import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { claimableAsks } from "../../engine/workqueue.js";
 import type { AskEntry, HistoryEntry, Lane } from "../../engine/types.js";
 
@@ -1012,45 +1013,21 @@ function flattenProtocol(lanes: Lane[]): ProtocolEvent[] {
   return events.sort((a, b) => (a.entry.at < b.entry.at ? 1 : -1));
 }
 
-// Ladder tab: the repo's full Ladder tree, read via repeated
-// ladder_read calls (the same shape engine/ladderRender.ts's
-// collectLadder resolves locally, just driven through callTool since
-// this runs in the Worker, not against a local clone). Only "ask"-
-// thread children come back as bare {ref} stubs needing a follow-up
-// call -- repo-wide/anchor kinds are already embedded inline. Capped
-// so a pathological ask-thread depth can't turn one page load into
-// hundreds of DO round-trips.
-interface LadderNode {
-  path: string;
-  kind: string;
-  summary: string;
-  children: LadderNode[];
-}
-
-const LADDER_TAB_NODE_CAP = 300;
-
-async function getLadderTree(env: WebEnv, artifactsName: string): Promise<LadderNode | null> {
+// Ladder tab: the repo's full Ladder tree, in one ladder_tree call --
+// server-side resolved and durably cached (cloudflareBackend.ts's
+// readLadderTree), invalidated only on an actual Ladder write.
+// Replaces what used to be a manual, worker-side walk of repeated
+// ladder_read calls (one per rung): confirmed live as a real
+// performance bug (every one of those calls re-paid a full git-notes
+// checkout, and the manual walk couldn't benefit from a cache that
+// lived across separate stub.callTool invocations). This also means
+// the web page's own first view of a repo is what warms the cache
+// the TUI/CLI then benefits from too, and vice versa -- one cache,
+// whichever side reads first.
+async function getLadderTree(env: WebEnv, artifactsName: string): Promise<ResolvedRung | null> {
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
-  let remaining = LADDER_TAB_NODE_CAP;
-
-  async function resolve(rung: EmbeddedRung): Promise<LadderNode> {
-    remaining -= 1;
-    const children: LadderNode[] = [];
-    for (const child of rung.children) {
-      if (remaining <= 0) break;
-      if (isRef(child)) {
-        const anchor = (await stub.callTool("ladder_read", { repo: artifactsName, path: child.ref })) as EmbeddedRung | null;
-        children.push(anchor ? await resolve(anchor) : { path: child.ref, kind: "ask", summary: "[missing]", children: [] });
-      } else {
-        children.push(await resolve(child));
-      }
-    }
-    return { path: rung.path, kind: rung.kind, summary: rung.summary, children };
-  }
-
-  const root = (await stub.callTool("ladder_read", { repo: artifactsName, path: "_repo" })) as EmbeddedRung | null;
-  return root ? resolve(root) : null;
+  return (await stub.callTool("ladder_tree", { repo: artifactsName })) as ResolvedRung | null;
 }
 
 // Fixed display order for the Ladder tab -- children of a node are
@@ -1066,7 +1043,7 @@ const LADDER_KIND_ORDER: Record<string, number> = {
   function: 9, lines: 10, linechange: 11, ask: 12, answer: 13,
 };
 
-function renderLadderNode(node: LadderNode, depth = 0): string {
+function renderLadderNode(node: ResolvedRung, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)

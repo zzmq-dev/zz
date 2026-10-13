@@ -76,6 +76,15 @@ export function createLocalBackend(): Backend {
       return readAnchorImpl(repoDirOf(repo), stateDirOf(repo), path);
     },
 
+    // No network cost here to begin with (git notes in a real local
+    // clone) -- resolve fresh every call, same as the Ladder tab
+    // already did before this method existed, just now reachable
+    // through one interface method instead of collectLadder directly.
+    async readLadderTree(repo): Promise<ResolvedRung | null> {
+      const { tree } = await collectLadder(repoDirOf(repo), stateDirOf(repo));
+      return tree;
+    },
+
     async writeLadder(repo, rung: Rung | Rung[]): Promise<void> {
       const rungs = Array.isArray(rung) ? rung : [rung];
       for (const one of rungs) await writeLadder(repoDirOf(repo), stateDirOf(repo), one);

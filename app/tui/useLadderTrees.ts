@@ -3,9 +3,8 @@
 // interval, so the TUI can show whether Ladder writes are actually
 // landing, not just the Lane/Ask/Answer protocol trail.
 import { useEffect, useState } from "react";
-import { collectLadder, resolveLadderTree, type ResolvedRung } from "../engine/ladderRender.js";
+import { collectLadder, type ResolvedRung } from "../engine/ladderRender.js";
 import { callRemoteTool } from "../cli/lib/remoteTools.js";
-import type { EmbeddedRung } from "../engine/ladderNotes.js";
 
 export interface LadderSnapshot {
   repo: string;
@@ -21,12 +20,12 @@ export function useLadderTrees(repos: { repo: string; repoDir: string; stateDir:
 
   useEffect(() => {
     let cancelled = false;
-    // Remote resolution is a handful of sequential round trips (one
-    // per rung), slow enough that a single read() can still be in
-    // flight when the next interval tick fires -- without this guard,
-    // a slow remote repo piles up more and more overlapping reads over
-    // time instead of ever settling, which looks indistinguishable
-    // from "never shows anything" rather than "takes a few seconds."
+    // One round trip per repo now (ladder_tree, server-side resolved
+    // and cached -- see cloudflareBackend.ts's readLadderTree), not
+    // one per rung -- but still guarded against overlap, since a cold
+    // cache on a large tree is still a real wait, and piling up
+    // overlapping reads on top of that looks indistinguishable from
+    // "never shows anything" rather than "takes a moment."
     let inFlight = false;
     const read = async () => {
       if (inFlight) return;
@@ -35,8 +34,8 @@ export function useLadderTrees(repos: { repo: string; repoDir: string; stateDir:
         const next: LadderSnapshot[] = [];
         for (const { repo, repoDir, stateDir } of repos) {
           try {
-            const { tree } = remote ? await resolveLadderTree((path) => callRemoteTool(repo, "ladder_read", { path }) as Promise<EmbeddedRung | null>) : await collectLadder(repoDir, stateDir);
-            next.push({ repo, tree });
+            const tree = remote ? ((await callRemoteTool(repo, "ladder_tree", {})) as ResolvedRung | null) : (await collectLadder(repoDir, stateDir)).tree;
+            if (tree) next.push({ repo, tree });
           } catch {
             // repo not onboarded/bootstrapped/reachable yet -- skip rather than crash the view
           }
