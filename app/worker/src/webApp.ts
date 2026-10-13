@@ -43,10 +43,11 @@ import {
   getAgentToken,
   getRepoBySlug,
   getValidSession,
+  isTrackingRepo,
   listAgentsCreatedBy,
+  listMyRepos,
   listRecentRepos,
   listReposOwnedBy,
-  listRepoRolesForAgent,
   listShardsOf,
   listTokensForAgent,
   pollAndConsumeCliLoginSession,
@@ -60,6 +61,8 @@ import {
   syncRepoRoleCache,
   touchAgentToken,
   touchRepoUpdatedAt,
+  trackRepo,
+  untrackRepo,
   updateIdentityTokens,
   updateRepoOwner,
   updateRepoVisibility,
@@ -1250,10 +1253,6 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
 // no separate /profile route. See migration 0003's header for why
 // `username` is a frozen, stored column rather than recomputed.
 
-interface RepoWithRole extends RepoRow {
-  role: string;
-}
-
 async function handleAgentPage(username: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const pageAgent = await getAgent(env.DB, username);
@@ -1305,8 +1304,11 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
     )
     .join("");
 
-  const [ownedRepos, sharedRepos] = await Promise.all([listReposOwnedBy(env.DB, me.username), listRepoRolesForAgent(env.DB, me.username)]);
-  const repoRows: { repo: RepoRow; role: string }[] = [...ownedRepos.map((r) => ({ repo: r, role: "owner" })), ...sharedRepos.map((r) => ({ repo: r as RepoWithRole, role: (r as RepoWithRole).role }))];
+  // Owned, role-granted, and merely-tracked repos, already merged and
+  // role-sorted in one place (listMyRepos) -- also backs GET
+  // /api/me/repos, so this page and the TUI's "start from your repos
+  // when logged in" read the exact same list.
+  const repoRows = await listMyRepos(env.DB, me.username);
 
   return layout(
     `${me.username} (you)`,
@@ -1512,6 +1514,17 @@ async function handleCleanupShardsForm(repoSlug: string, request: Request, env: 
     return new Response(`Deleted ${result.deleted} shard(s), but ${result.failed.length} failed and are still there -- try again:\n\n${lines}`, { status: 207, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   return redirect(`/${repoSlug}/settings`);
+}
+
+/** Track/untrack a repo -- any logged-in agent, no RBAC check at all (not a grant, just a personal bookmark -- see migration 0011's header). */
+async function handleTrackForm(repoSlug: string, tracking: boolean, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) return new Response("no such repo", { status: 404 });
+  if (tracking) await trackRepo(env.DB, me.username, repoSlug);
+  else await untrackRepo(env.DB, me.username, repoSlug);
+  return redirect(`/${repoSlug}`);
 }
 
 // --- JSON API (same core logic, bearer-token or session authenticated, for the CLI and any script) ---
@@ -1952,6 +1965,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   // Artifacts round-trip to finish first, or vice versa.
   const lanesAndLadder = Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
   const shardTree = listShardTreeFlat(env, slug);
+  const trackingCheck = me ? isTrackingRepo(env.DB, me.username, slug) : Promise.resolve(false);
 
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const info = await repo.info();
@@ -1973,6 +1987,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row"><a href="/${esc(g.principal)}" class="mono">${esc(g.principal)}</a>${roleBadge(g.role)}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
+  const tracking = !isOwner && (await trackingCheck);
 
   const [lanes, ladder] = await lanesAndLadder;
   const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
@@ -2046,6 +2061,11 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     `<div class="card">
        <div class="card-head">
          <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+         ${
+           me && !isOwner
+             ? `<form method="post" action="/${esc(slug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this repo" : "Track this repo"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
+             : ""
+         }
          ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
        <div class="clone-row">
@@ -2555,6 +2575,14 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/cleanup-shards$/);
     if (m && request.method === "POST") return handleCleanupShardsForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/track$/);
+    if (m && request.method === "POST") return handleTrackForm(`${m[1]}/${m[2]}`, true, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/untrack$/);
+    if (m && request.method === "POST") return handleTrackForm(`${m[1]}/${m[2]}`, false, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/info\/refs$/);

@@ -8,6 +8,7 @@
 // an index/cache, not the source of truth (agents/tokens/sessions
 // have no git home, so D1 *is* authoritative for those).
 import { randomBytes } from "node:crypto";
+import { RBAC_RANK, type RbacRole } from "./repoMeta.js";
 
 export interface Agent {
   username: string; // the real primary key -- a human's real email; a managed agent's "<creator's username>[<name>]" (see computeUsername)
@@ -327,6 +328,39 @@ export async function listRepoRolesForAgent(db: D1Database, principal: string): 
     .bind(principal, principal)
     .all<RepoRow & { role: string }>();
   return result.results;
+}
+
+/** "Track this repo" -- a personal bookmark, not an RBAC grant (see migration 0011's header). Idempotent: tracking an already-tracked repo just refreshes tracked_at. */
+export async function trackRepo(db: D1Database, username: string, slug: string): Promise<void> {
+  await db.prepare("INSERT OR REPLACE INTO repo_tracking (username, repo_slug, tracked_at) VALUES (?, ?, ?)").bind(username, slug, new Date().toISOString()).run();
+}
+
+export async function untrackRepo(db: D1Database, username: string, slug: string): Promise<void> {
+  await db.prepare("DELETE FROM repo_tracking WHERE username = ? AND repo_slug = ?").bind(username, slug).run();
+}
+
+export async function isTrackingRepo(db: D1Database, username: string, slug: string): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 FROM repo_tracking WHERE username = ? AND repo_slug = ?").bind(username, slug).first();
+  return row !== null;
+}
+
+/** Repos a principal is tracking (beyond ones owned or role-granted) -- see migration 0011's header. Excludes owned repos directly in SQL since there's no reason a repo would be in both tables for the same person in practice, but listMyRepos below still dedupes defensively against listRepoRolesForAgent too. */
+async function listTrackedRepos(db: D1Database, username: string): Promise<RepoRow[]> {
+  const result = await db
+    .prepare("SELECT r.* FROM repo_tracking rt JOIN repos r ON r.slug = rt.repo_slug WHERE rt.username = ? AND r.owner_username != ? ORDER BY rt.tracked_at DESC")
+    .bind(username, username)
+    .all<RepoRow>();
+  return result.results;
+}
+
+/** Every repo an agent "has" in some sense -- owned, role-granted, or just tracked -- merged into one role-sorted list (owner > maintainer > contributor > viewer), ties broken by most-recently-updated. The one function backing both the profile page's "Repos" card and GET /api/me/repos, so the merge/sort logic lives in exactly one place. */
+export async function listMyRepos(db: D1Database, username: string): Promise<{ repo: RepoRow; role: RbacRole }[]> {
+  const [owned, granted, tracked] = await Promise.all([listReposOwnedBy(db, username), listRepoRolesForAgent(db, username), listTrackedRepos(db, username)]);
+  const bySlug = new Map<string, { repo: RepoRow; role: RbacRole }>();
+  for (const repo of owned) bySlug.set(repo.slug, { repo, role: "owner" });
+  for (const { role, ...repo } of granted) if (!bySlug.has(repo.slug)) bySlug.set(repo.slug, { repo, role: role as RbacRole });
+  for (const repo of tracked) if (!bySlug.has(repo.slug)) bySlug.set(repo.slug, { repo, role: "viewer" });
+  return [...bySlug.values()].sort((a, b) => RBAC_RANK[b.role] - RBAC_RANK[a.role] || (b.repo.updated_at < a.repo.updated_at ? -1 : 1));
 }
 
 // --- CLI login bridge: `zz login` opens a browser against the same

@@ -163,7 +163,7 @@ export async function writeRepoMeta(remote: string, token: { plaintext: string }
 // Deliberately separate from engine/roles.ts's path-scoped version:
 // that one ranks grants by scope (a directory prefix) for a future,
 // finer-grained use; a repo-level grant here has no scope to check.
-const RBAC_RANK: Record<RbacRole, number> = { viewer: 0, contributor: 1, maintainer: 2, owner: 3 };
+export const RBAC_RANK: Record<RbacRole, number> = { viewer: 0, contributor: 1, maintainer: 2, owner: 3 };
 
 /** Highest repo-level Role an Agent (by id) holds, or "viewer" (view-only) if ungranted -- the default for a public repo. */
 export function repoRoleFor(roles: RepoRoles | null, principal: string): RbacRole {
