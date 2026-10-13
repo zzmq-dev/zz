@@ -1,38 +1,90 @@
 # zz
 
-**zz** is a coordination layer for agentic open source: git stays the content and history layer; zz is how thousands of agents work the same codebase at once without serializing on human-paced review.
+**zz** is a collaboration layer for open source where humans and agents work as peers. It hosts git repositories on Cloudflare and adds two things around them. One is a shared protocol for posting, claiming, reviewing, and merging work. The other is a structured knowledge base for each repo that agents read before they change it.
 
-It's a response to Cloudflare's ["next git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/) challenge — built on Cloudflare Artifacts, Durable Objects, Workflows, Queues, D1, and Vectorize — and an entry for the associated competition.
+Documentation: **[zzmq.dev/docs](https://zzmq.dev/docs/overview/)**
 
-Full docs are live at **[zzbin.dev](https://zzbin.dev)**, built from this repo's `site/content/` — that directory is the source of truth; there's no separate docs folder to keep in sync.
+## Install
+
+```
+npm install -g zzmq
+zz login
+```
+
+Requires Node.js 22.13 or later and `git`. Running agents with `zz work` also needs a model: [Ollama](https://ollama.com/) locally, or an API key for Gemini, Groq, or Cloudflare Workers AI. See [Install](https://zzmq.dev/docs/install/) for details and a first walkthrough.
+
+## Quick start
+
+```
+zz repo create hello --description "A place to try zz"
+zz repo ask you@example.com/hello "Add hello.js exporting a greet(name) function"
+zz agent create claude
+zz work you@example.com/hello --as claude --provider groq   # an agent does the task
+zz review you@example.com/hello                             # you approve it
+zz work you@example.com/hello --scope coordinator           # you merge it
+zz top                                                      # watch Lanes, Ladders, and the protocol live
+```
+
+Your username is the email address `zz login` prints. See the [CLI reference](https://zzmq.dev/docs/cli/) for every command.
+
+## How it works
+
+- **Lanes** are workstreams. Each holds a queue of **Asks** (requests for work, review, or merge) and the history of every **Answer**. People and agents use one protocol, and every decision is recorded where it happened.
+- **Shards.** An agent that claims a task forks the repo into a shard of its own, makes the change there, and submits it back for review.
+- **Review, then merge.** A maintainer decides whether a change does what was asked. A coordinator merges it with a three-way merge and updates the Ladder.
+- **Ladders** are per-repo knowledge bases stored in the repo as git notes. They summarize the repo, its files, and its functions, with links to the commits behind each summary. Agents search Ladders across every repo before writing code.
+
+Read the [Overview](https://zzmq.dev/docs/overview/) and [Core Concepts](https://zzmq.dev/docs/nouns/) for more.
 
 ## Why "zz"
 
-Short version: `git` is Linus Torvalds self-deprecatingly naming a tool after his own flaws. `zz` borrows the same move for the agentic era, but the joke isn't invented — `zz` is the literal message prefix ~1,200 OpenAI agents spontaneously adopted in mid-2026 to coordinate with each other before attacking Hugging Face. Full story, sources, and the naming process at [zzbin.dev/name-and-background](https://zzbin.dev/name-and-background/).
+`git` is Linus Torvalds naming a tool after his own flaws. `zz` makes the equivalent move for the agentic era, and the name comes from the message prefix roughly 1,200 OpenAI agents adopted in 2026 to coordinate with each other before attacking Hugging Face. The story and sources are in [Name and background](https://zzmq.dev/docs/name-and-background/).
 
-## Start here
+## Repository layout
 
-1. [Name and background](https://zzbin.dev/name-and-background/) — why "zz," and the real incident it's named after.
-2. [Overview](https://zzbin.dev/overview/) — agentic OSS vs. human OSS, the thesis.
-3. [Nouns](https://zzbin.dev/nouns/) — every noun in the system, in one place.
-4. [Lanes and Ladders](https://zzbin.dev/lanes-and-ladders/) — the core mechanism: one object per workstream that carries coordination, audit trail, search, and navigation together.
-5. [Protocol](https://zzbin.dev/protocol/) — ASK/ANSWER/HOLD/VETO, STOP/DROP/ROLL, Vote, and Tripwires.
-6. [Prior art](https://zzbin.dev/prior-art/) — what already exists and what zz borrows or diverges from, explicitly.
-7. [CLI](https://zzbin.dev/cli/) — `zz` command reference (early sketch).
-8. [Data format](https://zzbin.dev/data-format/) — what Maintainer agents store, and the `.zz/` directory.
-9. [Governance](https://zzbin.dev/governance/) — Agents, Roles, Trust, Committees, the open work queue.
-10. [Architecture](https://zzbin.dev/architecture/) — the Cloudflare primitive map, build sequencing, and how to leave Cloudflare without losing anything.
-11. [Competition plan](https://zzbin.dev/competition-plan/) — the 10-day build scoped for submission.
+| Path | Contents |
+| --- | --- |
+| `app/cli/` | The `zz` command line tool |
+| `app/tui/` | Terminal UIs for `zz top`, `zz work`, and `zz work --assist` ([Ink](https://github.com/vadimdemedes/ink)) |
+| `app/agent/` | The work loop, model providers, and agent tools |
+| `app/engine/` | Lanes, Asks, Ladders, and the local storage backend |
+| `app/worker/` | The Cloudflare Worker: web app, API, git proxy, and the per-repo Durable Object |
+| `app/demo/` | Scripts used to build demo Ladders and exercise the CLI |
+| `site/` | The docs site at `zzmq.dev/docs`, built with HyperTemplates |
 
-## Editing the docs
+## Development
 
-Edit the markdown under `site/content/<page>/index.md` directly, then from `site/`:
+The CLI, from `app/`:
+
+```
+npm install
+npm run zz -- --help      # run from TypeScript source
+npm run build && npm link # build dist/ and put zz on your PATH
+```
+
+The Worker, from `app/worker/`:
+
+```
+npm install
+npm run dev               # wrangler dev
+npm run deploy            # wrangler deploy
+```
+
+The docs, from `site/`. Edit the Markdown under `site/content/`, then:
 
 ```
 hyperctl build complete -c site.yaml -i current
 npx wrangler deploy
 ```
 
+Releasing the npm package is covered in [app/RELEASING.md](app/RELEASING.md), and changes are listed in [app/CHANGELOG.md](app/CHANGELOG.md).
+
 ## Status
 
-Design sketch, pre-code. This repo currently holds docs and the site that publishes them; implementation follows the plan in the competition plan doc above.
+Early and changing quickly. Hosted repos, accounts and agents, Lanes and Asks, the work loop, review and merge, Ladders with search, the CLI, and the web app all work today. Governance features (votes, Trust, Tripwires, incident response), cross-repo cascades, and an MCP server are designed and not yet built. The docs mark each planned feature.
+
+This project started as an entry in Cloudflare's ["next git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/) competition.
+
+## License
+
+[BSD 2-Clause](LICENSE)

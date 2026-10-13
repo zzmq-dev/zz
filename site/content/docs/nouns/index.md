@@ -1,134 +1,158 @@
 ---
 layout: docs
-title: "Nouns"
-description: "Every noun in the system, in one place."
+title: "Core Concepts"
+description: "Every noun in zz, in one place, with what is built today and what is planned."
 ---
-# Nouns
+# Core Concepts
 
-A reference for every noun in the system, in one place. Each entry is deliberately short; the doc it points to has the mechanics.
+A short definition of every noun in `zz`, each with a link to the page that covers it in depth. Other pages link here whenever they use one of these terms.
+
+Entries marked **Planned** are part of the design but not yet built. The rest work today.
 
 ## Who acts
 
 ### Agent
 
-An authenticatable identity, human or synthetic. One noun for both: a synthetic Agent and a human Agent have the same capabilities available, at different speeds. Elaborated in [Governance](/docs/governance/#agent).
+An authenticated identity that can act in `zz`, human or synthetic. Either kind can do anything the other can. A human Agent's username is the email address they log in with. [Governance](/docs/governance/#agent).
+
+### Managed agent
+
+An Agent created by another Agent, usually a person creating an identity for an AI model to work under. Its username is its creator's username plus a name in brackets, such as `you@example.com[claude]`. The creator can mint tokens for it and see what it does. Created with [`zz agent create`](/docs/cli/#zz-agent-create).
+
+### Token
+
+A bearer credential that authenticates one Agent. `zz login` saves one for you. `zz agent create` and `zz agent token` mint them for managed agents. A token works for both the API and git over HTTPS. [Git compatibility](/docs/git-compatibility/#authentication).
 
 ### Role
 
-A collection of permissions *and* operational expectations, granted to an Agent on a Repo: **Owner**, **Maintainer**, **Committer**, **Contributor**, **Reader**. The coarse capability class: what kinds of things an Agent can ask for. [Governance](/docs/governance/#role).
+A repo-level grant that sets what an Agent may do in a [Repo](#repo): **Owner**, **Maintainer**, **Contributor**, or **Viewer**. Granted with [`zz repo grant`](/docs/cli/#zz-repo-grant) or on the repo's settings page. [Governance](/docs/governance/#role).
 
 ### Committee
 
-A body, the set of Agents (Maintainers, by default) who jointly govern a Repo that opts into collective governance. [Governance](/docs/governance/#committee).
-
-### Auth Token
-
-A scoped credential an Agent authenticates with: a Repo, a permission level, an expiry. [Data format](/docs/data-format/).
+**Planned.** The set of Agents, Maintainers by default, who jointly govern a Repo that opts into collective governance. [Governance](/docs/governance/#committee).
 
 ## Where work lives
 
 ### Repo
 
-A versioned codebase, Artifacts-backed. Git's own noun, unchanged.
+A versioned codebase. Each `zz` repo is a git repository hosted on [Cloudflare Artifacts](https://developers.cloudflare.com/artifacts/), identified by a slug of `<owner>/<name>`, and cloneable with ordinary git. [Git compatibility](/docs/git-compatibility/).
 
-### Fork
+### Shard
 
-A copy of a Repo an Agent has full, autonomous access to. Git's own noun; the default way a claimed Lane gets worked in. [Lanes and Ladders](/docs/lanes-and-ladders/#fork-pattern).
+A fork of a Repo created for one task, owned by the Agent doing the task. When an agent claims a `work` [Ask](#ask), `zz work` forks the repo into a shard named `<agent>/<repo>[<task>]`, does the work there, and submits the result back to the parent for review. A sub-task delegated from inside a shard gets its own shard of the shard, so names nest, such as `<agent>/<repo>[<task>][<subtask>]`. [Lanes and Ladders](/docs/lanes-and-ladders/#shards).
 
 ## The unit of work
 
 ### Lane
 
-A workstream, combining a chat room, a work queue, a feature branch, and an issue with all its PRs into one object. Identified by `{repo, lane_id}`. Lanes are peers: a Lane tracks an `origin` (whichever Lane created it) and `related_lanes` (everything descended from it, at any depth). [Lanes and Ladders](/docs/lanes-and-ladders/).
+A workstream with its own queue of [Asks](#ask) and its own history. A Lane combines what other tools split across an issue, a feature branch, and a pull request. Identified by `{repo, lane_id}`. A Lane records its `origin` (the Lane that created it) and its `related_lanes` (the Lanes created from it). [Lanes and Ladders](/docs/lanes-and-ladders/).
+
+### Root Lane
+
+The long-lived Lane every repo has, with the id `_repo`. New tasks posted with `zz repo ask` land here, and the root Lane's coordinator is the one who merges changes and writes the repo's [Ladder](#ladder). It never completes. [Lanes and Ladders](/docs/lanes-and-ladders/#the-root-lane).
 
 ### Coordinator
 
-Whoever currently holds the claim on a Lane, a Lane-scoped position distinct from the system [Roles](#role) in Governance. Can be joint (several Agents deciding together) or sharded (several Agents each sole-authoritative over a disjoint slice, for volume). [Lanes and Ladders](/docs/lanes-and-ladders/#coordinator).
+An Agent listed in a Lane's `coordinators`. Coordinators answer coordinator-scope Asks, which include merging approved changes and writing the Ladder. The repo's owner coordinates its root Lane, and whoever opens a new Lane coordinates it. [Lanes and Ladders](/docs/lanes-and-ladders/#coordinators-and-maintainers).
+
+### Maintainer
+
+On a Lane, an Agent listed in `maintainers`, who may approve or reject a [Changeset](#changeset) under review. Defaults to the Lane's coordinators. Separately, Maintainer is also a repo [Role](#role). [Lanes and Ladders](/docs/lanes-and-ladders/#coordinators-and-maintainers).
 
 ### Claim
 
-An Agent's lease on a Lane, or on a reviewer slot on a Changeset, the fine-grained, scoped grant distinct from the coarser [Role](#role). [Protocol](/docs/protocol/#claim).
+An Agent's hold on one Ask, taken before working it. While an Ask is claimed, no one else can claim it. A claim can be released so someone else can take the Ask. [Protocol](/docs/protocol/#claims).
 
 ### Changeset
 
-The reviewable unit of code a Lane produces, `ASK`ed-for-review and `ANSWER`ed on its own. [Lanes and Ladders](/docs/lanes-and-ladders/#changeset).
+A proposed code change, made up of the full content of each changed file, a commit message, and a summary. A Changeset is reviewed through a `changeset_review` Ask and merged through a `submit_changeset` Ask. [Protocol](/docs/protocol/#review-and-merge).
+
+### Decomposition
+
+Splitting one task into independent sub-tasks, each posted as a `work` Ask in a new Lane whose origin is the original Lane. The agent working a task decides whether to decompose it, or the poster forces it with `zz repo ask --decompose`. [Lanes and Ladders](/docs/lanes-and-ladders/#decomposition).
+
+### Cascade
+
+**Planned.** Decomposition across many repos at once. One change, such as a security fix in a widely used library, fans out a related Lane into every dependent repo. [Lanes and Ladders](/docs/lanes-and-ladders/#cascades).
 
 ### Merge grant
 
-A single-use, scoped authorization issued by a Lane's Coordinator in answer to a `merge_request` `ASK`, consumed the moment a Changeset is pushed. Always issued explicitly, even on the OCC fast path. [Protocol](/docs/protocol/#review-and-merge-end-to-end).
+**Planned.** A single-use authorization to merge one Changeset, issued by a coordinator. Today the coordinator's completion of a `submit_changeset` Ask plays this role. [Protocol](/docs/protocol/#planned-verbs).
 
-### Cascades
-
-The name for work decomposition at a large scale: a single change whose impact fans out to many dependents at once, each getting its own related Lane in its own existing repo. Not a distinct Lane type, just the ordinary `ASK`-driven mechanism under volume. [Lanes and Ladders](/docs/lanes-and-ladders/#cascades).
-
-## The trace
+## The record
 
 ### Ladder
 
-A Lane's standing, continuously-updating summary, the decomposition tree itself, each rung regenerating whenever a state transition lands in the Lane's log. Already exists while work is in progress; `git log`/`git blame` only get computed when asked. Carries tacit knowledge (Insights) alongside the structural record, and a Coordinator pushes it proactively to an Agent claiming a Lane. [Lanes and Ladders](/docs/lanes-and-ladders/#how-a-ladder-works).
+A repo's structured knowledge base, kept in git notes inside the repo. Its backbone is the file tree, with a summary of the repo and of each directory, file, and function. Commits, releases, contributors, dependencies, and discussion threads hang off that tree. Agents read the Ladder before working, and coordinators update it as changes merge. [Lanes and Ladders](/docs/lanes-and-ladders/#ladders).
+
+### Rung
+
+One node in a Ladder. Each rung has a path (such as `src/index.js` or `_repo`), a kind (such as `file` or `changeset`), a summary, the sources it was written from, and child rungs. [Lanes and Ladders](/docs/lanes-and-ladders/#rung-kinds).
 
 ### Insight
 
-The lightest entry in a Lane's history, a short observation tagged `norm` (a best practice to adopt) or `trap` (something to avoid), captured in the flow of work with no claim or review attached. Gives a Ladder its tacit knowledge alongside the formal decisions. [Lanes and Ladders](/docs/lanes-and-ladders/#insights).
+**Planned.** A short note recorded in a Lane's history, tagged `norm` (a practice to follow) or `trap` (something to avoid). The history format and the viewers already support Insights; no tool posts them yet. [Lanes and Ladders](/docs/lanes-and-ladders/#insights).
 
 ### Decision
 
-The append-only record of why one commit merged: checks run, read/write sets, the merge grant that authorized it. System-written, read-only. [Data format](/docs/data-format/).
+**Planned.** A record of why one commit merged, listing the checks run, the files read and written, and the grant that authorized it. [Data format](/docs/data-format/).
 
 ## Deciding things
 
-### ASK
+### Ask
 
-A request, targeted at one Agent or broadcast to an audience (a structural scope × a Role filter), carrying a `kind` (claim, review, change, coordinator, or merge request). [Protocol](/docs/protocol/#ask).
+A request posted into a Lane's queue. Every Ask has a `kind`, such as `work` or `changeset_review`, and a payload with the details. It may also list other Asks it depends on and a priority. [Protocol](/docs/protocol/#ask).
 
-### ANSWER
+### Answer
 
-A response to an `ASK`: grant, deny, or inform. A granting `ANSWER` is itself the state transition: a Claim created, a merge grant issued. [Protocol](/docs/protocol/#answer).
+The response to an Ask: `grant`, `deny`, or `complete`. An Answer is what changes state. Granting a review approves a Changeset, and completing a `submit_changeset` commits it. [Protocol](/docs/protocol/#answer).
 
 ### HOLD
 
-A reversible pause on a Lane or Claim, with no judgment implied. [Protocol](/docs/protocol/#hold).
+**Planned.** A reversible pause on a Lane or Claim. [Protocol](/docs/protocol/#planned-verbs).
 
 ### VETO
 
-A hard rejection of one specific proposed change, from a Coordinator or Committee. Often carries a follow-up `ASK`. [Protocol](/docs/protocol/#veto).
+**Planned.** A hard rejection of one proposed change by a coordinator or Committee. [Protocol](/docs/protocol/#planned-verbs).
 
 ### Vote
 
-A formal ASF-style ballot (`+1`/`+0`/`-0`/`-1`) a Committee runs for decisions lazy consensus isn't enough for: Role grants, Policy changes, Owner succession. [Protocol](/docs/protocol/#vote).
+**Planned.** A formal ballot (`+1`, `+0`, `-0`, `-1`) a Committee runs for decisions such as granting Roles or changing Policy. [Protocol](/docs/protocol/#planned-verbs).
 
 ### Lazy consensus
 
-A timing rule on `VETO`, with no data of its own. An `ASK` carries a countdown, and is treated as answered once it expires unvetoed. [Protocol](/docs/protocol/#lazy-consensus).
+**Planned.** A timing rule. An Ask carries a deadline and is treated as approved if no one objects before it passes. [Protocol](/docs/protocol/#planned-verbs).
 
 ## Rules and safety
 
 ### Policy
 
-An Owner's governance configuration for a Repo: budget, review requirements, escalation rules, which governance model (`single_maintainer` or `committee`) applies. [Data format](/docs/data-format/).
+A repo's governance settings. Today these are `visibility` (`public` or `private`) and `require_changeset_review`. Budgets, reviewer requirements, and escalation rules are **planned**. [Data format](/docs/data-format/#zz-meta-branch).
 
 ### Tripwire
 
-A standing, declarative condition that forces the incident runbook or a review escalation regardless of what OCC's fast path would otherwise allow. [Protocol](/docs/protocol/#tripwires).
+**Planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#planned-verbs).
 
 ### Trust
 
-An Agent's standing, scored per topic rather than globally: high in the packages it's worked, low or absent elsewhere. Adjusted by merge-without-rework rate, revert rate, and whistleblow outcomes. [Data format](/docs/data-format/).
+**Planned.** An Agent's standing, scored separately for each area of the code it has worked in. [Governance](/docs/governance/#trust).
 
 ### Whistleblow
 
-A report, from any Agent, that work is **tainted** (contaminated provenance) or an Agent has **defected** (broken protocol). Feeds Trust and can trigger a Tripwire. [Protocol](/docs/protocol/#tainted-work-and-defecting-agents).
+**Planned.** A report from any Agent that work is **tainted** (built on bad sources) or that an Agent has **defected** (broken protocol). [Protocol](/docs/protocol/#planned-verbs).
 
 ## Incident response
 
+**Planned.** Three verbs for when something goes wrong, run in order by a Tripwire or invoked directly. [Protocol](/docs/protocol/#planned-verbs).
+
 ### STOP
 
-Halt further activity from an Agent or on a Lane immediately. Prevents more damage going forward; undoes nothing by itself. [Protocol](/docs/protocol/#incident-response-the-runbook).
+Halt all further activity from an Agent or on a Lane.
 
 ### DROP
 
-Discard in-flight, not-yet-merged work entirely, for damage that hasn't landed yet. [Protocol](/docs/protocol/#incident-response-the-runbook).
+Discard in-flight work that hasn't merged.
 
 ### ROLL
 
-Revert something that already merged, including every migration an auto-cascade already pushed downstream. [Protocol](/docs/protocol/#incident-response-the-runbook).
+Revert work that already merged, including changes it cascaded downstream.

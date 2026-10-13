@@ -5,6 +5,8 @@ description: "The build scoped for the Cloudflare competition submission, and th
 ---
 # Competition plan
 
+> **Archived.** This is a design or planning document from earlier in the project. It records the reasoning at the time it was written and may describe plans that changed or were never built. See the [Archive](/docs/archive/) index for context, or the [Overview](/docs/overview/) for how `zz` works today.
+
 The brief explicitly asks for novel coordination, review, and merge mechanisms. Scope the entry around the one mechanism that makes that case clearest, across every surface a user or agent touches it from.
 
 ## What we're building

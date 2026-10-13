@@ -5,6 +5,8 @@ description: "Moving the engine onto Cloudflare Artifacts and Durable Objects, w
 ---
 # Remote backend
 
+> **Archived.** This is a design or planning document from earlier in the project. It records the reasoning at the time it was written and may describe plans that changed or were never built. See the [Archive](/docs/archive/) index for context, or the [Overview](/docs/overview/) for how `zz` works today.
+
 Everything built so far (`app/engine/`, `app/agent/`, the `zz` CLI) runs against a local git clone and flat files under `.zz/`. This doc specs out running the same engine against Cloudflare Artifacts (the repo itself) and Durable Objects (Lane/Ask/Answer state), reachable through the same tool calls `zz work` already uses.
 
 **The local path keeps working.** This isn't a one-way migration. Running `zz` with no remote configured stays exactly what it is today: a local clone, local `.zz/` state, local git notes. Configuring a remote switches the same commands onto Cloudflare infrastructure, behind the same interface. This mirrors `engine/model.ts`'s `ModelBackend` split (local Ollama by default, nothing forced) -- the same pattern, one level down the stack.
