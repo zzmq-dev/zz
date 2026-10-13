@@ -141,13 +141,24 @@ function transcriptPlainText(entries: TranscriptEntry[]): string {
   return entries.map((e) => `${roleLabel[e.role]}: ${e.content}`).join("\n\n");
 }
 
+// "__unclaimed__" is never a real repo/lane id (repo slugs always
+// contain a "/"; lane ids come from shortId("lane") or well-known
+// names like "_repo") -- the sentinel laneDetailTarget value meaning
+// "show the claimable-across-all-watched-repos pseudo-lane" rather
+// than one real Lane's own history.
+const UNCLAIMED_SENTINEL = { repo: "__unclaimed__", laneId: "__unclaimed__" };
+
 export function AssistApp(props: AssistAppProps): React.ReactElement {
   const { watch, agent, scope, useRemote, backend, modeRun, authedCloneUrlFor, onExit } = props;
-  const [phase, setPhase] = useState<"picking" | "lanes" | "detail" | "session">("picking");
+  // Default screen is the lane picker, not a flat cross-repo ask list --
+  // pick a lane, see all its asks, then enter/c from there (or from the
+  // "unclaimed across all repos" pseudo-lane LaneList always appends as
+  // its last row, for a quick cross-repo view without picking through
+  // lanes one at a time).
+  const [phase, setPhase] = useState<"lanePicker" | "laneAsks" | "detail" | "session">("lanePicker");
   const [laneEditing, setLaneEditing] = useState(false);
   const [laneDetailTarget, setLaneDetailTarget] = useState<{ repo: string; laneId: string } | null>(null);
   const [claimableList, setClaimableList] = useState<ClaimableEntry[]>([]);
-  const [cursor, setCursor] = useState(0);
   const [previewing, setPreviewing] = useState<ClaimableEntry | null>(null);
   const [selected, setSelected] = useState<ClaimableEntry | null>(null);
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
@@ -243,13 +254,15 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     return () => clearTimeout(id);
   }, [flash]);
 
-  // Picker polling -- claimableAcrossRepos itself (engine/workqueue.ts)
-  // already encodes exactly the same scope/claim-holder rules the real
-  // `zz work` loop obeys, so this reuses it verbatim (wrapped in
-  // modeRun for correct remote backend scoping) instead of re-deriving
-  // the same logic by hand against raw lane_list reads.
+  // Backs both the lane picker's own "unclaimed (N)" row count and the
+  // unclaimed pseudo-lane's own ask list -- claimableAcrossRepos itself
+  // (engine/workqueue.ts) already encodes exactly the same scope/claim-
+  // holder rules the real `zz work` loop obeys, so this reuses it
+  // verbatim (wrapped in modeRun for correct remote backend scoping)
+  // instead of re-deriving the same logic by hand against raw lane_list
+  // reads. Polls whenever either screen that uses it is visible.
   useEffect(() => {
-    if (phase !== "picking") return;
+    if (phase !== "lanePicker" && phase !== "laneAsks") return;
     let cancelled = false;
     const read = async () => {
       try {
@@ -268,10 +281,6 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, agent, scope, reposKey]);
-
-  useEffect(() => {
-    if (cursor >= claimableList.length) setCursor(Math.max(0, claimableList.length - 1));
-  }, [claimableList, cursor]);
 
   // Session driver -- runs once when an ask is picked: builds this
   // ask's ScriptedFlowOptions, then drafts the first proposal/decision.
@@ -406,7 +415,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
     if (cmd === "cancel") {
       pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
-      setPhase("picking");
+      setPhase("laneAsks");
       setSelected(null);
       return;
     }
@@ -532,13 +541,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     // reason scroll deliberately never uses j/k either), and this needs
     // to work regardless of phase/busy/done, unlike everything below.
     if (key.ctrl && input === "y") {
-      if (phase === "picking") {
-        const c = claimableList[cursor];
-        if (c) {
-          copyToClipboard(`[${c.ask.kind}] ${c.repo}\n${describeAsk(c.ask)}`);
-          setFlash("copied to clipboard");
-        }
-      } else if (phase === "detail") {
+      if (phase === "detail") {
         if (previewing) {
           copyToClipboard(`[${previewing.ask.kind}] ${previewing.repo}\n${describeAsk(previewing.ask)}`);
           setFlash("copied to clipboard");
@@ -547,9 +550,10 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         copyToClipboard(transcriptPlainText(entries));
         setFlash("copied the transcript to clipboard");
       }
-      // phase === "lanes": nothing to copy at this outer level (LaneList
-      // manages its own selection internally, not exposed up here) --
-      // a no-op rather than copying something irrelevant.
+      // phase === "lanePicker"/"laneAsks": nothing to copy at this
+      // outer level (LaneList/LaneDetail manage their own selection
+      // internally, not exposed up here) -- a no-op rather than copying
+      // something irrelevant.
       return;
     }
     // ctrl+/: drop into a real shell in the shard directory this
@@ -571,38 +575,25 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       openShell();
       return;
     }
-    if (phase === "picking") {
+    if (phase === "lanePicker") {
+      // Arrow/enter navigation is LaneList's own -- it manages its own
+      // cursor, same as Explore.tsx's repo list. This outer handler
+      // only owns quit here.
       if (input === "q") {
         void onExit().then(() => process.exit(0));
-        return;
-      }
-      if (input === "n") {
-        setPhase("lanes");
-        return;
-      }
-      if (key.upArrow) setCursor((c) => Math.max(0, c - 1));
-      else if (key.downArrow) setCursor((c) => Math.min(claimableList.length - 1, c + 1));
-      else if (key.return && claimableList[cursor]) {
-        // Preview first, not an immediate claim -- same reasoning as
-        // Explore's own "view before you track" flow: picking an ask
-        // out of the list is a commitment (it claims it), so seeing
-        // the whole task description first, not just the one-line
-        // summary the list itself shows, matters.
-        setPreviewing(claimableList[cursor]);
-        setPhase("detail");
       }
       return;
     }
-    if (phase === "lanes") {
+    if (phase === "laneAsks") {
       // Composing (LaneDetail's own text box) owns the keyboard
       // entirely -- even esc, which LaneDetail interprets itself as
-      // "cancel composing," not "leave this screen." While viewing a
-      // lane's own detail (laneDetailTarget set), LaneDetail's own esc
-      // handler already backs out of that one level (its onBack prop);
-      // this outer handler only owns esc at the plain-list level, to
-      // avoid double-handling the same keystroke.
+      // "cancel composing," not "leave this screen." Viewing/claiming
+      // an ask (enter/c) is LaneDetail's own onViewAsk/onClaimAsk,
+      // which push phase to "detail"/"session" directly -- this outer
+      // handler only owns esc, to leave the list and go back to the
+      // lane picker.
       if (laneEditing) return;
-      if (key.escape && !laneDetailTarget) setPhase("picking");
+      if (key.escape) setPhase("lanePicker");
       return;
     }
     if (phase === "detail") {
@@ -632,7 +623,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       }
       if (key.escape) {
         setPreviewing(null);
-        setPhase("picking");
+        setPhase("laneAsks");
         return;
       }
       // "c" only, not key.return -- enter means exactly one thing
@@ -677,7 +668,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     }
     if (done) {
       if (key.return || key.escape) {
-        setPhase("picking");
+        setPhase("laneAsks");
         setSelected(null);
         setDone(false);
       }
@@ -686,7 +677,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     if (busy) return;
     if (key.escape) {
       pushEntry("system", "Paused -- still claimed. Pick it again any time to resume.");
-      setPhase("picking");
+      setPhase("laneAsks");
       setSelected(null);
       return;
     }
@@ -711,85 +702,72 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     }
   });
 
-  if (phase === "picking") {
-    // Always exactly two rows per ask -- [kind] repo on one, the
-    // description's own first line on the other, both truncated with
-    // an ellipsis (wrap="truncate-end") rather than wrapped. This is
-    // chrome, a list you're scanning to pick from, not content you're
-    // reading -- the full, wrapped description is one Enter away (the
-    // detail view below), same as Explore.tsx's own "view before you
-    // track" preview.
-    const pickerInnerRows = Math.max(1, rows - 4); // estimate only, box itself uses flexGrow below
-    const itemSlots = Math.max(1, Math.floor(pickerInnerRows / 2));
-    const windowStart = Math.max(0, Math.min(cursor - Math.floor(itemSlots / 2), Math.max(0, claimableList.length - itemSlots)));
-    const visible = claimableList.slice(windowStart, windowStart + itemSlots);
+  if (phase === "lanePicker") {
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
           <Text bold color={CYAN} wrap="truncate-end">
-            zz work --assist -- pick an ask ({backend.name})
+            zz work --assist -- pick a lane ({backend.name})
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-          {claimableList.length === 0 ? (
-            <Text color={MUTED}>No claimable work/changeset_review asks right now across your watched repos. (refreshing every 2s)</Text>
-          ) : (
-            visible.map((c, i) => {
-              const idx = windowStart + i;
-              const current = idx === cursor;
-              const firstLine = describeAsk(c.ask).split("\n")[0];
-              return (
-                <Box key={c.ask.id} flexDirection="column">
-                  <Text bold={current} color={current ? CYAN : undefined} wrap="truncate-end">
-                    {current ? "> " : "  "}
-                    <Text color={c.ask.kind === "work" ? YELLOW : GREEN}>[{c.ask.kind}]</Text> {c.repo}
-                    {c.alreadyClaimed ? " (claimed)" : ""}
-                  </Text>
-                  <Text color={MUTED} wrap="truncate-end">
-                    {"    "}
-                    {firstLine}
-                  </Text>
-                </Box>
-              );
-            })
-          )}
+          <LaneList
+            snapshots={laneSnapshots}
+            maxRows={innerRows}
+            scrollOffset={0}
+            onSelect={(repo, laneId) => {
+              setLaneDetailTarget({ repo, laneId });
+              setPhase("laneAsks");
+            }}
+            extraRows={[{ ...UNCLAIMED_SENTINEL, label: "unclaimed (across all watched repos)", count: claimableList.length }]}
+          />
         </Box>
         <Box>
           <Text color={flash ? GREEN : MUTED} wrap="truncate-end">
-            {flash ?? "↑/↓ select enter: view n: post a new ask ctrl+y: copy q/ctrl+c: quit"}
+            {flash ?? "↑/↓ select enter: view a lane's asks q/ctrl+c: quit"}
           </Text>
         </Box>
       </Box>
     );
   }
 
-  if (phase === "lanes") {
+  if (phase === "laneAsks" && laneDetailTarget) {
+    const isUnclaimed = laneDetailTarget.repo === UNCLAIMED_SENTINEL.repo;
     return (
       <Box flexDirection="column" width={columns} height={rows} backgroundColor={BACKDROP}>
         <Box backgroundColor={PANEL} paddingX={1}>
           <Text bold color={CYAN} wrap="truncate-end">
-            {laneDetailTarget ? `${laneDetailTarget.repo}/${laneDetailTarget.laneId}` : "post a new ask -- pick a lane"} ({backend.name})
+            {isUnclaimed ? "unclaimed across all watched repos" : `${laneDetailTarget.repo}/${laneDetailTarget.laneId}`} ({backend.name})
           </Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1}>
-          {laneDetailTarget ? (
-            <LaneDetail
-              repo={laneDetailTarget.repo}
-              laneId={laneDetailTarget.laneId}
-              snapshots={laneSnapshots}
-              maxRows={innerRows}
-              identity={agent}
-              onPostAsk={onPostAsk}
-              onBack={() => setLaneDetailTarget(null)}
-              onEditingChange={setLaneEditing}
-            />
-          ) : (
-            <LaneList snapshots={laneSnapshots} maxRows={innerRows} scrollOffset={0} onSelect={(repo, laneId) => setLaneDetailTarget({ repo, laneId })} />
-          )}
+          <LaneDetail
+            repo={laneDetailTarget.repo}
+            laneId={laneDetailTarget.laneId}
+            snapshots={laneSnapshots}
+            maxRows={innerRows}
+            identity={agent}
+            onPostAsk={onPostAsk}
+            onBack={() => {
+              setLaneDetailTarget(null);
+              setPhase("lanePicker");
+            }}
+            onEditingChange={setLaneEditing}
+            claimableEntries={isUnclaimed ? claimableList : undefined}
+            allowPost={!isUnclaimed}
+            onViewAsk={(entry) => {
+              setPreviewing(entry);
+              setPhase("detail");
+            }}
+            onClaimAsk={(entry) => {
+              setSelected(entry);
+              setPhase("session");
+            }}
+          />
         </Box>
         <Box>
           <Text color={MUTED} wrap="truncate-end">
-            esc: back
+            esc: back to lanes
           </Text>
         </Box>
       </Box>
