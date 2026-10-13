@@ -288,8 +288,11 @@ export async function listShardsOf(db: D1Database, parentSlug: string): Promise<
   return result.results;
 }
 
-export async function deleteRepoRow(db: D1Database, slug: string): Promise<void> {
+/** `artifactsName` is needed because ladder_index is keyed by it, not by slug (see migration 0008's header) -- without clearing it here too, a deleted repo's Ladder search entries become permanent orphans: never cleaned up, never matching anything useful (the slug they'd join against no longer exists), just dead weight the FTS5 index has to scan past on every future search. Confirmed live: 90 of 98 rows in a real deployment's ladder_index were exactly this, from repos deleted over the course of one long session's testing. */
+export async function deleteRepoRow(db: D1Database, slug: string, artifactsName: string): Promise<void> {
   await db.prepare("DELETE FROM repo_roles WHERE repo_slug = ?").bind(slug).run();
+  await db.prepare("DELETE FROM repo_tracking WHERE repo_slug = ?").bind(slug).run();
+  await db.prepare("DELETE FROM ladder_index WHERE artifacts_name = ?").bind(artifactsName).run();
   await db.prepare("DELETE FROM repos WHERE slug = ?").bind(slug).run();
 }
 

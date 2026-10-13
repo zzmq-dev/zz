@@ -944,7 +944,7 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
     if (actor.username !== repo.owner_username) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   }
 
-  await deleteRepoRow(env.DB, repo.slug);
+  await deleteRepoRow(env.DB, repo.slug, repo.artifacts_name);
 }
 
 interface ShardCleanupResult {
@@ -970,7 +970,7 @@ async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<Shard
       } catch (e) {
         if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
       }
-      await deleteRepoRow(env.DB, shard.slug);
+      await deleteRepoRow(env.DB, shard.slug, shard.artifacts_name);
       deleted += 1;
     } catch (e) {
       failed.push({ slug: shard.slug, error: e instanceof Error ? e.message : String(e) });
