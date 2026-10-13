@@ -597,6 +597,40 @@ export async function runDecomposeWorkAsk(opts: ScriptedFlowOptions): Promise<vo
   onLog(`[scripted] decomposition complete -- answered ${theAsk.id} complete, ${childLaneIds.length} sub-lane(s) created`);
 }
 
+const SHOULD_DECOMPOSE_SYSTEM_PROMPT = `You are an agent in the zz coordination system, deciding how to approach one task before starting it. You never call tools or write JSON here -- you only write plain text in the exact format below.
+
+Decide: is this task small enough to implement directly in a single focused pass, or does it actually bundle several genuinely independent pieces of work that would be better split into separate sub-tasks, each tracked and claimable on its own?
+
+Default to NOT decomposing -- most tasks are small enough to just do directly. Only decompose when the task explicitly describes multiple distinct, independent deliverables (e.g. "add functions A, B, and C, each in their own file") where splitting them would let different contributors work on them in parallel. A single focused change, even a moderately large one, is still "direct."
+
+Output format, exactly:
+DECISION: decompose
+or
+DECISION: direct
+
+Nothing else -- no prose, no explanation, no tool calls.`;
+
+function parseShouldDecompose(text: string): boolean {
+  const m = text.match(/^DECISION:\s*(decompose|direct)/m);
+  if (!m) throw new Error(`could not parse a DECISION: decompose|direct line from the model's response -- got:\n${text.slice(0, 500)}`);
+  return m[1] === "decompose";
+}
+
+/** What cli/commands/work.ts's autonomous loop actually calls for every "work" Ask now, instead of runContributorWorkAsk directly -- lets the agent itself judge, per Ask, whether to split it (runDecomposeWorkAsk) or just implement it directly (runContributorWorkAsk), via one cheap classification call before either path claims anything (only whichever path actually runs does the real claim, so there's no double-claim). payload.decompose (set by `zz repo ask --decompose`) skips the question and forces decomposition outright -- a human's explicit call always wins over the model's own judgment. */
+export async function runWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
+  const { theAsk, backend, onLog, onPartial } = opts;
+  const payload = theAsk.payload as { description?: string; decompose?: boolean } | undefined;
+  if (payload?.decompose) {
+    await runDecomposeWorkAsk(opts);
+    return;
+  }
+  const description = payload?.description ?? JSON.stringify(theAsk.payload);
+  const text = await generateText(backend, SHOULD_DECOMPOSE_SYSTEM_PROMPT, `Task:\n${description}`, onPartial);
+  const decompose = parseShouldDecompose(text);
+  onLog(`[scripted] ${decompose ? "decided to decompose this task into sub-tasks" : "decided this task is small enough to implement directly"}`);
+  await (decompose ? runDecomposeWorkAsk(opts) : runContributorWorkAsk(opts));
+}
+
 interface ChangesetPayload {
   files: { path: string; content: string }[];
   message: string;
