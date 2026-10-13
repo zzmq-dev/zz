@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Rung } from "../engine/ladder.js";
-import type { AskEntry, AskKind, Lane, LaneRef } from "../engine/types.js";
+import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef } from "../engine/types.js";
 
 export interface ToolDef {
   name: string;
@@ -470,6 +470,23 @@ const askClaim: ToolDef = {
   async execute({ repo, lane_id, ask_id, actor }) {
     const lane = await resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
+    // An ask can never be un-answered (engine/lane.ts's answer() itself
+    // rejects a second one outright) -- claimableAsks already excludes
+    // an answered ask from what it reports as claimable, but that's
+    // only a query-time filter; a direct ask_claim call (e.g. a TUI
+    // list that intentionally shows the FULL history, answered asks
+    // included, so there's somewhere to pick a done one for its own
+    // history) bypassed that entirely, which let someone claim an
+    // already-complete/denied ask and only discover the dead end much
+    // later, at the final (impossible) re-answer step. Caught here,
+    // right up front, with a clear "it's done, revise its feedback via
+    // the review-deny flow's own posted follow-up instead" message.
+    const existingAnswer = lane!.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === target.id);
+    if (existingAnswer) {
+      throw new Error(
+        `ask ${ask_id} was already answered (action "${existingAnswer.action}" at ${existingAnswer.at}) -- it can't be claimed again. If this was denied and needs rework, look for a new "work" ask carrying the feedback (acceptReview posts one automatically on a changeset_review deny) rather than reopening this one.`,
+      );
+    }
     // depends_on was previously only advisory (claimableAsks' query
     // filtered it out, but a direct ask_claim call bypassed that
     // entirely) -- the real enforcement a submit_changeset's required

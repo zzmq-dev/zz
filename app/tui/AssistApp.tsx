@@ -569,8 +569,8 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         return;
       }
       if (laneEditing) return;
-      if (key.leftArrow) setLanePickerTab("lanes");
-      else if (key.rightArrow) setLanePickerTab("unclaimed");
+      if (key.leftArrow || input === "1") setLanePickerTab("lanes");
+      else if (key.rightArrow || input === "2") setLanePickerTab("unclaimed");
       return;
     }
     if (phase === "laneAsks") {
