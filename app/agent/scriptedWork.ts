@@ -21,6 +21,8 @@
 // fixed order. The model supplies judgment (what the code should say,
 // how to describe it); the code supplies sequencing and structure.
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../cli/lib/repo.js";
@@ -29,6 +31,7 @@ import type { AskEntry } from "../engine/types.js";
 import { resolveBackend } from "../engine/backend.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
 import { threeWayMerge } from "./threeWayMerge.js";
+import { diffFileSets } from "../cli/lib/fileDiff.js";
 
 function findTool(name: string) {
   const tool = ALL_TOOLS.find((t) => t.name === name);
@@ -162,7 +165,7 @@ async function postForReview(opts: {
     lane_id: laneId,
     kind: "changeset_review",
     from: agent,
-    payload: { taskDescription, files, message, summary, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
+    payload: { taskDescription, files, message, summary, baseCommit, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
     depends_on: [],
   })) as AskEntry;
   await callTool("ask_post", {
@@ -217,6 +220,15 @@ export interface ScriptedFlowOptions {
 
 const MAX_SANDBOX_ATTEMPTS = 2;
 
+/** Writes a verified draft straight into the real working tree on disk (`resolved.repoDir`) -- a plain file write, never a git operation. Lets a human `cd` into the shard mid-session (another terminal, an editor, running the code) and see exactly what's being proposed without waiting for /commit, since commit_changeset's own git plumbing (engine/backend.ts's remoteBackend) never touches a local checkout at all -- it commits server-side, directly into Artifacts' object store. Deliberately decoupled from currentRepoFiles/currentHeadSha, which always read committed state via git plumbing (`git show HEAD:...`), never the working tree -- so these files sitting here ahead of any commit can never leak into what a later regeneration treats as "current state." */
+function writeFilesToWorkingTree(resolved: ResolvedRepo, files: { path: string; content: string }[]): void {
+  for (const f of files) {
+    const dest = join(resolved.repoDir, f.path);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, f.content);
+  }
+}
+
 /** The generate-then-sandbox-verify retry loop shared by a fresh proposal (proposeContributorWork) and a chat-revised one (reviseContributorWork) -- callers differ only in how they build the user prompt (fresh task framing vs. "here's the previous proposal plus feedback") and what system prompt a verified-from-scratch attempt starts with; a failed sandbox run always switches to FIX_SYSTEM_PROMPT on retry regardless of which caller is running. */
 async function generateVerifiedProposal(opts: {
   resolved: ResolvedRepo;
@@ -243,6 +255,8 @@ async function generateVerifiedProposal(opts: {
     const result = await verifyProposal(resolved, proposal.files);
     if (result.exitCode === 0) {
       onLog(`[scripted] sandbox passed`);
+      writeFilesToWorkingTree(resolved, proposal.files);
+      onLog(`[scripted] wrote the draft to ${resolved.repoDir}`);
       return { proposal, baseCommit };
     }
     lastFailure = `exit ${result.exitCode}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`;
@@ -683,6 +697,12 @@ interface ChangesetReviewPayload {
   files: { path: string; content: string }[];
   message: string;
   summary: string;
+  /** Absent on an older ask posted before this field existed -- prepareReviewWorkspace falls back to a plain file dump (no base to diff against) in that case. */
+  baseCommit?: string;
+  /** Shard provenance (postForReview's own `source` param) -- when present, prepareReviewWorkspace clones/syncs *that* repo (the one the contributor actually worked in) instead of writing into the review ask's own parent repo. */
+  source_repo?: string;
+  source_lane?: string;
+  commit_sha?: string;
 }
 
 // The policy this judges against is site/content/governance/index.md's
@@ -718,6 +738,30 @@ function parseReviewDecision(text: string): { decision: "approve" | "request_cha
 export interface ReviewProposal {
   decision: "approve" | "request_changes";
   reason: string;
+}
+
+export interface ReviewWorkspace {
+  repoDir: string;
+  diff: string;
+}
+
+/** Prepares a changeset_review ask for a human to actually look at: writes its proposed files into a real local clone -- the same task shard the contributor worked in, when the ask's payload names one (source_repo) and we're in remote mode (cloning/syncing it if needed), falling back to the review's own parent repo otherwise -- and computes a real diff against baseCommit, so a Maintainer can `cd` in and run the code, not just read a model's decision. Calls no model and claims nothing; proposeReview/acceptReview (below) own the protocol side. Safe to call more than once (idempotent: ensureCloned no-ops if already cloned, the file write just overwrites with the same content). */
+export async function prepareReviewWorkspace(opts: ScriptedFlowOptions): Promise<ReviewWorkspace> {
+  const { resolved, theAsk, authedCloneUrlFor } = opts;
+  const payload = theAsk.payload as ChangesetReviewPayload;
+  let target = resolved;
+  if (payload.source_repo && authedCloneUrlFor) {
+    target = resolveRepo(payload.source_repo);
+    ensureCloned(target, authedCloneUrlFor(payload.source_repo));
+  }
+  writeFilesToWorkingTree(target, payload.files);
+  const diff = payload.baseCommit
+    ? diffFileSets(
+        payload.files.map((f) => ({ path: f.path, content: fileContentAtCommit(target.repoDir, payload.baseCommit!, f.path) })),
+        payload.files,
+      )
+    : payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  return { repoDir: target.repoDir, diff: diff || "(identical to base -- nothing changed)" };
 }
 
 /** Claim (if needed) and draft a decision -- doesn't post anything. --assist (cli/commands/work.ts) shows `decision`/`reason` to a human, who may accept as-is or override either field, then calls acceptReview; runChangesetReview (below) just calls both back to back, unchanged behavior from before this split. */
@@ -763,7 +807,32 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // deliberately not required to also be a coordinator (that's the
   // whole point of narrowing maintainers to e.g. a single human actor
   // who approves but never merges).
-  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked`);
+  //
+  // The original "work" ask is already answered complete by this point
+  // (acceptContributorWork answers it the moment a changeset is
+  // submitted for review, not gated on the review's outcome -- an ask
+  // can never be un-answered, engine/lane.ts's answer() rejects a
+  // second one outright), so "request changes" would otherwise be a
+  // dead end: nothing claimable anywhere ever reflects that feedback.
+  // Posting a fresh "work" ask here, with the rejected draft and the
+  // reason folded into its description, is what actually gets it back
+  // in front of a contributor (the same one or a different one) to
+  // revise -- a plain "work" ask, not a new kind, so every existing
+  // path that already knows how to handle one (zz work's autonomous
+  // loop, --assist) picks it up with no special-casing.
+  const payload = theAsk.payload as ChangesetReviewPayload;
+  const filesBlock = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  const followup = (await callTool("ask_post", {
+    repo: resolved.slug,
+    lane_id: laneId,
+    kind: "work",
+    from: agent,
+    payload: {
+      description: `${payload.taskDescription}\n\nA Maintainer requested changes on the previous submission: ${proposal.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${filesBlock}`,
+    },
+    depends_on: [],
+  })) as AskEntry;
+  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked; posted a new work ask (${followup.id}) with the feedback for whoever picks it up next`);
 }
 
 export async function runChangesetReview(opts: ScriptedFlowOptions): Promise<void> {

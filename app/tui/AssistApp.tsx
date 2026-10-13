@@ -32,6 +32,7 @@ import {
   commitContributorWork,
   denyContributorWork,
   releaseAsk,
+  prepareReviewWorkspace,
   proposeReview,
   acceptReview,
   discussReview,
@@ -68,14 +69,21 @@ function describeAsk(ask: ClaimableEntry["ask"]): string {
   return payload?.description ?? payload?.taskDescription ?? JSON.stringify(ask.payload);
 }
 
-function formatFreshProposal(p: ContributorProposal["proposal"]): string {
+// repoDir note: the draft is already written straight into the shard's
+// working tree on disk the moment it verifies (scriptedWork.ts's own
+// writeFilesToWorkingTree) -- a plain file write, not a git commit. You
+// can `cd` there right now in another terminal and look at/run it;
+// /commit is what turns it into a real changeset (a git commit,
+// server-side, plus the matching Ladder rungs), not what first puts it
+// on disk.
+function formatFreshProposal(p: ContributorProposal["proposal"], repoDir: string): string {
   const filesBlock = p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-  return `${p.summary}\n(commit message: "${p.message}")\n\n${filesBlock}`;
+  return `${p.summary}\n(commit message: "${p.message}")\n\nWritten to ${repoDir} -- cd there to inspect or test it. /commit turns this into a real changeset.\n\n${filesBlock}`;
 }
 
-function formatRevisedProposal(previous: ContributorProposal["proposal"], p: ContributorProposal["proposal"]): string {
+function formatRevisedProposal(previous: ContributorProposal["proposal"], p: ContributorProposal["proposal"], repoDir: string): string {
   const diff = diffFileSets(previous.files, p.files);
-  return `${p.summary}\n(commit message: "${p.message}")\n\n${diff || "(no file changes)"}`;
+  return `${p.summary}\n(commit message: "${p.message}")\n\nRewritten to ${repoDir}.\n\n${diff || "(no file changes)"}`;
 }
 
 function formatDecision(d: ReviewProposal): string {
@@ -240,10 +248,14 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
             setStatus("type feedback to try again, /deny [reason], /release, or esc to pause");
           } else {
             workResultRef.current = res.result;
-            pushEntry("assistant", formatFreshProposal(res.result.proposal));
+            pushEntry("assistant", formatFreshProposal(res.result.proposal, res.result.resolved.repoDir));
             setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
           }
         } else {
+          setStatus("preparing the files for review...");
+          const workspace = await modeRun(() => prepareReviewWorkspace(flowOpts));
+          if (cancelled) return;
+          pushEntry("system", `Written to ${workspace.repoDir} -- cd there to browse or test it.\n\n${workspace.diff}`);
           setLiveLabel("thinking");
           setStatus("drafting a recommendation...");
           const proposal = await modeRun(() => proposeReview(flowOpts));
@@ -316,7 +328,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
         setStatus("committing...");
         const committed = await modeRun(() => commitContributorWork(flowOpts, workResultRef.current!));
         workResultRef.current = committed;
-        pushEntry("system", `Committed ${committed.shardSource?.commitOid.slice(0, 10)} to the shard. Still claimed -- /submit when ready, or pause (esc) and come back any time; this is saved.`);
+        pushEntry("system", `Real changeset ${committed.shardSource?.commitOid.slice(0, 10)} committed. Still claimed -- /submit when ready, or pause (esc) and come back any time; this is saved history now, not just a file on disk.`);
         setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
         setBusy(false);
         return;
@@ -340,7 +352,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       setBusy(true);
       setStatus(cmd === "approve" ? "approving..." : "requesting changes...");
       await modeRun(() => acceptReview(flowOpts, { decision, reason: arg || reviewResultRef.current!.reason }));
-      pushEntry("system", cmd === "approve" ? "Approved." : "Requested changes.");
+      pushEntry("system", cmd === "approve" ? "Approved." : "Requested changes -- posted a new work ask with your feedback and the rejected draft, claimable by anyone (the original contributor or someone else) to revise.");
       setStatus("");
       setDone(true);
       setBusy(false);
@@ -366,7 +378,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           setStatus("type feedback to try again, /deny [reason], /release, or esc to pause");
         } else {
           workResultRef.current = res.result;
-          pushEntry("assistant", formatFreshProposal(res.result.proposal));
+          pushEntry("assistant", formatFreshProposal(res.result.proposal, res.result.resolved.repoDir));
           setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
         }
       } else {
@@ -380,7 +392,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           pushEntry("assistant", `Couldn't produce a verified revision: ${res.denialReason}`);
         } else {
           workResultRef.current = res.result;
-          pushEntry("assistant", formatRevisedProposal(previous, res.result.proposal));
+          pushEntry("assistant", formatRevisedProposal(previous, res.result.proposal, res.result.resolved.repoDir));
         }
         setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
       }
@@ -484,6 +496,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
           <Text bold color={CYAN}>
             zz work --assist -- pick an ask
           </Text>
+          <Text color={MUTED}> ({backend.name})</Text>
         </Box>
         <Box borderStyle="round" borderColor={BORDER} flexDirection="column" height={Math.max(3, rows - 4)} overflow="hidden" paddingX={1}>
           {claimableList.length === 0 ? (
@@ -521,6 +534,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       <Box backgroundColor={PANEL} paddingX={1} flexDirection="column">
         <Text bold color={CYAN}>
           {selected?.ask.kind} {selected?.ask.id} in {selected?.repo}/{selected?.laneId}
+          <Text color={MUTED}> ({backend.name})</Text>
         </Text>
         <Text color={MUTED}>{selected ? describeAsk(selected.ask) : ""}</Text>
       </Box>
