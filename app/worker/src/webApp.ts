@@ -260,6 +260,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .md pre code{background:none;padding:0}
 .blob-header{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.75rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:8px 8px 0 0;margin-bottom:0}
 .blob-header a{color:var(--cyan)}
+.blob-header .summary-detail{flex:1 0 100%;margin-top:.4rem}
 .download-btn{margin-left:auto;font-size:.85rem;font-weight:700;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--pink);background:var(--pink);color:#1A0F2E !important}
 .download-btn:hover{background:#ff58a8;text-decoration:none}
 .blob-body{border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;overflow:hidden}
@@ -623,16 +624,23 @@ function ownerUrlSegment(agent: Agent): string {
 // call -- repo creation has to stay fast and free, and "fold in a
 // summary" (the one case ladder_write_rung's own CUMULATIVE_SUMMARY_KINDS
 // handling calls a model) only triggers when a rung ALREADY has a
-// summary to fold against, which a brand-new repo never does. These
-// mechanical summaries match exactly what agent/tools.ts's own
-// mechanicalFileChangeRung already falls back to for large commits
-// ("added."), not a new convention.
-function buildInitialLadderRungs(opts: { description: string | null; ownerName: string; sha: string; readmeFirstLine: string; license: LicenseOption | null }): Rung[] {
+// summary to fold against, which a brand-new repo never does. Since
+// there's no model call to lean on, these are hand-written explanations
+// of what a README/LICENSE actually IS and does -- a fixed "added."
+// would be technically true but tell a reader nothing they couldn't
+// already see from the filename.
+function buildInitialLadderRungs(opts: { description: string | null; ownerName: string; repoName: string; sha: string; license: LicenseOption | null }): Rung[] {
   const at = new Date().toISOString();
   const source = (title: string) => [{ kind: "commit" as const, ref: opts.sha, title, author: opts.ownerName, at }];
 
-  const readmeRung: Rung = { path: "README.md", kind: "file", summary: opts.readmeFirstLine || "Project README.", sources: source("Initial commit"), children: [] };
-  const licenseRung: Rung | null = opts.license ? { path: "LICENSE", kind: "file", summary: `${opts.license.name} license.`, sources: source("Initial commit"), children: [] } : null;
+  const trimmedDescription = opts.description?.trim().replace(/\.$/, "") || null;
+  const readmeSummary = `A README introducing the "${opts.repoName}" repository${trimmedDescription ? ` -- ${trimmedDescription}` : ""}. A README is the front door of an open-source project: the first document most visitors read, explaining what it does and how to use it.`;
+  const licenseSummary = opts.license
+    ? `The ${opts.license.name} license text. ${opts.license.blurb} A LICENSE file is what makes a repository's code legally reusable by others -- without one, the default under copyright law is "all rights reserved."`
+    : null;
+
+  const readmeRung: Rung = { path: "README.md", kind: "file", summary: readmeSummary, sources: source("Initial commit"), children: [] };
+  const licenseRung: Rung | null = opts.license && licenseSummary ? { path: "LICENSE", kind: "file", summary: licenseSummary, sources: source("Initial commit"), children: [] } : null;
 
   const changesetRung: Rung = {
     // Full sha, not truncated -- the established convention
@@ -646,15 +654,15 @@ function buildInitialLadderRungs(opts: { description: string | null; ownerName: 
     summary: `Initial commit: added README.md${opts.license ? ", LICENSE" : ""}.`,
     sources: source("Initial commit"),
     children: [
-      { path: "README.md", kind: "filechange", summary: "added.", sources: source("Initial commit"), children: [] },
-      ...(opts.license ? [{ path: "LICENSE", kind: "filechange" as const, summary: "added.", sources: source("Initial commit"), children: [] }] : []),
+      { path: "README.md", kind: "filechange", summary: `Added. ${readmeSummary}`, sources: source("Initial commit"), children: [] },
+      ...(opts.license && licenseSummary ? [{ path: "LICENSE", kind: "filechange" as const, summary: `Added. ${licenseSummary}`, sources: source("Initial commit"), children: [] }] : []),
     ],
   };
 
   const repoRung: Rung = {
     path: REPO_RUNG_PATH,
     kind: "repo",
-    summary: `${(opts.description?.trim() || "No description").replace(/\.$/, "")}. Contains README.md${opts.license ? ` and a ${opts.license.name} LICENSE` : ""}.`,
+    summary: `${trimmedDescription ?? "No description"}. Contains README.md${opts.license ? ` and a ${opts.license.name} LICENSE` : ""}.`,
     sources: source("Initial commit"),
     children: [],
   };
@@ -681,8 +689,7 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
 
-  const readmeFirstLine = (readmeContent.split("\n").find((l) => l.trim()) ?? "").replace(/^#+\s*/, "").trim();
-  const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, sha, readmeFirstLine, license });
+  const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, repoName: name, sha, license });
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
   await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
@@ -2052,15 +2059,20 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const ext = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : "";
+  // Nested inside .blob-header, not a sibling block after it -- a
+  // sibling would land in the gap between the header's rounded-top
+  // border and the body's rounded-bottom one (the two only look like
+  // one continuous box because the body has no top border), breaking
+  // that illusion. Staying inside the header's own border keeps it intact.
   const headerHtml = `<div class="blob-header">
     <a href="/${esc(slug)}">${esc(slug)}</a>
     ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
     <a href="/${esc(slug)}/download/${esc(path)}" class="download-btn" download>Download</a>
+    ${ladderDetailHtml(await ladderRung)}
   </div>`;
-  const ladderHtml = ladderDetailHtml(await ladderRung);
 
   if (looksBinary(bytes)) {
-    return layout(path, me, `${headerHtml}${ladderHtml}<div class="card">Binary file not shown.</div>`);
+    return layout(path, me, `${headerHtml}<div class="card">Binary file not shown.</div>`);
   }
 
   const text = new TextDecoder().decode(bytes);
@@ -2076,7 +2088,7 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   return layout(
     path,
     me,
-    `${headerHtml}${ladderHtml}
+    `${headerHtml}
      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/atom-one-dark.min.css">
      <div class="blob-body">${codeHtml}</div>
      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
