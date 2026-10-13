@@ -1,12 +1,16 @@
 node_modules/
 dist/
-demo-repos/superagent/
-demo-repos/supertest/
-demo-repos/numkit/
-demo-repos/numkit-cli/
-demo-repos/mathkit/
-demo-repos/mathkit-cli/
 .env
 *.db-shm
 *.db-wal
 worker/.wrangler
+
+# Local clones/state created by actually running zz against demo or
+# real repos (zz work, zz top, the demo scripts) -- blanket patterns,
+# not a named list, since a fresh run (or someone else's first run)
+# creates these under whatever repo/owner names it's actually pointed
+# at, not just the fixtures anyone happened to name explicitly before.
+# A name that's already tracked on purpose (e.g. demo-repos/numkit/)
+# stays tracked regardless -- gitignore only hides untracked paths.
+demo-repos/*/
+state/*/
