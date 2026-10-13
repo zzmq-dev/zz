@@ -62,7 +62,9 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
     }
     return true;
   });
-  const windowSize = Math.max(1, maxRows - 1);
+  // Two rows per event now (repo/lane/verb, then the detail line below
+  // it) -- see the row rendering's own comment for why.
+  const windowSize = Math.max(1, Math.floor((maxRows - 1) / 2));
   const maxOffset = Math.max(0, filtered.length - windowSize);
   const offset = Math.min(scrollOffset, maxOffset);
   const end = filtered.length - offset;
@@ -81,23 +83,25 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
         shown.map((e, i) => {
           const { label, color, rest } = eventParts(e);
           return (
-            <Box key={i}>
-              <Box width={28}>
-                <Text color={MUTED} wrap="truncate-end">
-                  {e.repo}
-                </Text>
+            <Box key={i} flexDirection="column">
+              <Box>
+                <Box width={26} marginRight={1} flexShrink={0}>
+                  <Text color={MUTED} wrap="truncate-end">
+                    {e.repo}
+                  </Text>
+                </Box>
+                <Box width={18} marginRight={1} flexShrink={0}>
+                  <Text color={MUTED} wrap="truncate-end">
+                    {e.laneId}
+                  </Text>
+                </Box>
+                <Box flexShrink={0}>
+                  <Text bold color={color} wrap="truncate-end">
+                    {label}
+                  </Text>
+                </Box>
               </Box>
-              <Box width={20}>
-                <Text color={MUTED} wrap="truncate-end">
-                  {e.laneId}
-                </Text>
-              </Box>
-              <Box width={8}>
-                <Text bold color={color}>
-                  {label}
-                </Text>
-              </Box>
-              <Text wrap="truncate-end">{rest}</Text>
+              <Text wrap="truncate-end"> {rest}</Text>
             </Box>
           );
         })
