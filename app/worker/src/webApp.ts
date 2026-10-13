@@ -296,7 +296,7 @@ function card(heading: string, innerHtml: string, opts: { addModal?: string; ext
   return `<section class="card${opts.extraClass ? ` ${opts.extraClass}` : ""}"><div class="card-head"><h2>${esc(heading)}</h2>${addBtn}</div>${innerHtml}</section>`;
 }
 
-const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", reader: "muted" };
+const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", viewer: "muted" };
 const LANE_STATUS_BADGE_VARIANT: Record<string, string> = { proposed: "yellow", open: "yellow", claimed: "blue", active: "cyan", merged: "green", closed: "muted", vetoed: "red", stopped: "red" };
 function roleBadge(role: string): string {
   return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
@@ -1407,7 +1407,7 @@ async function handleRbacGrantForm(repoSlug: string, request: Request, env: WebE
   if (!me) return redirect("/login");
   const form = await request.formData();
   try {
-    await doRbacGrant(env, me, repoSlug, String(form.get("principal") ?? ""), String(form.get("role") ?? "reader") as RbacRole);
+    await doRbacGrant(env, me, repoSlug, String(form.get("principal") ?? ""), String(form.get("role") ?? "viewer") as RbacRole);
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
@@ -1908,7 +1908,7 @@ async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<s
 
 // Public repos (the default, and everything created so far): open to
 // anyone, same as today. Private repos: a repo needs an explicit
-// grant (any role, including "reader") for the signed-in Agent (web
+// grant (any role, including "viewer") for the signed-in Agent (web
 // session) or the Agent resolved from a Basic Auth / bearer token
 // (git CLI, API clients) -- one check, one principal, no "or any of
 // my agents" indirection now that every Agent's standing is its own.
@@ -2096,7 +2096,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
-            ${(["owner", "maintainer", "contributor", "reader"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
+            ${(["owner", "maintainer", "contributor", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
           </select>
           <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
           <button type="submit" class="secondary" hidden>Save</button>
@@ -2154,7 +2154,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
        <h3>Add a role</h3>
        <form method="post" action="/${esc(slug)}/settings/roles" class="stack">
          ${agentAutocompleteField("principal", "agent name or id", "add-role")}
-         <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>reader</option></select>
+         <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>viewer</option></select>
          <div class="modal-actions">
            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Grant</button>

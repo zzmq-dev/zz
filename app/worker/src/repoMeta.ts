@@ -29,7 +29,7 @@ export interface RepoMeta {
   created_at: string;
 }
 
-export type RbacRole = "owner" | "maintainer" | "contributor" | "reader";
+export type RbacRole = "owner" | "maintainer" | "contributor" | "viewer";
 
 export interface RoleGrant {
   principal: string; // bare agent id
@@ -159,16 +159,16 @@ export async function writeRepoMeta(remote: string, token: { plaintext: string }
 }
 
 // Repo-level RBAC rank -- the same 4-role cut competition-plan.md
-// names (Owner, Maintainer, Contributor, Reader; Committer dropped).
+// names (Owner, Maintainer, Contributor, Viewer; Committer dropped).
 // Deliberately separate from engine/roles.ts's path-scoped version:
 // that one ranks grants by scope (a directory prefix) for a future,
 // finer-grained use; a repo-level grant here has no scope to check.
-const RBAC_RANK: Record<RbacRole, number> = { reader: 0, contributor: 1, maintainer: 2, owner: 3 };
+const RBAC_RANK: Record<RbacRole, number> = { viewer: 0, contributor: 1, maintainer: 2, owner: 3 };
 
-/** Highest repo-level Role an Agent (by id) holds, or "reader" (view-only) if ungranted -- the default for a public repo. */
+/** Highest repo-level Role an Agent (by id) holds, or "viewer" (view-only) if ungranted -- the default for a public repo. */
 export function repoRoleFor(roles: RepoRoles | null, principal: string): RbacRole {
-  if (!roles) return "reader";
-  let best: RbacRole = "reader";
+  if (!roles) return "viewer";
+  let best: RbacRole = "viewer";
   for (const grant of roles.grants) {
     if (grant.principal === principal && RBAC_RANK[grant.role] > RBAC_RANK[best]) best = grant.role;
   }
