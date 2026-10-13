@@ -53,8 +53,37 @@ function readOwnVersion(): string {
   }
 }
 
+const version = readOwnVersion();
+
+// The "v2.0.0" token is the one place a real version gets spliced in --
+// everything else here is verbatim ASCII art, not a generated/figlet
+// call, so it always renders pixel-for-pixel the same regardless of
+// terminal font. String.raw so every backslash below is taken
+// literally (no escaping needed to match the art exactly).
+const BANNER = String.raw`
+   __/\\\\\\\\\\\__/\\\\\\\\\\\___________________
+    _\///////\\\/__\///////\\\/____________________
+     ______/\\\/_________/\\\/___________v2.0.0_____
+      ____/\\\/_________/\\\/________________________
+       __/\\\\\\\\\\\__/\\\\\\\\\\\__/\\\\\\\\\\\\\\\_
+        _\///////////__\///////////__\///////////////__`.replace("v2.0.0", `v${version}`);
+
+// --version's own default (the banner, same as --help) only makes
+// sense for a human; --simple keeps the old bare-string behavior for
+// scripts/automation that parse `zz --version`'s output, so neither
+// use case had to change behavior out from under the other. Checked
+// directly against argv, ahead of commander's own parsing, since
+// commander's built-in .version() has no hook for "print something
+// else based on a second flag" -- this is simpler than fighting it.
+if (process.argv.includes("--version") || process.argv.includes("-V")) {
+  console.log(process.argv.includes("--simple") ? version : BANNER);
+  process.exit(0);
+}
+
 const program = new Command();
-program.name("zz").description("zz: a coordination layer for agentic open source").version(readOwnVersion());
+program.name("zz").description("zz: a coordination layer for agentic open source").version(version);
+program.addHelpText("before", `${BANNER}\n`);
+program.option("--simple", "with --version, print just the bare version string (for scripts)");
 
 const ladder = program.command("ladder").description("build and read a repo's Ladder");
 
