@@ -1961,6 +1961,7 @@ const HLJS_LANG_BY_EXT: Record<string, string> = {
   ts: "typescript", tsx: "typescript", jsx: "javascript",
   py: "python", rb: "ruby", rs: "rust", sh: "bash", yml: "yaml",
   md: "markdown", cs: "csharp", kt: "kotlin",
+  txt: "plaintext",
 };
 
 function looksBinary(bytes: Uint8Array): boolean {
@@ -1994,7 +1995,13 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   }
 
   const text = new TextDecoder().decode(bytes);
-  const lang = HLJS_LANG_BY_EXT[ext] ?? ext;
+  // No extension at all (LICENSE, Dockerfile, Makefile, ...) -- hljs
+  // treats an empty/unrecognized language class as a signal to run
+  // its own auto-detection heuristic instead of rendering plain text,
+  // which is exactly the wrong behavior for a file with no real
+  // language. "plaintext" is a real hljs language that just renders
+  // the text unhighlighted.
+  const lang = ext ? (HLJS_LANG_BY_EXT[ext] ?? ext) : "plaintext";
   const codeHtml = `<pre><code id="blob-code" class="language-${esc(lang)}">${esc(text)}</code></pre>`;
 
   return layout(
