@@ -68,19 +68,33 @@ export async function top(options: TopOptions): Promise<void> {
   process.on("SIGINT", () => void mode.cleanup().then(() => process.exit(0)));
   process.on("SIGTERM", () => void mode.cleanup().then(() => process.exit(0)));
 
-  const explicit = configuredRepos(options.repos);
+  // Priority: --repos (explicit, always wins) > the server's own
+  // per-identity list, if logged in (never mixed with a local config
+  // file that isn't scoped per-identity -- confirmed live: logging in
+  // as a second account still showed the first account's repos,
+  // because ~/.zz/config.json was being checked unconditionally
+  // before login state at all) > ~/.zz/config.json (the fallback for
+  // the two cases with no server-side list to use instead: remote but
+  // not logged in, or local mode) > local discovery > empty.
   let repoSlugs: string[];
-  if (explicit) {
-    repoSlugs = explicit;
-  } else if (mode.useRemote) {
-    repoSlugs = mode.identity ? (await apiFetch<{ repos: { slug: string }[] }>("GET", "/api/me/repos")).repos.map((r) => r.slug) : [];
+  if (options.repos && options.repos.length > 0) {
+    repoSlugs = options.repos;
+  } else if (mode.useRemote && mode.identity) {
+    repoSlugs = (await apiFetch<{ repos: { slug: string }[] }>("GET", "/api/me/repos")).repos.map((r) => r.slug);
   } else {
-    const discovered = await discoverLocalRepos();
-    if (discovered === null) {
-      await mode.cleanup();
-      return; // discoverLocalRepos already printed guidance -- nothing to render
+    const configured = configuredRepos();
+    if (configured) {
+      repoSlugs = configured;
+    } else if (mode.useRemote) {
+      repoSlugs = []; // not logged in, no config -- empty dashboard
+    } else {
+      const discovered = await discoverLocalRepos();
+      if (discovered === null) {
+        await mode.cleanup();
+        return; // discoverLocalRepos already printed guidance -- nothing to render
+      }
+      repoSlugs = discovered;
     }
-    repoSlugs = discovered;
   }
 
   const resolvedRepos = repoSlugs.map((slug) => resolveRepo(slug));
