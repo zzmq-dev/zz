@@ -121,6 +121,14 @@ export async function readRepoRoles(remote: string, token: { plaintext: string }
   return raw ? (JSON.parse(raw) as RepoRoles) : null;
 }
 
+/** Both files in ONE scoped checkout, not two independent ones -- readRepoMeta/readRepoRoles called separately (as webApp.ts's getRepoAccessContext used to) each pay for their own full git fetch of the zz-meta branch, even though they always want the exact same branch at the exact same moment. This is the one real fix for a repo page's own load time: every view was doing three of these fetches (this would-be-combined one, plus a THIRD hidden inside an unconditional ensureMeta existence-check) before being folded into this single call. */
+export async function readRepoMetaAndRoles(remote: string, token: { plaintext: string } | string): Promise<{ meta: RepoMeta | null; roles: RepoRoles | null }> {
+  const { fs, dir, headOid } = await scopedBranchCheckout(remote, token);
+  if (!headOid) return { meta: null, roles: null };
+  const [metaRaw, rolesRaw] = await Promise.all([readFileAt(fs, dir, headOid, "meta.json"), readFileAt(fs, dir, headOid, "roles.json")]);
+  return { meta: metaRaw ? (JSON.parse(metaRaw) as RepoMeta) : null, roles: rolesRaw ? (JSON.parse(rolesRaw) as RepoRoles) : null };
+}
+
 /** Creates the zz-meta branch with default meta.json/roles.json if it doesn't exist yet -- lazy bootstrap, called on repo creation or first web view of a pre-existing repo. No-op if meta.json already exists. */
 export async function ensureMeta(remote: string, token: { plaintext: string } | string, defaults: { description: string; owner: string; shardOf?: string }): Promise<void> {
   const existing = await readRepoMeta(remote, token);

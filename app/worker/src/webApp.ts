@@ -78,7 +78,7 @@ import {
   type OAuthEnv,
   type Provider,
 } from "./auth.js";
-import { ensureMeta, readRepoMeta, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole } from "./repoMeta.js";
+import { ensureMeta, readRepoMeta, readRepoMetaAndRoles, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole } from "./repoMeta.js";
 import { LICENSES, LICENSE_ORDER, type LicenseOption } from "./licenses.js";
 import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
@@ -813,7 +813,7 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
-  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
   if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
@@ -829,7 +829,7 @@ async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, 
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
-  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
   if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
 
@@ -1592,14 +1592,28 @@ async function walkTreeForZip(repo: ArtifactsRepo, treeHash: string, prefix: str
 // every read path (page, blob, archive, the git proxy below) sharing
 // one access-control check instead of several that could drift out
 // of sync.
+// This is the one function every repo-viewing route (handleRepoPage,
+// handleBlob, handleCommit, handleArchive, handleDownload, ...) calls
+// first, so its own cost sets the floor for all of them. It used to
+// do THREE separate full git fetches of the same zz-meta branch on
+// every single call: one hidden inside ensureMeta's own existence
+// check (readRepoMeta internally, to decide whether to no-op), plus
+// two more for meta/roles themselves. For a repo that's already been
+// viewed once (i.e. almost always), only the third pair was ever
+// doing real work -- now it's one fetch total, and ensureMeta (a real
+// write, only for a repo's actual first-ever access) only runs on the
+// rare path where that one read comes back empty.
 async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> } | null> {
   const repoRow = await getRepoBySlug(env.DB, slug);
   if (!repoRow) return null;
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const token = await repo.createToken("read", 300);
   const info = await repo.info();
-  await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
-  const [meta, roles] = await Promise.all([readRepoMeta(info.remote, token), readRepoRoles(info.remote, token)]);
+  let { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
+  if (!meta) {
+    await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
+    ({ meta, roles } = await readRepoMetaAndRoles(info.remote, token));
+  }
   return { repoRow, meta, roles };
 }
 
@@ -1672,12 +1686,22 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
   const { repoRow, meta, roles } = ctx;
 
+  // Started here, awaited down below where they're actually used --
+  // neither depends on anything from the git-content reads that
+  // follow (they only need artifacts_name, already in hand), so
+  // there's no reason the DO/Ladder round-trip should wait for the
+  // Artifacts round-trip to finish first, or vice versa.
+  const lanesAndLadder = Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
+
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const info = await repo.info();
-  const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
+  // One log() call, not two -- commits[0] is already HEAD, so a
+  // separate limit:1 call just to get `head` was a second full
+  // round-trip for a fact the limit:30 call already carries.
+  const commits = await repo.log({ ref: info.defaultBranch, limit: 30 });
+  const head = commits[0] ?? null;
   const tree: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
   const readme = head ? await findReadme(repo, tree) : null;
-  const commits = await repo.log({ ref: info.defaultBranch, limit: 30 });
 
   const fileListHtml = tree
     .map(
@@ -1690,7 +1714,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
 
-  const [lanes, ladder] = await Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
+  const [lanes, ladder] = await lanesAndLadder;
   const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
 
   const asksHtml = (rootLane?.history ?? [])
