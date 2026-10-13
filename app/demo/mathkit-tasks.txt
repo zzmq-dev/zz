@@ -1,0 +1,13 @@
+# One task description per line -- fed to `zz repo ask` by
+# demo/bulk-ask.sh. Edit this list (or copy it) with the real set of
+# small, independent tasks before recording Stage 6.
+Add an isPrime(n) function that returns whether n is a prime number, with tests.
+Add a gcd(a, b) function that returns the greatest common divisor of two integers, with tests.
+Add an lcm(a, b) function that returns the least common multiple of two integers, with tests.
+Add a factorial(n) function, with tests.
+Add a fibonacci(n) function that returns the nth Fibonacci number, with tests.
+Add a clamp(n, lo, hi) function that clamps a number into a range, with tests.
+Add a mean(numbers) function that returns the arithmetic mean of an array of numbers, with tests.
+Add a median(numbers) function that returns the median of an array of numbers, with tests.
+Add a roundTo(n, decimals) function that rounds a number to a given number of decimal places, with tests.
+Add an isPerfectSquare(n) function, with tests.
