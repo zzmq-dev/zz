@@ -151,6 +151,23 @@ const ladderSearch: ToolDef = {
   },
 };
 
+// Backfill for repos whose Ladder content predates the search index
+// (or a repo's last reindex): ladder_search only ever sees what's
+// been written since, so a file rung written before the feature
+// existed stays invisible to search until something re-writes it or
+// this runs. Scoped to THIS repo (unlike ladder_search, which is
+// cross-repo) -- reindexing is a per-repo maintenance action, not a
+// query.
+const ladderReindex: ToolDef = {
+  name: "ladder_reindex",
+  description: "Backfill this repo's cross-repo search index from its current full Ladder tree -- use this once for a repo whose existing content (written before ladder_search existed, or since its last reindex) isn't turning up in ladder_search results. Returns how many rungs got (re)indexed. A no-op in --local/demo mode (nothing to backfill there -- it searches fresh every time).",
+  parameters: { type: "object", properties: { repo: { type: "string" } }, required: ["repo"] },
+  async execute({ repo }) {
+    const count = await resolveBackend().reindexLadder(repo as string);
+    return { indexed: count };
+  },
+};
+
 const VALID_SOURCE_KINDS = new Set(["commit", "pr", "issue"]);
 
 // Fills in sources/children with [] when omitted, recursively, so a
@@ -618,7 +635,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderSearch, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askAnswerTool];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

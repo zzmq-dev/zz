@@ -125,6 +125,14 @@ export function createLocalBackend(): Backend {
       return hits.slice(0, limit);
     },
 
+    // No persisted index here to go stale -- searchLadder above scans
+    // every repo's CURRENT Ladder tree fresh on every call, so there's
+    // nothing to backfill (unlike the remote backend's D1 index,
+    // populated incrementally as writes happen).
+    async reindexLadder(): Promise<number> {
+      return 0;
+    },
+
     async readLane(repo, laneId): Promise<Lane | null> {
       return readLaneImpl(stateDirOf(repo), laneId);
     },

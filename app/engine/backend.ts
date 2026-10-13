@@ -47,6 +47,8 @@ export interface Backend {
   appendRepoChildren(repo: string, children: { path: string; kind: RungKind }[]): Promise<void>;
   /** Full-text search over every repo's Ladder, not just this one -- the cross-repo "ecosystem-wide intelligence" surface (agent/tools.ts's ladder_search). Public repos only (no actor param at this layer to scope private visibility by) -- a real backend-interface method, not an HTTP call from inside a tool's execute(), since that execute() runs server-side (inside the Durable Object) when dispatched through the generic remote tool-calling loop, where there's no filesystem/credentials to make an outbound authenticated call with. */
   searchLadder(query: string, limit: number): Promise<LadderSearchHit[]>;
+  /** Backfills this one repo's search index from its CURRENT full Ladder tree -- searchLadder only ever sees what's been written since the index existed, so content written before the feature shipped (or before a repo's last reindex) stays invisible to search until either a fresh write touches it or this runs. Returns how many rungs got (re)indexed. A no-op (returns 0) on backends with no persisted index to go stale in the first place -- LocalBackend's searchLadder scans fresh every call, so there's nothing to backfill there. */
+  reindexLadder(repo: string): Promise<number>;
 
   // Lane/Ask/Answer
   readLane(repo: string, laneId: string): Promise<Lane | null>;

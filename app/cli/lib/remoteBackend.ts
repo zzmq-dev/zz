@@ -68,4 +68,10 @@ export const remoteBackend: Backend = {
     const { hits } = await apiFetch<{ hits: { repo_slug: string; path: string; kind: string; commit_sha: string | null; summary: string }[] }>("GET", `/api/ladder/search?q=${encodeURIComponent(query)}&limit=${limit}`);
     return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as LadderSearchHit["kind"], commitSha: h.commit_sha, summary: h.summary }));
   },
+  // Repo-scoped (unlike searchLadder), so callRemoteTool applies here --
+  // routes to that one repo's DO, same as any other mutation-shaped call.
+  async reindexLadder(repo) {
+    const { indexed } = (await callRemoteTool(repo, "ladder_reindex", { repo })) as { indexed: number };
+    return indexed;
+  },
 };

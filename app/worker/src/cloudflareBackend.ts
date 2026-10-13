@@ -11,6 +11,7 @@ import type { Backend } from "../../engine/backend.js";
 import type { Lane } from "../../engine/types.js";
 import type { Rung, RungKind } from "../../engine/ladder.js";
 import type { EmbeddedRung as RealEmbeddedRung } from "../../engine/ladderNotes.js";
+import { resolveLadderTree, type ResolvedRung } from "../../engine/ladderRender.js";
 import type { CommitRow, FileChangeRow } from "../../engine/ingest.js";
 import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtCommitImpl, type ArtifactsNamespace, type ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
@@ -56,6 +57,12 @@ function collectSearchableRungs(rung: SimpleRung, out: SimpleRung[]): void {
   for (const child of rung.children) collectSearchableRungs(child, out);
 }
 
+/** Same filter, over a resolveLadderTree()-resolved tree instead of a SimpleRung -- used by reindexLadder, which walks the Ladder as it reads back (refs followed, not embedded inline the way a fresh write's SimpleRung already is). */
+function collectSearchableResolvedRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
+  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  for (const child of rung.children) collectSearchableResolvedRungs(child, out);
+}
+
 export function createCloudflareBackend(storage: DurableObjectStorage, artifacts: ArtifactsNamespace, artifactsName: string, db: D1Database): Backend {
   const sql = storage.sql;
   sql.exec("CREATE TABLE IF NOT EXISTS lanes (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
@@ -66,6 +73,38 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
   }
   function writeLaneSync(lane: Lane): void {
     sql.exec("INSERT OR REPLACE INTO lanes (id, data) VALUES (?, ?)", lane.id, JSON.stringify(lane));
+  }
+
+  // Extracted out of the `readAnchor` method itself so reindexLadder
+  // (below) can drive the same path-resolution logic through
+  // resolveLadderTree without going through `this` -- a plain closure,
+  // not a bound method, so it stays correct regardless of how this
+  // Backend object gets passed around.
+  async function readAnchorFor(path: string): Promise<RealEmbeddedRung | null> {
+    return withRepo(artifacts, artifactsName, async (repo, remote) => {
+      const token = await repo.createToken("read", 3600);
+      // "repo" for the root path. A changeset is anchored by commit
+      // sha, not a tree path -- readRung's `explicitAnchorSha` param
+      // exists for exactly this, but needs a real sha from somewhere.
+      // The established path convention (agent/tools.ts's
+      // VALID_RUNG_EXAMPLE, cli/commands/work.ts's own comment) is
+      // "changesets/<full commit sha>", so the sha is sitting right
+      // there in the path itself -- no index file needed, unlike the
+      // local backend's stateDir-based one (engine/ladderNotes.ts).
+      // Confirmed live: before this, a changeset rung could be
+      // written (writeLadder/toSimpleRung handle "changeset" fine)
+      // but never read back through this path -- readAnchor always
+      // fell through to "file", which tried to resolve the path as a
+      // real tree entry and failed ("not found in the repo at HEAD").
+      if (path === "_repo") {
+        return (await readRung(remote, token, repo, "repo", path)) as RealEmbeddedRung | null;
+      }
+      if (path.startsWith("changesets/")) {
+        const sha = path.slice("changesets/".length);
+        return (await readRung(remote, token, repo, "changeset", path, sha)) as RealEmbeddedRung | null;
+      }
+      return (await readRung(remote, token, repo, "file", path)) as RealEmbeddedRung | null;
+    });
   }
 
   return {
@@ -141,30 +180,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
     },
 
     async readAnchor(_repo, path: string): Promise<RealEmbeddedRung | null> {
-      return withRepo(artifacts, artifactsName, async (repo, remote) => {
-        const token = await repo.createToken("read", 3600);
-        // "repo" for the root path. A changeset is anchored by commit
-        // sha, not a tree path -- readRung's `explicitAnchorSha` param
-        // exists for exactly this, but needs a real sha from somewhere.
-        // The established path convention (agent/tools.ts's
-        // VALID_RUNG_EXAMPLE, cli/commands/work.ts's own comment) is
-        // "changesets/<full commit sha>", so the sha is sitting right
-        // there in the path itself -- no index file needed, unlike the
-        // local backend's stateDir-based one (engine/ladderNotes.ts).
-        // Confirmed live: before this, a changeset rung could be
-        // written (writeLadder/toSimpleRung handle "changeset" fine)
-        // but never read back through this path -- readAnchor always
-        // fell through to "file", which tried to resolve the path as a
-        // real tree entry and failed ("not found in the repo at HEAD").
-        if (path === "_repo") {
-          return (await readRung(remote, token, repo, "repo", path)) as RealEmbeddedRung | null;
-        }
-        if (path.startsWith("changesets/")) {
-          const sha = path.slice("changesets/".length);
-          return (await readRung(remote, token, repo, "changeset", path, sha)) as RealEmbeddedRung | null;
-        }
-        return (await readRung(remote, token, repo, "file", path)) as RealEmbeddedRung | null;
-      });
+      return readAnchorFor(path);
     },
 
     async writeLadder(_repo, rung: Rung | Rung[]): Promise<void> {
@@ -197,6 +213,27 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
     async searchLadder(query, limit) {
       const hits = await searchLadderIndex(db, query, limit, null);
       return hits.map((h) => ({ repo: h.repo_slug, path: h.path, kind: h.kind as RungKind, commitSha: h.commit_sha, summary: h.summary }));
+    },
+
+    // Backfill: searchLadder only ever sees what's been written SINCE
+    // the index existed (confirmed live: a repo with real "tie"/"untie"
+    // content in a file rung written before this feature shipped was
+    // invisible to search -- only a repo's newest written rung showed
+    // up). Walks the repo's current tree the same way the read path
+    // does (resolveLadderTree + this backend's own anchor resolution,
+    // following every ref) rather than trusting whatever's already
+    // embedded in one note, so a rung that's only reachable via a ref
+    // chain still gets (re)indexed correctly.
+    async reindexLadder(): Promise<number> {
+      const { tree } = await resolveLadderTree(readAnchorFor);
+      const searchable: ResolvedRung[] = [];
+      collectSearchableResolvedRungs(tree, searchable);
+      for (const one of searchable) {
+        const commitSources = one.sources.filter((s) => s.kind === "commit");
+        const commitSha = commitSources.length ? commitSources[commitSources.length - 1].ref : null;
+        await indexLadderRung(db, artifactsName, one.path, one.kind, one.summary, commitSha);
+      }
+      return searchable.length;
     },
 
     async readLane(_repo, laneId: string): Promise<Lane | null> {
