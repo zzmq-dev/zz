@@ -31,8 +31,8 @@ function cycle<T>(values: T[], current: T): T {
   return values[(i + 1) % values.length];
 }
 
-export function LiveLog({ events, maxRows, scrollOffset }: { events: FlatEvent[]; maxRows: number; scrollOffset: number }) {
-  const repos = useMemo(() => ["all", ...Array.from(new Set(events.map((e) => e.repo)))], [events]);
+export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { events: FlatEvent[]; /** Every repo currently being watched, not just ones with at least one event -- without this, a repo with no protocol activity yet (a brand-new Lane, or one with no Lane at all) never appeared in the "r" cycle at all, which looked indistinguishable from "doesn't know this repo exists" rather than "exists, nothing to show." */ watchedRepos?: string[]; maxRows: number; scrollOffset: number }) {
+  const repos = useMemo(() => ["all", ...Array.from(new Set([...watchedRepos, ...events.map((e) => e.repo)]))], [events, watchedRepos]);
   const lanes = useMemo(() => ["all", ...Array.from(new Set(events.map((e) => e.laneId)))], [events]);
   const kinds = useMemo(() => ["all", ...Array.from(new Set(events.map(kindOf).filter((k): k is string => k !== null)))], [events]);
 
@@ -82,11 +82,15 @@ export function LiveLog({ events, maxRows, scrollOffset }: { events: FlatEvent[]
           const { label, color, rest } = eventParts(e);
           return (
             <Box key={i}>
-              <Box width={22}>
-                <Text color={MUTED}>{e.repo}</Text>
+              <Box width={28}>
+                <Text color={MUTED} wrap="truncate-end">
+                  {e.repo}
+                </Text>
               </Box>
               <Box width={20}>
-                <Text color={MUTED}>{e.laneId}</Text>
+                <Text color={MUTED} wrap="truncate-end">
+                  {e.laneId}
+                </Text>
               </Box>
               <Box width={8}>
                 <Text bold color={color}>

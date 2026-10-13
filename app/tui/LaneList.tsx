@@ -20,13 +20,19 @@ export function LaneList({ snapshots, maxRows, scrollOffset }: { snapshots: Lane
       {shown.map(({ repo, lane }) => (
         <Box key={`${repo}/${lane.id}`}>
           <Box width={28}>
-            <Text color={MUTED}>{repo}</Text>
+            <Text color={MUTED} wrap="truncate-end">
+              {repo}
+            </Text>
           </Box>
           <Box width={24}>
-            <Text bold color={PINK}>{lane.id}</Text>
+            <Text bold color={PINK} wrap="truncate-end">
+              {lane.id}
+            </Text>
           </Box>
           <Box width={12}>
-            <Text bold color={STATUS_COLOR[lane.status] ?? MUTED}>{lane.status}</Text>
+            <Text bold color={STATUS_COLOR[lane.status] ?? MUTED} wrap="truncate-end">
+              {lane.status}
+            </Text>
           </Box>
           <Text color={MUTED} wrap="truncate-end">
             coord: {lane.coordinators.join(", ")}

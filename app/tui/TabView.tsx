@@ -1,7 +1,9 @@
 // A real full-screen tabbed frame: fixed to the terminal's actual size
 // (see useTerminalSize) with a bordered content pane sized to fit, so
-// nothing spills into scrollback. Left/right arrows (or h/l), 1-9, or
-// clicking a tab's label switches tabs; up/down arrows (or k/j), Page
+// nothing spills into scrollback. Left/right arrows, 1-9, or
+// clicking a tab's label switches tabs (deliberately not h/l too --
+// those are free-text characters in some tabs' own content, e.g.
+// Explore's search box); up/down arrows (or k/j), Page
 // Up/Down, Home/End, and the mouse wheel scroll the active tab's
 // content -- each content renderer decides what a given scroll offset
 // actually means (older entries for a log, earlier rows for a list)
@@ -61,7 +63,7 @@ export function TabView({
   title: string;
   tabs: Tab[];
   onExit?: () => Promise<void> | void;
-  /** True while the active tab's own content owns the keyboard (e.g. Explore's search box mid-query) -- every single-character hotkey below (q/h/l/y/digits) would otherwise collide with free-text typing. TabView's own scroll/tab-switch/quit/copy keys are suppressed entirely until this goes back to false; the content itself is responsible for its own escape hatch back out of that state. */
+  /** True while the active tab's own content owns the keyboard (e.g. Explore's search box mid-query) -- every single-character hotkey below (q/y/digits) would otherwise collide with free-text typing. TabView's own scroll/tab-switch/quit/copy keys are suppressed entirely until this goes back to false; the content itself is responsible for its own escape hatch back out of that state. */
   inputPaused?: boolean;
   /** Which tab is active on first render -- defaults to 0 (unchanged for every existing caller). zz top's own Explore tab is always tabs[0] (reachable at any time, regardless of which tab opens first) but should only be the one that actually opens first when there's nothing else to show yet (see TopApp.tsx). */
   initialTab?: number;
@@ -113,8 +115,8 @@ export function TabView({
         });
         return;
       }
-      if (key.rightArrow || input === "l") setActive((i) => (i + 1) % tabs.length);
-      else if (key.leftArrow || input === "h") setActive((i) => (i - 1 + tabs.length) % tabs.length);
+      if (key.rightArrow) setActive((i) => (i + 1) % tabs.length);
+      else if (key.leftArrow) setActive((i) => (i - 1 + tabs.length) % tabs.length);
       else if (key.upArrow || input === "k") scrollUp();
       else if (key.downArrow || input === "j") scrollDown();
       else if (key.pageUp) setScroll((s) => s + pageSize);

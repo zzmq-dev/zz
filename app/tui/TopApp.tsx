@@ -67,7 +67,7 @@ export function TopApp({
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
         {
           label: "protocol",
-          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} />,
+          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} watchedRepos={watchedRepos.map((r) => r.slug)} maxRows={maxRows} scrollOffset={scrollOffset} />,
           getFullText: () => liveLogText(flattenEvents(snapshots)),
         },
       ]}

@@ -749,6 +749,13 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
   await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
+  // The repo's own long-lived root Lane -- matches cli/commands/
+  // ladder-build.ts's identical bootstrap for the local onboarding
+  // path. Without this, lane_list on a brand-new repo returned []
+  // (not just "no history yet", genuinely no Lane at all), which is
+  // why a freshly created repo looked completely unreachable from zz
+  // top's protocol/lanes tabs, not just empty -- confirmed live.
+  await stub.callTool("lane_propose", { repo: artifactsName, id: REPO_RUNG_PATH, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username });
 
   return row;
 }
