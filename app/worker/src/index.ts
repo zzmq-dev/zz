@@ -308,6 +308,48 @@ async function testFetchMissingRef(env: Env): Promise<Response> {
   }
 }
 
+// The original proof-of-mechanism test (see this file's own header):
+// create a real Artifacts repo, write/push a commit via isomorphic-git,
+// read it back through the native binding, delete it. Only ever runs
+// on its own explicit path now -- see the fetch handler's own comment
+// for why it used to run on every unmatched request instead.
+async function testProofOfMechanism(env: Env): Promise<Response> {
+  const repoName = "proof-" + Date.now();
+  const steps: Record<string, unknown> = {};
+  try {
+    const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
+    steps.created = { name: created.name, remote: created.remote };
+    const token = tokenString(created.token);
+
+    const fs = createMemFs();
+    const dir = "/repo";
+    await git.init({ fs, dir, defaultBranch: "main" });
+    const blobOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("hello from a real Worker\n") });
+    const treeOid = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "README.md", oid: blobOid, type: "blob" }] });
+    const person = { name: "zz-worker", email: "zz-worker@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+    const commitOid = await git.writeCommit({ fs, dir, commit: { message: "seed from Worker", tree: treeOid, parent: [], author: person, committer: person } });
+    await git.writeRef({ fs, dir, ref: "refs/heads/main", value: commitOid, force: true });
+    const onAuth = () => ({ username: "x-token-auth", password: token });
+    const pushResult = await git.push({ fs, http, dir, url: created.remote, onAuth, ref: "main", remoteRef: "main" });
+    steps.push = pushResult;
+
+    const repo = await env.ARTIFACTS.get(repoName);
+    const log = await repo.log({ ref: "main", limit: 5 });
+    steps.log = log;
+    const nativeCommit = await repo.readCommit(commitOid);
+    const nativeTree = nativeCommit ? await repo.readTree(nativeCommit.treeHash) : null;
+    const nativeBlob = nativeTree ? await repo.readBlob(nativeTree[0].hash) : null;
+    steps.nativeRead = { blobText: nativeBlob ? await nativeBlob.text() : null };
+
+    await env.ARTIFACTS.delete(repoName);
+    steps.cleanedUp = true;
+    return Response.json({ ok: true, steps });
+  } catch (err) {
+    await env.ARTIFACTS.delete(repoName).catch(() => {});
+    return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
+  }
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const path = new URL(req.url).pathname;
@@ -361,39 +403,18 @@ export default {
     const webResponse = await handleWebRequest(req, env);
     if (webResponse) return webResponse;
 
-    const repoName = "proof-" + Date.now();
-    const steps: Record<string, unknown> = {};
-    try {
-      const created = await env.ARTIFACTS.create(repoName, { setDefaultBranch: "main" });
-      steps.created = { name: created.name, remote: created.remote };
-      const token = tokenString(created.token);
-
-      const fs = createMemFs();
-      const dir = "/repo";
-      await git.init({ fs, dir, defaultBranch: "main" });
-      const blobOid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode("hello from a real Worker\n") });
-      const treeOid = await git.writeTree({ fs, dir, tree: [{ mode: "100644", path: "README.md", oid: blobOid, type: "blob" }] });
-      const person = { name: "zz-worker", email: "zz-worker@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
-      const commitOid = await git.writeCommit({ fs, dir, commit: { message: "seed from Worker", tree: treeOid, parent: [], author: person, committer: person } });
-      await git.writeRef({ fs, dir, ref: "refs/heads/main", value: commitOid, force: true });
-      const onAuth = () => ({ username: "x-token-auth", password: token });
-      const pushResult = await git.push({ fs, http, dir, url: created.remote, onAuth, ref: "main", remoteRef: "main" });
-      steps.push = pushResult;
-
-      const repo = await env.ARTIFACTS.get(repoName);
-      const log = await repo.log({ ref: "main", limit: 5 });
-      steps.log = log;
-      const nativeCommit = await repo.readCommit(commitOid);
-      const nativeTree = nativeCommit ? await repo.readTree(nativeCommit.treeHash) : null;
-      const nativeBlob = nativeTree ? await repo.readBlob(nativeTree[0].hash) : null;
-      steps.nativeRead = { blobText: nativeBlob ? await nativeBlob.text() : null };
-
-      await env.ARTIFACTS.delete(repoName);
-      steps.cleanedUp = true;
-      return Response.json({ ok: true, steps });
-    } catch (err) {
-      await env.ARTIFACTS.delete(repoName).catch(() => {});
-      return Response.json({ ok: false, error: err instanceof Error ? (err.stack ?? err.message) : String(err), steps }, { status: 500 });
-    }
+    // Was, for a long time, an unguarded live-Artifacts proof-of-
+    // mechanism test (create a real repo, commit, push, read back,
+    // delete) run on EVERY request handleWebRequest didn't itself
+    // claim -- including, once the web app grew enough real routes
+    // that most of the URL space belongs to it, totally ordinary
+    // unmatched requests in production (confirmed live: a Workers
+    // Routes precedence issue sent "/" here instead of the docs
+    // worker, and this ran a real create/push/delete cycle on every
+    // hit instead of just 404ing). The actual proof-of-mechanism test
+    // this used to BE still exists, just moved behind its own explicit
+    // path so it only ever runs on purpose.
+    if (path === "/proof-of-mechanism-test") return testProofOfMechanism(env);
+    return new Response("not found", { status: 404 });
   },
 };
