@@ -12,9 +12,16 @@ import { useLadderTrees } from "./useLadderTrees.js";
 import { flattenEvents } from "./types.js";
 import { laneListText, liveLogText, ladderText } from "./textExport.js";
 
-export function TopApp({ repos }: { repos: { repo: string; repoDir: string; stateDir: string }[] }) {
-  const snapshots = useLaneSnapshots(repos);
-  const ladders = useLadderTrees(repos);
+export function TopApp({
+  repos,
+  remote,
+}: {
+  repos: { repo: string; repoDir: string; stateDir: string }[];
+  /** Mirrors WorkApp's own prop: in remote mode, Lane/Ladder state lives on the deployed Worker, not in a local clone's flat files/git notes -- see useLaneSnapshots.ts/useLadderTrees.ts's own `remote` param. */
+  remote: boolean;
+}) {
+  const snapshots = useLaneSnapshots(repos, 500, remote);
+  const ladders = useLadderTrees(repos, 2000, remote);
   return (
     <TabView
       title="zz top"

@@ -16,15 +16,16 @@ function configPath(): string {
   return process.env.ZZ_CONFIG ? resolveUserPath(process.env.ZZ_CONFIG) : join(homedir(), ".zz", "config.json");
 }
 
-export function readConfig(overrides: { agent?: string; repos?: string[] } = {}): ZzConfig {
+/** `allowEmpty`: for a read-only viewer (`zz top`) that has something sensible to show with zero repos (an empty dashboard) -- `zz work`/`zz review` genuinely need at least one repo to do anything, so they never pass this. */
+export function readConfig(overrides: { agent?: string; repos?: string[]; allowEmpty?: boolean } = {}): ZzConfig {
   const path = configPath();
   let base: Partial<ZzConfig> = {};
   if (existsSync(path)) {
     base = JSON.parse(readFileSync(path, "utf8")) as Partial<ZzConfig>;
   }
   const agent = overrides.agent ?? base.agent;
-  const repos = overrides.repos ?? base.repos;
-  if (!agent || !Array.isArray(repos) || repos.length === 0) {
+  const repos = overrides.repos ?? base.repos ?? (overrides.allowEmpty ? [] : undefined);
+  if (!agent || !Array.isArray(repos) || (repos.length === 0 && !overrides.allowEmpty)) {
     throw new Error(
       `no usable zz config (looked at ${path}${existsSync(path) ? "" : ", which doesn't exist"}). Provide --agent and --repos, or create a config: {"agent": "your-agent-id", "repos": ["owner/repo", ...]}`,
     );

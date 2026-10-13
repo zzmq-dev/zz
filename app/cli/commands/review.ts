@@ -17,13 +17,11 @@ import { readConfig } from "../lib/config.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../lib/repo.js";
 import { claimableAcrossRepos } from "../../engine/workqueue.js";
 import { ask, answer } from "../../engine/lane.js";
-import { resolveBackend, withBackend } from "../../engine/backend.js";
+import { resolveBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
 import { authedCloneUrl } from "../lib/credentials.js";
-import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
-import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import { remoteBackend } from "../lib/remoteBackend.js";
+import { resolveCliBackendMode } from "../lib/backendMode.js";
 
 export interface ReviewOptions {
   agent?: string;
@@ -61,22 +59,16 @@ function printReview(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry): 
 }
 
 export async function review(options: ReviewOptions): Promise<void> {
-  const useRemote = !options.local;
-  const identity = useRemote ? await resolveIdentity(options.as) : null;
-  if (identity) setActiveToken(identity.token);
+  const mode = await resolveCliBackendMode(options);
+  const { useRemote, identity } = mode;
 
   // --as mints a fresh token for the session -- clean it up on every
   // exit path. No TUI/raw-mode here (just readline), so an actual
   // SIGINT reaches this handler on Ctrl+C -- unlike work.ts's TUI
-  // path, no separate onExit prop is needed.
-  let cleanedUp = false;
-  const cleanup = async (): Promise<void> => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    await releaseIdentity(identity);
-  };
-  process.on("SIGINT", () => void cleanup().then(() => process.exit(0)));
-  process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
+  // path, no separate onExit prop is needed. mode.cleanup is
+  // idempotent (backendMode.ts), safe to call from both handlers.
+  process.on("SIGINT", () => void mode.cleanup().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void mode.cleanup().then(() => process.exit(0)));
 
   // See work.ts's identical comment: in remote mode your identity IS
   // your resolved credential, not a separate (and easily mismatched)
@@ -143,10 +135,9 @@ export async function review(options: ReviewOptions): Promise<void> {
   };
 
   try {
-    if (useRemote) await withBackend(remoteBackend, mainLoop);
-    else await mainLoop();
+    await mode.run(mainLoop);
   } finally {
     rl.close();
-    await cleanup();
+    await mode.cleanup();
   }
 }

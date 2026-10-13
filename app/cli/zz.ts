@@ -181,8 +181,9 @@ program
   .command("top")
   .description("real-time dashboard over every Lane in the repos from your zz config -- lanes overview + a live, filterable protocol feed")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
-  .action(async (opts: { repos?: string[] }) => {
-    await top({ repos: opts.repos });
+  .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
+  .action(async (opts: { repos?: string[]; local?: boolean }) => {
+    await top({ repos: opts.repos, local: opts.local });
   });
 
 program
@@ -282,4 +283,14 @@ repoCmd
     await repoSubmit(slug, laneId, askId, { message: opts.message, as: opts.as });
   });
 
-program.parseAsync(process.argv);
+// Any command whose action handler throws (readConfig's "no usable
+// config", requireCredentials' "not logged in", a network error, ...)
+// otherwise surfaces as a raw, multi-line unhandled-rejection dump --
+// the exact bug class that started this round of fixes (`zz top`
+// crashing instead of printing guidance). commander's own usage
+// errors (bad flags, --help) are unaffected -- those are handled
+// internally and never reach this .catch.
+program.parseAsync(process.argv).catch((err: unknown) => {
+  console.error(`zz: ${err instanceof Error ? err.message : String(err)}`);
+  process.exitCode = 1;
+});
