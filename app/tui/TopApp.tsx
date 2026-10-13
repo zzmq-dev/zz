@@ -45,12 +45,24 @@ export function TopApp({
   const snapshots = useLaneSnapshots(repos, 500, remote);
   const ladders = useLadderTrees(repos, 2000, remote);
   const [exploreEditing, setExploreEditing] = useState(false);
+  // Explore is always tabs[0] -- reachable the same way regardless of
+  // mode -- but which tab actually opens first depends on whether
+  // there's anything else worth looking at yet: nothing tracked (the
+  // logged-out/no-config empty-dashboard case top.ts can produce) means
+  // Explore IS the useful starting point; anything already being
+  // watched means lanes is. useState only reads this once (React's own
+  // "lazy initial state" semantics), which is exactly right here --
+  // watchedRepos growing later (a live "track" from Explore) shouldn't
+  // yank the user back to lanes mid-session.
+  const [initialTab] = useState(() => (watchedRepos.length === 0 ? 0 : 1));
 
   return (
     <TabView
       title="zz top"
       inputPaused={exploreEditing}
+      initialTab={initialTab}
       tabs={[
+        { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
         { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
         {
@@ -58,7 +70,6 @@ export function TopApp({
           content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} maxRows={maxRows} scrollOffset={scrollOffset} />,
           getFullText: () => liveLogText(flattenEvents(snapshots)),
         },
-        { label: "explore", content: () => <Explore local={local} onTrack={onTrack} onEditingChange={setExploreEditing} /> },
       ]}
     />
   );

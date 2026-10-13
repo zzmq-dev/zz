@@ -34,7 +34,8 @@ export function useLadderTrees(repos: { repo: string; repoDir: string; stateDir:
         const next: LadderSnapshot[] = [];
         for (const { repo, repoDir, stateDir } of repos) {
           try {
-            const tree = remote ? ((await callRemoteTool(repo, "ladder_tree", {})) as ResolvedRung | null) : (await collectLadder(repoDir, stateDir)).tree;
+            // allowAnonymous: see useLaneSnapshots.ts's identical comment.
+            const tree = remote ? ((await callRemoteTool(repo, "ladder_tree", {}, true)) as ResolvedRung | null) : (await collectLadder(repoDir, stateDir)).tree;
             if (tree) next.push({ repo, tree });
           } catch {
             // repo not onboarded/bootstrapped/reachable yet -- skip rather than crash the view

@@ -51,8 +51,22 @@ function tabClickRanges(title: string, tabs: Tab[]): { start: number; end: numbe
   return ranges;
 }
 
-export function TabView({ title, tabs, onExit, inputPaused }: { title: string; tabs: Tab[]; onExit?: () => Promise<void> | void; /** True while the active tab's own content owns the keyboard (e.g. Explore's search box mid-query) -- every single-character hotkey below (q/h/l/y/digits) would otherwise collide with free-text typing. TabView's own scroll/tab-switch/quit/copy keys are suppressed entirely until this goes back to false; the content itself is responsible for its own escape hatch back out of that state. */ inputPaused?: boolean }) {
-  const [active, setActive] = useState(0);
+export function TabView({
+  title,
+  tabs,
+  onExit,
+  inputPaused,
+  initialTab,
+}: {
+  title: string;
+  tabs: Tab[];
+  onExit?: () => Promise<void> | void;
+  /** True while the active tab's own content owns the keyboard (e.g. Explore's search box mid-query) -- every single-character hotkey below (q/h/l/y/digits) would otherwise collide with free-text typing. TabView's own scroll/tab-switch/quit/copy keys are suppressed entirely until this goes back to false; the content itself is responsible for its own escape hatch back out of that state. */
+  inputPaused?: boolean;
+  /** Which tab is active on first render -- defaults to 0 (unchanged for every existing caller). zz top's own Explore tab is always tabs[0] (reachable at any time, regardless of which tab opens first) but should only be the one that actually opens first when there's nothing else to show yet (see TopApp.tsx). */
+  initialTab?: number;
+}) {
+  const [active, setActive] = useState(initialTab ?? 0);
   const [scroll, setScroll] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
   const { isRawModeSupported } = useStdin();

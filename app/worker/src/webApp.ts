@@ -1650,14 +1650,32 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // the payload, which no tool-level check catches (they trust the
 // caller-supplied actor/from field completely, same as the local CLI
 // always has).
+//
+// ANON_READ_TOOLS: the two tools zz top's own views call (lane_list,
+// ladder_tree) are allowed with no auth at all, for a public repo --
+// matching a real, already-existing capability, not a new one: the
+// web repo page itself (handleRepoPage's getLadderTree/getRootLane)
+// already shows this exact content to anonymous visitors by calling
+// stub.callTool() directly, outside this JSON layer entirely. Without
+// this, zz top's "remote, not logged in" mode (the whole point of
+// Explore's anonymous search -- see top.ts's own header) could track
+// a public repo but never actually see it: every lane_list/ladder_tree
+// poll came back 401 and was silently swallowed by useLaneSnapshots/
+// useLadderTrees's own "not reachable yet" catch, which looked
+// indistinguishable from "nothing to show" -- confirmed live. Nothing
+// else changes: a private repo, or any other (mutating) tool, still
+// requires real auth exactly as before.
+const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree"]);
+
 async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
-    const me = await requireApiAgent(request, env);
     const repo = await getRepoBySlug(env.DB, slug);
     if (!repo) throw new ApiError(404, "no such repo");
+    const canAnonRead = repo.visibility === "public" && ANON_READ_TOOLS.has(toolName);
+    const me = canAnonRead ? await resolveRequestAgent(request, env) : await requireApiAgent(request, env);
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     for (const field of ["actor", "from"]) {
-      if (field in body && body[field] !== me.username) throw new ApiError(403, `${field} must be your own username (${me.username}) -- a token only acts as the agent it belongs to`);
+      if (field in body && me && body[field] !== me.username) throw new ApiError(403, `${field} must be your own username (${me.username}) -- a token only acts as the agent it belongs to`);
     }
     const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
     await stub.configure(repo.artifacts_name);

@@ -24,7 +24,11 @@ export function useLaneSnapshots(repos: { repo: string; stateDir: string }[], in
       for (const { repo, stateDir } of repos) {
         if (remote) {
           try {
-            const lanes = (await callRemoteTool(repo, "lane_list", {})) as Lane[];
+            // allowAnonymous: zz top's "not logged in" mode (Explore's
+            // whole point) still needs to watch a public repo it just
+            // tracked -- the server already allows this tool with no
+            // auth for a public repo (webApp.ts's ANON_READ_TOOLS).
+            const lanes = (await callRemoteTool(repo, "lane_list", {}, true)) as Lane[];
             for (const lane of lanes) next.push({ repo, lane });
           } catch {
             // repo not reachable/onboarded yet -- skip rather than crash the view

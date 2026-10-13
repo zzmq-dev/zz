@@ -14,9 +14,10 @@ export function splitSlug(slug: string): [string, string] {
   return [slug.slice(0, idx), slug.slice(idx + 1)];
 }
 
-export async function callRemoteTool(repoSlug: string, name: string, args: Record<string, unknown>): Promise<unknown> {
+/** `allowAnonymous`: for the handful of read-only tools the server itself allows with no auth on a public repo (webApp.ts's ANON_READ_TOOLS -- today just lane_list/ladder_tree) -- without this, apiFetch throws locally via requireCredentials() before a request claiming to need no login ever reaches the network. Every other caller (ask_claim, ask_answer, commit_changeset, ...) leaves this false, unchanged: those always need a real identity, and the server would 401 an anonymous call anyway. */
+export async function callRemoteTool(repoSlug: string, name: string, args: Record<string, unknown>, allowAnonymous = false): Promise<unknown> {
   const [owner, repo] = splitSlug(repoSlug);
-  const { result } = await apiFetch<{ result: unknown }>("POST", `/api/repos/${owner}/${repo}/tools/${name}`, args);
+  const { result } = await apiFetch<{ result: unknown }>("POST", `/api/repos/${owner}/${repo}/tools/${name}`, args, undefined, allowAnonymous);
   return result;
 }
 

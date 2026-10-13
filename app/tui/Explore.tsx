@@ -19,6 +19,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { apiFetch } from "../cli/lib/api.js";
 import { isLocallyOnboarded, inferGitHubSlugFromDir, resolveRepo } from "../cli/lib/repo.js";
+import { collectLadder } from "../engine/ladderRender.js";
+import { listLanes } from "../engine/store.js";
 import { MUTED, PINK, GREEN, YELLOW, CYAN } from "./theme.js";
 
 interface RepoHit {
@@ -26,8 +28,35 @@ interface RepoHit {
   description: string | null;
 }
 
+interface RepoPreview {
+  slug: string;
+  description: string | null;
+  ladderSummary: string | null;
+  childCount: number;
+  laneCount: number | null;
+  error: string | null;
+}
+
 export function Explore({ local, onTrack, onEditingChange }: { local: boolean; onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void }) {
   return local ? <LocalExplore onTrack={onTrack} /> : <RemoteExplore onTrack={onTrack} onEditingChange={onEditingChange} />;
+}
+
+/** Anonymous POST to one repo's tool-call endpoint -- allowAnonymous works here specifically because the server now allows lane_list/ladder_tree with no auth for a PUBLIC repo (see webApp.ts's ANON_READ_TOOLS); any other tool, or a private repo, would 401 same as before. */
+async function callToolAnon<T>(slug: string, tool: string, args: Record<string, unknown> = {}): Promise<T> {
+  const data = await apiFetch<{ result: T }>("POST", `/api/repos/${slug}/tools/${tool}`, args, undefined, true);
+  return data.result;
+}
+
+async function loadPreview(hit: RepoHit): Promise<RepoPreview> {
+  try {
+    const [tree, lanes] = await Promise.all([
+      callToolAnon<{ summary: string; children: unknown[] } | null>(hit.slug, "ladder_tree"),
+      callToolAnon<unknown[]>(hit.slug, "lane_list"),
+    ]);
+    return { slug: hit.slug, description: hit.description, ladderSummary: tree?.summary ?? null, childCount: tree?.children.length ?? 0, laneCount: lanes.length, error: null };
+  } catch (err) {
+    return { slug: hit.slug, description: hit.description, ladderSummary: null, childCount: 0, laneCount: null, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void }) {
@@ -37,6 +66,8 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
   const [selected, setSelected] = useState(0);
   const [status, setStatus] = useState("press / to search");
   const [tracked, setTracked] = useState<Set<string>>(new Set());
+  const [preview, setPreview] = useState<RepoPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const { isRawModeSupported } = useStdin();
 
   useEffect(() => onEditingChange(editing), [editing, onEditingChange]);
@@ -85,6 +116,21 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
         }
         return;
       }
+      if (preview) {
+        if (input === "t" && !tracked.has(preview.slug)) {
+          setStatus(`tracking ${preview.slug}...`);
+          onTrack(preview.slug)
+            .then(() => {
+              setTracked((t) => new Set(t).add(preview.slug));
+              setStatus(`tracking ${preview.slug} -- switch to the lanes/ladder tabs to watch it`);
+            })
+            .catch((err) => setStatus(`track failed: ${err instanceof Error ? err.message : String(err)}`));
+        } else if (key.escape || key.backspace || key.delete) {
+          setPreview(null);
+          setStatus("");
+        }
+        return;
+      }
       if (input === "/") {
         setEditing(true);
       } else if (key.upArrow) {
@@ -92,18 +138,47 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
       } else if (key.downArrow) {
         setSelected((s) => Math.min(results.length - 1, s + 1));
       } else if (key.return && results[selected]) {
-        const slug = results[selected].slug;
-        setStatus(`tracking ${slug}...`);
-        onTrack(slug)
-          .then(() => {
-            setTracked((t) => new Set(t).add(slug));
-            setStatus(`tracking ${slug} -- switch to the lanes/ladder tabs to watch it`);
-          })
-          .catch((err) => setStatus(`track failed: ${err instanceof Error ? err.message : String(err)}`));
+        const hit = results[selected];
+        setPreviewLoading(true);
+        setStatus("");
+        loadPreview(hit).then((p) => {
+          setPreview(p);
+          setPreviewLoading(false);
+        });
       }
     },
     { isActive: isRawModeSupported },
   );
+
+  if (previewLoading || preview) {
+    return (
+      <Box flexDirection="column">
+        <Text bold color={PINK}>
+          {preview?.slug ?? "loading..."}
+        </Text>
+        {previewLoading && <Text color={MUTED}>loading preview...</Text>}
+        {preview && (
+          <>
+            {preview.description && <Text color={MUTED}>{preview.description}</Text>}
+            {preview.error ? (
+              <Text color={YELLOW}>couldn't load a preview: {preview.error}</Text>
+            ) : (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color={CYAN}>{preview.laneCount ?? 0} lane(s)</Text>
+                <Text color={CYAN}>{preview.ladderSummary ?? "(no Ladder content yet)"}</Text>
+                <Text color={MUTED}>{preview.childCount} top-level entr{preview.childCount === 1 ? "y" : "ies"} in the Ladder</Text>
+              </Box>
+            )}
+            {tracked.has(preview.slug) && <Text color={GREEN}>✓ tracked</Text>}
+          </>
+        )}
+        <Box marginTop={1}>
+          <Text color={MUTED}>{preview && !tracked.has(preview.slug) ? "t: track   " : ""}esc/backspace: back to results</Text>
+        </Box>
+        {status && <Text color={MUTED}>{status}</Text>}
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column">
@@ -129,7 +204,7 @@ function RemoteExplore({ onTrack, onEditingChange }: { onTrack: (slug: string) =
         ))}
       </Box>
       <Box marginTop={1}>
-        <Text color={MUTED}>/: search   ↑/↓: select   enter: track   (while typing: enter: search, esc: cancel)</Text>
+        <Text color={MUTED}>/: search   ↑/↓: select   enter: view   (while typing: enter: search, esc: cancel)</Text>
       </Box>
     </Box>
   );
@@ -151,11 +226,18 @@ function listDirs(dir: string): DirEntry[] {
   }
 }
 
+interface LocalPreview {
+  ladderSummary: string | null;
+  childCount: number;
+  laneCount: number;
+}
+
 function LocalExplore({ onTrack }: { onTrack: (slug: string) => Promise<void> }) {
   const [cwd, setCwd] = useState(process.cwd());
   const [selected, setSelected] = useState(0);
   const [status, setStatus] = useState("");
   const [onboarded, setOnboarded] = useState<boolean | null>(null);
+  const [preview, setPreview] = useState<LocalPreview | null>(null);
   const { isRawModeSupported } = useStdin();
   const atRoot = dirname(cwd) === cwd;
   const isGitRepo = existsSync(join(cwd, ".git"));
@@ -166,11 +248,17 @@ function LocalExplore({ onTrack }: { onTrack: (slug: string) => Promise<void> })
   useEffect(() => {
     if (!isGitRepo || !slugHere) {
       setOnboarded(null);
+      setPreview(null);
       return;
     }
     let cancelled = false;
-    isLocallyOnboarded(resolveRepo(slugHere)).then((result) => {
-      if (!cancelled) setOnboarded(result);
+    const repo = resolveRepo(slugHere);
+    isLocallyOnboarded(repo).then(async (result) => {
+      if (cancelled) return;
+      setOnboarded(result);
+      if (!result) return;
+      const [{ tree }, lanes] = await Promise.all([collectLadder(repo.repoDir, repo.stateDir), Promise.resolve(listLanes(repo.stateDir))]);
+      if (!cancelled) setPreview({ ladderSummary: tree.summary, childCount: tree.children.length, laneCount: lanes.length });
     });
     return () => {
       cancelled = true;
@@ -211,7 +299,16 @@ function LocalExplore({ onTrack }: { onTrack: (slug: string) => Promise<void> })
             onboarded === null ? (
               <Text color={MUTED}>checking onboarding status...</Text>
             ) : onboarded ? (
-              <Text color={GREEN}>✓ onboarded -- press t to track it</Text>
+              <Box flexDirection="column">
+                <Text color={GREEN}>✓ onboarded -- press t to track it</Text>
+                {preview && (
+                  <Box flexDirection="column" marginTop={1}>
+                    <Text color={CYAN}>{preview.laneCount} lane(s)</Text>
+                    <Text color={CYAN}>{preview.ladderSummary ?? "(no Ladder content yet)"}</Text>
+                    <Text color={MUTED}>{preview.childCount} top-level entr{preview.childCount === 1 ? "y" : "ies"} in the Ladder</Text>
+                  </Box>
+                )}
+              </Box>
             ) : (
               <Text color={YELLOW}>not onboarded yet -- run: zz ladder build {slugHere}</Text>
             )
