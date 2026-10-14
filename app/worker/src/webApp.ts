@@ -484,7 +484,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    gets, since a rung is a structural object in this system, not just
    a label. Surface/border/fg instead of the stone/zinc literal colors
    this was adapted from, to match the rest of the theme. */
-.rung{display:inline-block;vertical-align:middle;background:var(--surface);color:var(--fg);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:.15em 1em;margin:0 .2em;border:1px solid var(--border);clip-path:polygon(6px 0%,calc(100% - 6px) 0%,100% 50%,calc(100% - 6px) 100%,6px 100%,0% 50%)}
+.rung{display:inline-block;vertical-align:middle;background:darkslateblue;color:var(--pink);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:.15em 1em;margin:0 .2em;border-top:1px solid var(--blue);border-bottom:1px solid var(--blue);clip-path:polygon(6px 0%,calc(100% - 6px) 0%,100% 50%,calc(100% - 6px) 100%,6px 100%,0% 50%)}
 /* A Role (owner/maintainer/contributor/viewer), framed by subtle
    corner crosshairs instead of a solid pill border -- the role name's
    own color (its existing badge-variant semantics) carries the
