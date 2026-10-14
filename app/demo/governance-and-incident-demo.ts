@@ -28,13 +28,19 @@ async function createAgent(displayName: string): Promise<string> {
   return username;
 }
 
+// resolveIdentity's own --as convention already passes a name through
+// unchanged once it contains "@" or "[" (identity.ts: that's what
+// marks it as already-full rather than needing "<you>[name]" expansion)
+// -- the agent usernames createAgent() hands back always do, so this
+// is just resolveIdentity by another name, not a re-derivation.
 async function identityFor(username: string): Promise<ResolvedIdentity> {
-  return resolveIdentity(username.includes("[") ? username.slice(username.indexOf("[") + 1, -1) : username);
+  return resolveIdentity(username);
 }
 
 async function main() {
   const human = requireCredentials().username;
-  const repoName = process.argv[2] ?? `governance-demo-${Date.now()}`;
+  const runId = Date.now();
+  const repoName = process.argv[2] ?? `governance-demo-${runId}`;
 
   section("Setup");
   step(`Creating repo "${repoName}" as ${human}`);
@@ -42,11 +48,15 @@ async function main() {
   const slug = repo.slug;
   console.log(`   ${slug}`);
 
+  // Display names carry runId -- agents never get deleted (no "zz
+  // agent delete" exists), so a plain "alice" would collide with any
+  // earlier run's and get a server-appended "-2" suffix, which is
+  // harmless but clutters the account across repeat runs.
   step("Creating four peer Agents: alice, bob (Committee/maintainers), mallory (does the tainted work), dan (whistleblower)");
-  const alice = await createAgent("alice");
-  const bob = await createAgent("bob");
-  const mallory = await createAgent("mallory");
-  const dan = await createAgent("dan");
+  const alice = await createAgent(`alice-${runId}`);
+  const bob = await createAgent(`bob-${runId}`);
+  const mallory = await createAgent(`mallory-${runId}`);
+  const dan = await createAgent(`dan-${runId}`);
   console.log(`   ${alice}, ${bob}, ${mallory}, ${dan}`);
 
   const aliceId = await identityFor(alice);
@@ -107,7 +117,7 @@ async function main() {
   step("For contrast: mallory (not on the Committee) tries to vote -- rejected");
   try {
     setActiveToken(malloryId.token);
-    const voteAsk2 = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: govLane.id, kind: "vote_request", from: alice, payload: { decisionKind: "other" } })) as AskEntry;
+    const voteAsk2 = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: govLane.id, kind: "vote_request", from: mallory, payload: { decisionKind: "other" } })) as AskEntry;
     await callRemoteTool(slug, "ask_answer", { repo: slug, lane_id: govLane.id, ask_id: voteAsk2.id, actor: mallory, action: "vote", payload: { ballot: "+1" } });
     console.log("   UNEXPECTED: that should have failed");
   } catch (e) {
@@ -118,8 +128,9 @@ async function main() {
   section("Scenario A continued: VETO");
   // ---------------------------------------------------------------
   step("Posting a changeset_review in the Committee Lane, then alice VETOes it over a design disagreement (distinct from a plain deny)");
-  setActiveToken(aliceId.token);
+  setActiveToken(bobId.token);
   const reviewAsk = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: govLane.id, kind: "changeset_review", from: bob, payload: { description: "Proposed: rewrite the storage layer" } })) as AskEntry;
+  setActiveToken(aliceId.token);
   await callRemoteTool(slug, "ask_answer", { repo: slug, lane_id: govLane.id, ask_id: reviewAsk.id, actor: alice, action: "veto", payload: { reason: "Wrong direction entirely -- we're not rewriting storage this quarter." } });
   const govLaneAfter = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: govLane.id })) as Lane;
   console.log(`   Lane status: "${govLaneAfter.status}"`);
@@ -131,13 +142,13 @@ async function main() {
   setActiveToken(malloryId.token);
   const currentReadme = (await callRemoteTool(slug, "git_show_file", { repo: slug, sha: "HEAD", path: "README.md" })) as string;
   const taintedReadme = `${currentReadme}\n<!-- oops: API_KEY=sk-live-not-a-real-secret-but-pretend-it-is -->\n`;
-  const badSha = (await callRemoteTool(slug, "commit_changeset", {
+  const { commitOid: badSha } = (await callRemoteTool(slug, "commit_changeset", {
     repo: slug,
     files: [{ path: "README.md", content: taintedReadme }],
     message: "docs: tweak README",
     author_name: "mallory",
     author_email: `${mallory}@zzmq.dev`,
-  })) as string;
+  })) as { commitOid: string };
   console.log(`   Tainted commit: ${badSha}`);
 
   step("mallory also posts an (unrelated) work Ask into the root Lane -- this is what DROP will cancel once the incident is confirmed");
