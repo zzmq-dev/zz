@@ -8,7 +8,13 @@
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
+import { requireCredentials } from "../lib/credentials.js";
 import type { IncidentResult } from "../../engine/lane.js";
+
+// Same bare-name expansion as lane-propose.ts's --maintainers.
+function expandAgentId(raw: string, humanUsername: string): string {
+  return /[@[]/.test(raw) ? raw : `${humanUsername}[${raw}]`;
+}
 
 export interface WhistleblowOptions {
   lane?: string;
@@ -33,16 +39,17 @@ export async function whistleblowResolve(slug: string, askId: string, opts: Whis
 
   try {
     const laneId = opts.lane ?? "_repo";
+    const targetAgent = expandAgentId(opts.targetAgent, requireCredentials().username);
     const result = (await callRemoteTool(slug, "whistleblow_resolve", {
       lane_id: laneId,
       ask_id: askId,
       actor: identity.username,
-      target_agent: opts.targetAgent,
+      target_agent: targetAgent,
       target_commit: opts.targetCommit,
       reason: opts.reason,
     })) as IncidentResult;
     console.log(`STOP: Lane ${laneId} in ${slug} is now "stopped".`);
-    console.log(`DROP: denied ${result.dropped.length} other pending ask(s) from "${opts.targetAgent}" (${result.dropped.join(", ") || "none"}).`);
+    console.log(`DROP: denied ${result.dropped.length} other pending ask(s) from "${targetAgent}" (${result.dropped.join(", ") || "none"}).`);
     console.log(result.rolled ? `ROLL: reverted ${result.rolled.commit} as ${result.rolled.revertCommit}.` : "ROLL: no --target-commit given, nothing reverted.");
   } finally {
     await cleanup();
