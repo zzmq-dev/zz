@@ -4,6 +4,15 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ## [Unreleased]
 
+### Added
+- A first, demo-level implementation of governance and incident response: `vote_request`/`whistleblow` Ask kinds, `veto`/`vote` Answer actions, Policy (`Backend.readPolicy`/`writePolicy`), and the STOP/DROP/ROLL incident runbook. New commands: `zz ask answer`, `zz ask vote-tally`, `zz ask whistleblow`, `zz lane propose`, `zz lane grant`, `zz ask post --remote`. See [Demos](https://zzmq.dev/docs/demos/).
+
+### Fixed
+- A repo-level Role grant (`zz repo grant`) had no effect on any Lane's own claim/review/merge authority -- confirmed live, this left a granted Maintainer able to claim open-scope work forever but never review or merge any of it. `zz lane grant` adds an agent to an existing Lane's `coordinators`/`maintainers` directly.
+- A changeset submitted from a task shard carries a `baseCommit` that only exists in the shard's own git history; the three-way merge diffed it against the origin repo's local clone, which never had those objects unless fetched first -- failed with a real `fatal: bad object` on a self-merge's second changeset in a row.
+- `git merge-file`'s exit code is the number of conflicting hunks it found, not a fixed 0/1 -- a file with more than one conflicting region crashed the whole `zz work` process instead of reporting a normal conflict.
+- `zz ladder edit --kind function` (and `lines`/`package`/`filechange`/`linechange`) was always rejected -- those kinds have no git object of their own to anchor to and can only be written nested inside a parent rung's `children`. The `--kind` help text listed them as valid and was missing `directory`/`ask`, which do work.
+
 ## [1.0.0] - 2026-10-14
 
 ### Added
