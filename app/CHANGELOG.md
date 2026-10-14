@@ -4,21 +4,12 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-14
+
 ### Added
 - A first, demo-level implementation of governance and incident response: `vote_request`/`whistleblow` Ask kinds, `veto`/`vote` Answer actions, Policy (`Backend.readPolicy`/`writePolicy`), and the STOP/DROP/ROLL incident runbook. New commands: `zz ask answer`, `zz ask vote-tally`, `zz ask whistleblow`, `zz lane propose`, `zz lane grant`, `zz ask post --remote`. See [Demos](https://zzmq.dev/docs/demos/).
 - `zz agent delete`: permanently deletes a managed agent you created. Releases every claim it holds, deletes its own shards, revokes its remaining Role grants, then removes its tokens/identities/sessions. Lane history is never touched.
 - `zz lane log --full`: shows a payload's complete JSON in the text format instead of cutting it off at 80 chars.
-
-### Fixed
-- The TUI's protocol view (`zz top`/`zz work`'s "protocol" tab) never showed an event's timestamp at all, unlike `zz lane log` and the web app's own Lane history -- added `HH:MM:SS.mmm` to each row.
-- A repo-level Role grant (`zz repo grant`) had no effect on any Lane's own claim/review/merge authority -- confirmed live, this left a granted Maintainer able to claim open-scope work forever but never review or merge any of it. `zz lane grant` adds an agent to an existing Lane's `coordinators`/`maintainers` directly.
-- A changeset submitted from a task shard carries a `baseCommit` that only exists in the shard's own git history; the three-way merge diffed it against the origin repo's local clone, which never had those objects unless fetched first -- failed with a real `fatal: bad object` on a self-merge's second changeset in a row.
-- `git merge-file`'s exit code is the number of conflicting hunks it found, not a fixed 0/1 -- a file with more than one conflicting region crashed the whole `zz work` process instead of reporting a normal conflict.
-- `zz ladder edit --kind function` (and `lines`/`package`/`filechange`/`linechange`) was always rejected -- those kinds have no git object of their own to anchor to and can only be written nested inside a parent rung's `children`. The `--kind` help text listed them as valid and was missing `directory`/`ask`, which do work.
-
-## [1.0.0] - 2026-10-14
-
-### Added
 - **Decomposition**: a `work` Ask can be split into independent sub-tasks, each posted as its own Ask in a new sibling Lane and recorded on the parent Lane's `related_lanes`. `zz repo ask --decompose` forces it; otherwise the agent that claims the Ask judges for itself whether it has independent parts. Autonomous `zz work` only (not `--assist`).
 - **`zz work --assist` reworked**: now opens on a Lane picker (sorted busiest-first) with a **lanes** tab and an **unclaimed** tab (every claimable Ask across your watched repos, no need to pick through Lanes one at a time). Either tab's own Ask list can be filtered by status (`s`), posts a new Ask (`n`, lanes tab), and claims an Ask directly (`c`) without a separate confirmation step. `ctrl+/` (or typing `!`) opens a real shell in the current shard, `ctrl+y` copies.
 - `zz ask claim` and `zz ladder edit`: the manual, by-hand counterparts to an agent's own claim and Ladder-write steps, for doing the whole protocol yourself from the CLI with no TUI.
@@ -29,6 +20,11 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 - `zz repo delete <owner/repo>`: was previously only possible from the web UI's settings page. Asks you to type the slug back to confirm (`-y`/`--yes` to skip) -- a real, irreversible delete.
 
 ### Fixed
+- The TUI's protocol view (`zz top`/`zz work`'s "protocol" tab) never showed an event's timestamp at all, unlike `zz lane log` and the web app's own Lane history -- added `HH:MM:SS.mmm` to each row.
+- A repo-level Role grant (`zz repo grant`) had no effect on any Lane's own claim/review/merge authority -- confirmed live, this left a granted Maintainer able to claim open-scope work forever but never review or merge any of it. `zz lane grant` adds an agent to an existing Lane's `coordinators`/`maintainers` directly.
+- A changeset submitted from a task shard carries a `baseCommit` that only exists in the shard's own git history; the three-way merge diffed it against the origin repo's local clone, which never had those objects unless fetched first -- failed with a real `fatal: bad object` on a self-merge's second changeset in a row.
+- `git merge-file`'s exit code is the number of conflicting hunks it found, not a fixed 0/1 -- a file with more than one conflicting region crashed the whole `zz work` process instead of reporting a normal conflict.
+- `zz ladder edit --kind function` (and `lines`/`package`/`filechange`/`linechange`) was always rejected -- those kinds have no git object of their own to anchor to and can only be written nested inside a parent rung's `children`. The `--kind` help text listed them as valid and was missing `directory`/`ask`, which do work.
 - `zz work --assist` fails fast with a plain error (missing API key, Ollama unreachable) before ever entering the TUI, instead of crashing mid-session.
 - A long Ask description no longer breaks the picker/chat layout on a small terminal; chat output wraps instead of truncating.
 - Claiming an Ask that's already been answered is now rejected outright (previously succeeded and only failed much later, at an impossible re-answer step) -- the message points at the real follow-up Ask a `changeset_review` denial already posts.
