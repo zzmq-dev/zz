@@ -479,7 +479,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    thick 4px mark so the bracket itself reads clearly, not just a
    faint accent. */
 .rung-bracket{display:inline-block;vertical-align:middle;position:relative;color:var(--pink);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
-.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:var(--pink);border-style:solid}
+.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:rgba(255,46,146,.55);border-style:solid}
 .rung-bracket::before{left:0;border-width:2px 0 2px 2px}
 .rung-bracket::after{right:0;border-width:2px 2px 2px 0}
 .lane-tag .text{display:inline-block;transform:skewX(15deg)}
@@ -498,6 +498,12 @@ function card(heading: string, innerHtml: string, opts: { addModal?: string; ext
 
 const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", viewer: "muted" };
 const LANE_STATUS_BADGE_VARIANT: Record<string, string> = { proposed: "yellow", open: "yellow", claimed: "blue", active: "cyan", merged: "green", closed: "muted", vetoed: "red", stopped: "red" };
+const BADGE_VARIANT_COLOR: Record<string, string> = { pink: "var(--pink)", yellow: "var(--yellow)", cyan: "var(--cyan)", green: "var(--green)", blue: "var(--blue)", red: "var(--red)", muted: "var(--muted)" };
+/** A Lane's status, as .kind-code (the same box every other protocol-event kind/action gets), colored by its existing badge-variant semantics instead of a hash -- vetoed/stopped stay red, merged stays green, etc. */
+function laneStatusCode(status: string): string {
+  const color = BADGE_VARIANT_COLOR[LANE_STATUS_BADGE_VARIANT[status] ?? "muted"];
+  return `<code class="kind-code" style="color:${color}">${esc(status)}</code>`;
+}
 function roleBadge(role: string): string {
   return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
 }
@@ -2653,7 +2659,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
+    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
