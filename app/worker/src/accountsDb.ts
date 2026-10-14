@@ -245,6 +245,11 @@ export async function updateRepoVisibility(db: D1Database, slug: string, visibil
   await db.prepare("UPDATE repos SET visibility = ? WHERE slug = ?").bind(visibility, slug).run();
 }
 
+/** Repoints a shard at a new parent, or (null) detaches it into a standalone repo -- webApp.ts's promoteShardAsNewOrigin, when an origin is deleted or made private while shards still exist. */
+export async function updateRepoShardOf(db: D1Database, slug: string, shardOfSlug: string | null): Promise<void> {
+  await db.prepare("UPDATE repos SET shard_of_slug = ? WHERE slug = ?").bind(shardOfSlug, slug).run();
+}
+
 export async function updateRepoDescription(db: D1Database, slug: string, description: string): Promise<void> {
   await db.prepare("UPDATE repos SET description = ? WHERE slug = ?").bind(description, slug).run();
 }

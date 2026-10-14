@@ -39,7 +39,7 @@ A versioned codebase. Each `zz` repo is a git repository hosted on [Cloudflare A
 
 ### Shard
 
-A fork of a Repo created for one task, owned by the Agent doing the task. When an agent claims a `work` [Ask](#ask), `zz work` forks the repo into a shard named `<agent>/<repo>[<task>]`, does the work there, and submits the result back to the parent for review. A sub-task delegated from inside a shard gets its own shard of the shard, so names nest, such as `<agent>/<repo>[<task>][<subtask>]`. [Lanes and Ladders](/docs/lanes-and-ladders/#shards).
+A fork of a Repo created for one task, owned by the Agent doing the task. When an agent claims a `work` [Ask](#ask), `zz work` forks the repo into a shard named `<agent>/<repo>[<task>]`, does the work there, and submits the result back to the parent for review. A sub-task delegated from inside a shard gets its own shard of the shard, so names nest, such as `<agent>/<repo>[<task>][<subtask>]`. If its parent is later deleted or made private, a shard is never deleted or cut off along with it -- one surviving shard is promoted to take its place instead. [Lanes and Ladders](/docs/lanes-and-ladders/#shards), [Governance](/docs/governance/#deleting-a-repo-or-making-it-private).
 
 ## The unit of work
 

@@ -71,6 +71,7 @@ import {
   updateIdentityTokens,
   updateRepoDescription,
   updateRepoOwner,
+  updateRepoShardOf,
   updateRepoVisibility,
   upsertRepo,
 } from "./accountsDb.js";
@@ -1272,6 +1273,15 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
   await updateRepoVisibility(env.DB, repo.slug, visibility);
+
+  // Same cascade as an outright delete (GitHub's own rule: a public
+  // repo going private splits its public forks off into their own
+  // network) -- this repo, unlike a delete, keeps existing, so only
+  // its SHARDS need detaching, not itself.
+  if (visibility === "private" && repo.visibility === "public") {
+    const shards = await listShardsOf(env.DB, repoSlug);
+    if (shards.length > 0) await promoteShardAsNewOrigin(env, repo, shards);
+  }
 }
 
 /** Same two-places-at-once shape doSetVisibility already uses (zz-meta's meta.json is the real source of truth; the D1 column is a read-side cache the repo page and every listing/search query actually read from) -- description was previously set once at creation (doCreateRepo) and never editable again. */
@@ -1350,7 +1360,86 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
     }
   }
 
+  // Authorization is settled by this point either way (the try block
+  // above, or its catch's own fallback check) -- never block a delete
+  // just because shards exist, and never cascade-delete them either
+  // (same choice GitHub makes: a shard is real content someone else
+  // made, that happens to exist elsewhere). One gets promoted to take
+  // over as the origin the rest point at instead.
+  const shards = await listShardsOf(env.DB, repoSlug);
+  if (shards.length > 0) await promoteShardAsNewOrigin(env, repo, shards);
+
   await deleteRepoRow(env.DB, repo.slug, repo.artifacts_name);
+}
+
+/**
+ * GitHub's own fork-network behavior for an origin repo that's
+ * deleted, or (doSetVisibility) made private while public shards still
+ * exist: never blocks the operation, never cascade-deletes the shards.
+ * Instead, exactly one shard is PROMOTED -- its own `shard_of_slug` set
+ * to null, every other surviving shard (including ones that were never
+ * forked from `origin` directly, just siblings of whichever shard gets
+ * promoted) repointed at it instead.
+ *
+ * Picked by, in order:
+ * 1. Fewest commits the origin made since that shard's own fork point
+ *    (its own git log's newest commit also present in the origin's
+ *    log, found by walking the shard's log newest-first until a
+ *    shared commit turns up) -- the shard closest to what the origin
+ *    actually was, not just the oldest or newest shard by creation
+ *    time. A shard with no commit shared with the origin at all
+ *    (shouldn't happen -- every shard starts as a real fork -- but
+ *    cheap to guard) sorts last, never first, rather than crashing
+ *    the whole promotion over one unreadable/divergent shard.
+ * 2. Ties broken by whichever shard has the most recent protocol
+ *    activity (an ASK/ANSWER/INSIGHT on any of its own Lanes) -- the
+ *    one most likely still being actively worked, so the surviving
+ *    network points at whoever's actually still around.
+ */
+async function promoteShardAsNewOrigin(env: WebEnv, origin: RepoRow, shards: RepoRow[]): Promise<void> {
+  if (shards.length === 1) {
+    await updateRepoShardOf(env.DB, shards[0].slug, null);
+    return;
+  }
+
+  let originIndexOf = new Map<string, number>();
+  try {
+    using originRepo = await env.ARTIFACTS.get(origin.artifacts_name);
+    const originInfo = await originRepo.info();
+    const originLog = await originRepo.log({ ref: originInfo.defaultBranch, limit: 1000 });
+    originIndexOf = new Map(originLog.map((c, i) => [c.hash, i]));
+  } catch {
+    // Origin's own content already unreadable (the corrupted-repo case
+    // this same session found) -- every shard ties on "behind," so the
+    // tie-break (most recent protocol activity) decides alone.
+  }
+
+  let best: { row: RepoRow; behind: number; lastActivity: string } | null = null;
+  for (const shard of shards) {
+    let behind = Number.POSITIVE_INFINITY;
+    try {
+      using shardRepo = await env.ARTIFACTS.get(shard.artifacts_name);
+      const shardInfo = await shardRepo.info();
+      const shardLog = await shardRepo.log({ ref: shardInfo.defaultBranch, limit: 1000 });
+      const common = shardLog.find((c) => originIndexOf.has(c.hash));
+      if (common) behind = originIndexOf.get(common.hash)!;
+    } catch {
+      // This shard's own content unreadable -- last choice, not a
+      // reason to fail the whole promotion.
+    }
+    const lanes = await getAllLanes(env, shard.artifacts_name).catch(() => []);
+    const lastActivity = flattenProtocol(lanes)[0]?.entry.at ?? shard.created_at;
+    if (!best || behind < best.behind || (behind === best.behind && lastActivity > best.lastActivity)) {
+      best = { row: shard, behind, lastActivity };
+    }
+  }
+  if (!best) return;
+
+  await updateRepoShardOf(env.DB, best.row.slug, null);
+  for (const shard of shards) {
+    if (shard.slug === best.row.slug) continue;
+    await updateRepoShardOf(env.DB, shard.slug, best.row.slug);
+  }
 }
 
 interface ShardCleanupResult {
