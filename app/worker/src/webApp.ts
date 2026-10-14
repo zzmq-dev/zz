@@ -135,6 +135,11 @@ function kindCode(kind: string): string {
   return `<code class="kind-code" style="color:hsl(${stringToHue(kind)},70%,68%)">${esc(kind)}</code>`;
 }
 
+/** A Lane id, in its own skewed tag (see .lane-tag) instead of the same plain badge-muted pill every other secondary detail gets -- a Lane is a distinct noun here, not just a label. */
+function laneTagHtml(laneId: string): string {
+  return `<code class="lane-tag"><span class="text">${esc(laneId)}</span></code>`;
+}
+
 /** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracketed agent name -- the part that actually distinguishes this actor in a scenario with several -- at full, slightly tinted contrast. A bare human login (no bracket) renders plain, unsplit. */
 function formatAgentId(username: string): string {
   const i = username.indexOf("[");
@@ -180,8 +185,35 @@ function autolinkText(s: string): string {
 }
 
 /** An Ask/Answer payload, pretty-printed instead of dumped as one unreadable JSON.stringify() line -- a scrollable box so a large field (e.g. a proposal's full file contents) doesn't blow out the rest of the page's layout. */
+// Escapes only what's actually dangerous as HTML TEXT content (&, <,
+// >) -- NOT the quote character esc() also escapes, which is only a
+// problem inside an HTML attribute value, never here. Left raw, a
+// literal `"` still matches the regex below exactly as typed; escaped
+// to &quot; first, it wouldn't, and every JSON string most of this
+// content actually is would stop being recognized as one.
+function escJsonText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// One token at a time: a quoted string (optionally followed by the
+// ":" that makes it a key), true/false, null, or a number. Standard
+// technique for coloring JSON without a real parser or a client-side
+// library -- safe here specifically because escJsonText already ran
+// first, so every match is HTML-safe content, never raw user input.
+const JSON_TOKEN_RE = /("(?:\\u[0-9a-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\btrue\b|\bfalse\b|\bnull\b|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+
+function syntaxHighlightJson(text: string): string {
+  return escJsonText(text).replace(JSON_TOKEN_RE, (match) => {
+    let cls = "json-number";
+    if (match.startsWith('"')) cls = /:\s*$/.test(match) ? "json-key" : "json-string";
+    else if (match === "true" || match === "false") cls = "json-bool";
+    else if (match === "null") cls = "json-null";
+    return `<span class="${cls}">${match}</span>`;
+  });
+}
+
 function jsonBlock(value: unknown): string {
-  return `<pre class="json-blob">${esc(JSON.stringify(value ?? {}, null, 2))}</pre>`;
+  return `<pre class="json-blob">${syntaxHighlightJson(JSON.stringify(value ?? {}, null, 2))}</pre>`;
 }
 
 /** Same box jsonBlock renders, for an Insight's own free-text body instead of a payload -- one visual language for "here's the real content of this entry," whether that content is JSON or prose. */
@@ -295,7 +327,9 @@ ul.list>li:last-child{border-bottom:none}
    one's naturally ordered by recency instead of a tree you'd want to
    keep open while scrolling past. */
 ul.list.list-scroll{max-height:32rem;overflow-y:auto}
-.ladder-search{width:100%;margin-bottom:.6rem}
+.ladder-filter-bar{display:flex;gap:.5rem;margin-bottom:.6rem}
+.ladder-search{flex:1;min-width:0}
+.ladder-kind-select{flex-shrink:0;width:auto}
 /* .row's own display:flex (same specificity as the browser's default
    [hidden]{display:none} UA rule, but an author style always beats a
    UA style regardless of specificity or source order) was silently
@@ -420,6 +454,21 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .diff-del .diff-marker{color:var(--red)}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 .json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:.4rem 0 0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
+.json-key{color:var(--cyan)}
+.json-string{color:var(--green)}
+.json-number{color:var(--yellow)}
+.json-bool{color:var(--pink)}
+.json-null{color:var(--muted);font-style:italic}
+/* A Lane is a real, distinct noun in this system, not just another
+   label -- skewed forward like it's already in motion, the way a
+   workstream actually is, instead of sitting in the same plain
+   badge-muted pill every other secondary detail gets. The inner .text
+   counter-skews back upright so the id itself stays readable; the
+   outer element's own tag doesn't matter (a <code>, a <span>, same
+   transform either way), only that it's display:inline-block, which
+   this sets explicitly regardless of the tag's own default. */
+.lane-tag{display:inline-block;vertical-align:middle;background:rgba(92,141,255,.15);border:1px solid rgba(92,141,255,.4);border-radius:4px;padding:0 .6em;margin:0 .2em;font-family:var(--mono);font-size:.85em;color:var(--blue);transform:skewX(-15deg)}
+.lane-tag .text{display:inline-block;transform:skewX(15deg)}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
 .summary-detail ul,.summary-detail p{margin-top:.5rem}
@@ -502,16 +551,20 @@ window.addEventListener('hashchange', function () {
 });
 
 // A plain client-side filter over the Ladder tab's own already-rendered
-// rows (each one's data-search attribute, set by renderLadderNode) --
-// no second request, no server round trip. Hides every row whose
-// data-search doesn't contain the typed text, case-insensitive; an
-// empty box shows everything again.
-function zzFilterLadder(input) {
-  var q = input.value.trim().toLowerCase();
-  var list = input.nextElementSibling;
+// rows (each one's data-search/data-kind attributes, set by
+// renderLadderNode) -- no second request, no server round trip. A row
+// shows only when it matches BOTH the typed text (data-search contains
+// it, case-insensitive; empty box matches everything) AND the kind
+// select (exact match; "all kinds" matches everything).
+function zzFilterLadder(bar) {
+  var q = bar.querySelector('[data-ladder-search]').value.trim().toLowerCase();
+  var kind = bar.querySelector('[data-ladder-kind-filter]').value;
+  var list = bar.nextElementSibling;
   if (!list) return;
   list.querySelectorAll('li[data-search]').forEach(function (li) {
-    li.hidden = q.length > 0 && li.dataset.search.indexOf(q) === -1;
+    var matchesText = q.length === 0 || li.dataset.search.indexOf(q) !== -1;
+    var matchesKind = !kind || li.dataset.kind === kind;
+    li.hidden = !(matchesText && matchesKind);
   });
 }
 
@@ -1361,7 +1414,7 @@ function renderLadderNode(slug: string, node: ResolvedRung, depth = 0): string {
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
   const href = ladderPathLink(slug, node);
   const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
-  const self = `<li class="row" data-search="${searchable}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
+  const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
@@ -1515,7 +1568,7 @@ async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Respo
     "Claimed",
     me,
     `<div class="card stack">
-       <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane <span class="mono">${esc(laneId)}</span>).</p>
+       <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane ${laneTagHtml(laneId)}).</p>
        ${resolvedAsk ? workInstructions(repoSlug, laneId, askId, resolvedAsk) : '<p class="hint">Could not load this Ask\'s details -- check the repo page\'s Asks tab.</p>'}
        <p><a href="/work">&larr; Back to Work</a></p>
      </div>`,
@@ -1630,7 +1683,7 @@ async function agentActivityHtml(agent: Agent, repos: RepoRow[], env: WebEnv): P
           : e.type === "ANSWER"
             ? `${kindCode(e.action ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug)}`
             : `${kindCode(e.kind)}: ${esc(e.text)}`;
-      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;${laneTagHtml(laneId)}&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
   return `<div class="log-feed">${html || '<div class="empty">No activity yet.</div>'}</div>`;
@@ -2567,7 +2620,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       const answersHtml = (answersByAsk.get(e.id) ?? [])
         .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}<span class="badge badge-green">ANSWER</span> ${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
         .join("");
-      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)} <span class="badge badge-muted">${esc(laneId)}</span></div>${jsonBlock(e.payload)}${answersHtml}</li>`;
+      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)} ${laneTagHtml(laneId)}</div>${jsonBlock(e.payload)}${answersHtml}</li>`;
     })
     .join("");
 
@@ -2581,11 +2634,11 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   // else).
   const insightsHtml = flatProtocol
     .filter((e): e is { laneId: string; entry: InsightEntry } => e.entry.type === "INSIGHT")
-    .map(({ laneId, entry: e }) => `<li class="stack"><div class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)} <span class="badge badge-muted">${esc(laneId)}</span></div>${textBlock(e.text)}</li>`)
+    .map(({ laneId, entry: e }) => `<li class="stack"><div class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)} ${laneTagHtml(laneId)}</div>${textBlock(e.text)}</li>`)
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row"><span class="mono">${esc(l.id)}</span> <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
+    .map((l) => `<li class="row">${laneTagHtml(l.id)} <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
@@ -2605,7 +2658,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
           : e.type === "ANSWER"
             ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?")}`
             : `${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)}`;
-      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;${laneTagHtml(laneId)}&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
 
@@ -2629,7 +2682,15 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     {
       id: "ladder",
       label: "Ladder",
-      html: `<input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this)">
+      html: `<div class="ladder-filter-bar" data-ladder-filter-bar>
+               <input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
+               <select class="ladder-kind-select" data-ladder-kind-filter onchange="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
+                 <option value="">all kinds</option>
+                 ${Object.keys(LADDER_KIND_ORDER)
+                   .map((k) => `<option value="${esc(k)}">${esc(k)}</option>`)
+                   .join("")}
+               </select>
+             </div>
              <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
     },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
