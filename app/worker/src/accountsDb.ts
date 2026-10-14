@@ -202,6 +202,22 @@ export async function listTokensForAgent(db: D1Database, agentUsername: string):
   return result.results;
 }
 
+/** The one thing doDeleteAgent (webApp.ts) refuses to cascade through automatically: another still-live agent it created. Everything else it owns or holds a Role on (shards, claims, Role grants) gets cleaned up or deleted as part of removing it -- see doDeleteAgent's own header comment. */
+export async function agentsCreatedByStillExist(db: D1Database, username: string): Promise<string[]> {
+  const created = await db.prepare("SELECT username FROM agents WHERE created_by = ?").bind(username).all<{ username: string }>();
+  return created.results.map((r) => r.username);
+}
+
+/** Removes an agent's tokens/identities/sessions, then the agent row itself -- only once agentDeleteBlockers (webApp.ts's doDeleteAgent calls it first) comes back clean. */
+export async function deleteAgent(db: D1Database, username: string): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM agent_tokens WHERE agent_username = ?").bind(username),
+    db.prepare("DELETE FROM agent_identities WHERE agent_username = ?").bind(username),
+    db.prepare("DELETE FROM sessions WHERE agent_username = ?").bind(username),
+    db.prepare("DELETE FROM agents WHERE username = ?").bind(username),
+  ]);
+}
+
 export async function getAgentToken(db: D1Database, tokenId: string): Promise<AgentToken | null> {
   return db.prepare("SELECT * FROM agent_tokens WHERE id = ?").bind(tokenId).first<AgentToken>();
 }

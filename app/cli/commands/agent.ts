@@ -5,6 +5,7 @@
 // step. Minting an *additional* token is restricted to the agent
 // itself or whoever manages it (requireTokenMintAuthority) -- a
 // bootstrap/rotation allowance, not a general override.
+import { createInterface } from "node:readline/promises";
 import { apiFetch } from "../lib/api.js";
 
 // A local, minimal shape matching worker/src/accountsDb.ts's Agent --
@@ -61,4 +62,19 @@ export async function agentList(): Promise<void> {
   console.log(`${you.username} -- you`);
   for (const a of created) console.log(`${a.username} -- managed by you`);
   if (created.length === 0) console.log("(no managed agents yet -- zz agent create <name>)");
+}
+
+export async function agentDelete(username: string, opts: { yes?: boolean } = {}): Promise<void> {
+  if (!opts.yes) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = await rl.question(`This permanently deletes the managed agent "${username}" -- its tokens, login identities, and sessions. Type its username to confirm: `);
+    rl.close();
+    if (typed.trim() !== username) {
+      console.error("Username didn't match -- not deleting anything.");
+      process.exitCode = 1;
+      return;
+    }
+  }
+  await apiFetch("DELETE", `/api/agents/${encodeURIComponent(username)}`);
+  console.log(`Deleted ${username}.`);
 }

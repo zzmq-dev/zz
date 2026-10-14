@@ -37,6 +37,8 @@ import {
   deleteSession,
   findActiveAgentToken,
   findAgentIdentity,
+  agentsCreatedByStillExist,
+  deleteAgent,
   fulfillCliLoginSession,
   getAgent,
   getAgentByEmail,
@@ -48,6 +50,7 @@ import {
   listAgentsCreatedBy,
   listMyRepos,
   listRecentRepos,
+  listRepoRolesForAgent,
   listReposOwnedBy,
   listShardsOf,
   listTokensForAgent,
@@ -90,7 +93,7 @@ import { LICENSES, LICENSE_ORDER, type LicenseOption } from "./licenses.js";
 import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
 import type { ResolvedRung } from "../../engine/ladderRender.js";
-import { claimableAsks } from "../../engine/workqueue.js";
+import { claimableAsks, claimHolder } from "../../engine/workqueue.js";
 import type { AskEntry, HistoryEntry, Lane } from "../../engine/types.js";
 
 export interface WebEnv extends OAuthEnv {
@@ -746,6 +749,84 @@ async function doMintToken(env: WebEnv, actor: Agent, targetUsername: string): P
   const plaintext = generateAgentToken();
   await createAgentToken(env.DB, target.username, hashAgentToken(plaintext));
   return { agent: target, token: plaintext };
+}
+
+/** Only a managed agent, and only by the human/agent that created it -- never a bare login account (that's a much bigger "delete my whole account" action, not built here) and never by some other creator's say-so. Refuses if the agent owns a repo, holds a repo Role grant, or created an agent that still exists -- those are live state that would be orphaned, not just Lane history (which stays exactly as it is either way: deleting the account row never rewrites it). */
+/**
+ * Releases every claim this agent holds (in a repo it owns or holds a
+ * Role on -- the only repos reliably findable for it; an agent that
+ * only ever claimed open-scope work in some unrelated public repo it
+ * has no tracked connection to is a real gap, not solved here), deletes
+ * its own shards, revokes whatever Role grants are left, then removes
+ * its tokens/identities/sessions/agent row. Refuses outright if it
+ * owns a genuine, non-shard repo -- that's a real, independent repo,
+ * not disposable scratch state, and deleting the agent should never
+ * silently take it along.
+ *
+ * Lane history is never touched by any of this -- every ASK/ANSWER/
+ * INSIGHT this agent ever posted stays exactly as it is, in whatever
+ * repo it posted to, forever, same as a real person's name still
+ * showing on old commits after their account is gone. That's enough
+ * to audit what a deleted agent did from inside any one repo's own
+ * history. A cross-repo "everything this account ever did, anywhere,
+ * even after it's deleted" view is a real, separate feature this
+ * doesn't attempt -- noted here as a known future need, not shimmed
+ * further than this comment until there's an actual design for
+ * long-term retention of that.
+ */
+async function doDeleteAgent(env: WebEnv, actor: Agent, targetUsername: string): Promise<void> {
+  const target = await getAgent(env.DB, targetUsername);
+  if (!target) throw new ApiError(404, "no such agent");
+  if (!target.created_by) throw new ApiError(400, `"${targetUsername}" is a login account, not a managed agent -- this only deletes managed agents`);
+  if (target.created_by !== actor.username) throw new ApiError(403, `only "${target.created_by}", who created "${targetUsername}", can delete it`);
+  const createdAgents = await agentsCreatedByStillExist(env.DB, targetUsername);
+  if (createdAgents.length) {
+    throw new ApiError(409, `can't delete "${targetUsername}": created ${createdAgents.length} agent(s) that still exist (${createdAgents.join(", ")}) -- delete those first`);
+  }
+
+  const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, targetUsername), listRepoRolesForAgent(env.DB, targetUsername)]);
+  const nonShardOwned = owned.filter((r) => !r.shard_of_slug);
+  if (nonShardOwned.length) {
+    throw new ApiError(409, `can't delete "${targetUsername}": owns ${nonShardOwned.length} non-shard repo(s) (${nonShardOwned.map((r) => r.slug).join(", ")}) -- transfer or delete those first`);
+  }
+
+  const connected = new Map<string, string>(); // slug -> artifacts_name, every repo this agent has a tracked connection to
+  for (const r of [...owned, ...roled]) connected.set(r.slug, r.artifacts_name);
+  for (const [slug, artifactsName] of connected) {
+    const stub = doStub(env, artifactsName);
+    await stub.configure(artifactsName);
+    const lanes = (await stub.callTool("lane_list", {})) as Lane[];
+    for (const lane of lanes) {
+      for (const entry of lane.history) {
+        if (entry.type !== "ASK" || claimHolder(lane, entry.id) !== targetUsername) continue;
+        try {
+          await stub.callTool("ask_release", { repo: slug, lane_id: lane.id, ask_id: entry.id, actor: targetUsername });
+        } catch {
+          // Best-effort -- an ask that got answered by something else a
+          // moment ago isn't a reason to abandon the rest of the cleanup.
+        }
+      }
+    }
+  }
+
+  for (const r of owned) {
+    await deleteShardTreeOf(env, r.slug);
+    await doDeleteRepo(env, target, r.slug);
+  }
+  for (const r of roled) {
+    if (owned.some((o) => o.slug === r.slug)) continue; // already gone above
+    try {
+      await doRevokeGrant(env, actor, r.slug, targetUsername);
+    } catch {
+      // Best-effort -- actor isn't necessarily an Owner of every repo
+      // this agent happened to hold a Role on (someone else could have
+      // granted it one independently of the creator relationship); an
+      // orphaned repo_roles row referencing a now-deleted agent is
+      // inert, not a correctness problem, so this doesn't block deletion.
+    }
+  }
+
+  await deleteAgent(env.DB, targetUsername);
 }
 
 function slugify(name: string): string {
@@ -1702,6 +1783,14 @@ async function handleApiMintToken(username: string, request: Request, env: WebEn
     const me = await requireApiAgent(request, env);
     const { agent, token } = await doMintToken(env, me, username);
     return json({ agent, token }, 201);
+  });
+}
+
+async function handleApiDeleteAgent(username: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    await doDeleteAgent(env, me, username);
+    return json({ ok: true });
   });
 }
 
@@ -2912,6 +3001,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/agents\/([^/]+)\/tokens$/);
     if (m && request.method === "POST") return handleApiMintToken(m[1], request, env);
+  }
+  {
+    const m = path.match(/^\/api\/agents\/([^/]+)$/);
+    if (m && request.method === "DELETE") return handleApiDeleteAgent(m[1], request, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/roles$/);

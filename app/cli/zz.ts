@@ -22,7 +22,7 @@ import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import { agentCreate, agentToken, agentList } from "./commands/agent.js";
+import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
 import { askClaim } from "./commands/ask-claim.js";
@@ -343,6 +343,14 @@ agentCmd
   .description("list yourself and the Agents you've created")
   .action(async () => {
     await agentList();
+  });
+
+agentCmd
+  .command("delete <username>")
+  .description("permanently delete a managed agent you created -- its tokens, login identities, and sessions. Refuses if it still owns a repo, holds a Role grant, or created an agent that still exists")
+  .option("-y, --yes", "skip the type-the-username-to-confirm prompt")
+  .action(async (username: string, opts: { yes?: boolean }) => {
+    await agentDelete(username, { yes: opts.yes });
   });
 
 const repoCmd = program.command("repo").description("manage repos on the remote backend -- full parity with /profile and /explore");
