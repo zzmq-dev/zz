@@ -238,6 +238,7 @@ ul.list>li:last-child{border-bottom:none}
    one's naturally ordered by recency instead of a tree you'd want to
    keep open while scrolling past. */
 ul.list.list-scroll{max-height:32rem;overflow-y:auto}
+.ladder-search{width:100%;margin-bottom:.6rem}
 .repo-item{display:flex;flex-direction:column;gap:.15rem}
 .repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
 .repo-item .desc{color:var(--muted);font-size:.9rem}
@@ -373,6 +374,20 @@ function zzInitTabs(container) {
   });
 }
 document.querySelectorAll('[data-tabs]').forEach(zzInitTabs);
+
+// A plain client-side filter over the Ladder tab's own already-rendered
+// rows (each one's data-search attribute, set by renderLadderNode) --
+// no second request, no server round trip. Hides every row whose
+// data-search doesn't contain the typed text, case-insensitive; an
+// empty box shows everything again.
+function zzFilterLadder(input) {
+  var q = input.value.trim().toLowerCase();
+  var list = input.nextElementSibling;
+  if (!list) return;
+  list.querySelectorAll('li[data-search]').forEach(function (li) {
+    li.hidden = q.length > 0 && li.dataset.search.indexOf(q) === -1;
+  });
+}
 
 // Shared by every ac-list dropdown (agent autocomplete, Explore
 // search): Up/Down moves a highlighted ".active" item among whatever
@@ -1117,7 +1132,12 @@ const LADDER_KIND_ORDER: Record<string, number> = {
 
 function renderLadderNode(node: ResolvedRung, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
-  const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
+  // data-search: lowercased path+summary+kind, read by the ladder
+  // search box's own JS (zzInitLadderSearch) to decide whether to hide
+  // this row -- a plain client-side filter over what's already
+  // rendered, not a second query against anything.
+  const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
+  const self = `<li class="row" data-search="${searchable}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
@@ -2287,7 +2307,12 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const fileTabs = [
     readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme)}</div>` } : null,
-    { id: "ladder", label: "Ladder", html: `<ul class="list list-scroll">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>` },
+    {
+      id: "ladder",
+      label: "Ladder",
+      html: `<input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this)">
+             <ul class="list list-scroll">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
+    },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
     { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
   ].filter((t): t is { id: string; label: string; html: string } => t !== null);
