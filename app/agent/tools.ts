@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, addRelatedLane } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, addRelatedLane, tallyVotes, runIncidentRunbook } from "../engine/lane.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -536,7 +536,8 @@ const askRelease: ToolDef = {
 
 const askAnswerTool: ToolDef = {
   name: "ask_answer",
-  description: "Answer an Ask you've claimed: action \"complete\" with the result as payload when you've finished the work, or \"deny\" if you can't.",
+  description:
+    'Answer an Ask you\'ve claimed: action "complete" with the result as payload when you\'ve finished the work, "deny" if you can\'t, "veto" to reject a "changeset_review" over a design/priority disagreement (not just "doesn\'t meet the bar" -- use "deny" for that), or "vote" to cast one Committee ballot on a "vote_request" (payload { ballot: "+1"|"+0"|"-0"|"-1" }) -- unlike every other action, "vote" can be answered once per distinct actor on the same ask; call vote_tally afterward to count ballots and close it once every maintainer has voted.',
   parameters: {
     type: "object",
     properties: {
@@ -544,7 +545,7 @@ const askAnswerTool: ToolDef = {
       lane_id: { type: "string" },
       ask_id: { type: "string" },
       actor: { type: "string" },
-      action: { type: "string", enum: ["complete", "deny"] },
+      action: { type: "string", enum: ["complete", "deny", "veto", "vote"] },
       payload: { type: "object" },
     },
     required: ["repo", "lane_id", "ask_id", "actor", "action"],
@@ -552,7 +553,51 @@ const askAnswerTool: ToolDef = {
   async execute({ repo, lane_id, ask_id, actor, action, payload }) {
     const lane = await resolveBackend().readLane(repo as string, lane_id as string);
     const target = requireAsk(lane, ask_id as string);
-    return answer(repo as string, lane_id as string, target, { from: actor as string, action: action as "complete" | "deny", payload });
+    return answer(repo as string, lane_id as string, target, { from: actor as string, action: action as AnswerEntry["action"], payload });
+  },
+};
+
+const voteTally: ToolDef = {
+  name: "vote_tally",
+  description:
+    'Counts ballots cast (ask_answer, action "vote") on a "vote_request" ask. Returns { resolved: false, missing: [...] } while any maintainer hasn\'t voted yet -- nothing closes until then. Once everyone has, this posts the real "complete" that closes the vote and, if approved and the decision was a Policy change, actually applies it.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      ask_id: { type: "string" },
+      actor: { type: "string" },
+    },
+    required: ["repo", "lane_id", "ask_id", "actor"],
+  },
+  async execute({ repo, lane_id, ask_id, actor }) {
+    return tallyVotes(repo as string, lane_id as string, ask_id as string, actor as string);
+  },
+};
+
+const whistleblowResolve: ToolDef = {
+  name: "whistleblow_resolve",
+  description:
+    'Closes a "whistleblow" ask and runs the incident runbook (STOP this Lane, DROP the reported Agent\'s other pending Asks in it, and if target_commit names an already-merged commit, ROLL it back with a real revert commit) -- the direct action only this Lane\'s coordinator can take. Posts a trap-kind Insight recording what happened either way.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      ask_id: { type: "string" },
+      actor: { type: "string" },
+      target_agent: { type: "string" },
+      target_commit: { type: "string" },
+      reason: { type: "string" },
+    },
+    required: ["repo", "lane_id", "ask_id", "actor", "target_agent", "reason"],
+  },
+  async execute({ repo, lane_id, ask_id, actor, target_agent, target_commit, reason }) {
+    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
+    const target = requireAsk(lane, ask_id as string);
+    await answer(repo as string, lane_id as string, target, { from: actor as string, action: "complete", payload: { targetAgent: target_agent, targetCommit: target_commit, reason } });
+    return runIncidentRunbook(repo as string, lane_id as string, { targetAgent: target_agent as string, targetCommit: target_commit as string | undefined, reason: reason as string }, actor as string);
   },
 };
 
@@ -741,15 +786,16 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 
-// The two tools that actually mutate committed state (a real commit, a
-// real Ladder write) -- real RBAC enforcement for `zz work` isn't just
-// the system prompt telling the model to behave; it's not handing these
-// to the model at all unless the ask it's currently working is one
-// where it's confirmed to be a coordinator (see ASK_SCOPE in
-// engine/lane.ts and how cli/commands/work.ts picks a tool set per ask).
-export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool];
+// The tools that actually mutate committed state (a real commit, a
+// real Ladder write, the incident runbook's own STOP/DROP/ROLL) -- real
+// RBAC enforcement for `zz work` isn't just the system prompt telling
+// the model to behave; it's not handing these to the model at all
+// unless the ask it's currently working is one where it's confirmed to
+// be a coordinator (see ASK_SCOPE in engine/lane.ts and how
+// cli/commands/work.ts picks a tool set per ask).
+export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool, whistleblowResolve];
 export const CONTRIBUTOR_TOOLS: ToolDef[] = ALL_TOOLS.filter((t) => !COORDINATOR_ONLY_TOOLS.includes(t));

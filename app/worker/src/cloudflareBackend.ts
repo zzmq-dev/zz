@@ -17,6 +17,8 @@ import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtCommitImpl, type ArtifactsNamespace, type ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
 import { writeRungsBatch, readRung, appendRepoChildren as appendRepoChildrenImpl, rootCommitOid, type SimpleRung, type NotesCache } from "./cloudflareLadderBackend.js";
 import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
+import { readRepoMetaAndRoles, writeRepoMeta } from "./repoMeta.js";
+import type { RepoPolicy } from "../../engine/types.js";
 
 interface RepoInfo {
   remote: string;
@@ -406,6 +408,24 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         mutate(lane);
         writeLaneSync(lane);
         return lane;
+      });
+    },
+
+    async readPolicy(): Promise<RepoPolicy> {
+      return withRepo(artifacts, artifactsName, async (repo, remote) => {
+        const token = await repo.createToken("read", 3600);
+        const { meta } = await readRepoMetaAndRoles(remote, token);
+        if (!meta) throw new Error(`${artifactsName}: repo has no metadata yet`);
+        return meta.policy;
+      });
+    },
+
+    async writePolicy(_repo, policy: RepoPolicy): Promise<void> {
+      await withRepo(artifacts, artifactsName, async (repo, remote) => {
+        const token = await repo.createToken("write", 3600);
+        const { meta } = await readRepoMetaAndRoles(remote, token);
+        if (!meta) throw new Error(`${artifactsName}: repo has no metadata yet`);
+        await writeRepoMeta(remote, token, { ...meta, policy });
       });
     },
   };

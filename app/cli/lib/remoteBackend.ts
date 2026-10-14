@@ -68,6 +68,14 @@ export const remoteBackend: Backend = {
     return (await callRemoteTool(repo, "lane_list", {})) as Lane[];
   },
   withLane: () => notSupported("withLane"),
+  // No "read a repo's policy" remote tool exists yet (today's only
+  // Policy reader/writer is webApp.ts's own settings routes, not an
+  // agent-facing tool) -- the real governance read/write path is
+  // server-side, inside the DO (engine/lane.ts's tallyVotes calling
+  // resolveBackend().readPolicy/writePolicy, which resolves to
+  // cloudflareBackend there, never this client-side Backend).
+  readPolicy: () => notSupported("readPolicy"),
+  writePolicy: () => notSupported("writePolicy"),
   // Cross-repo, so callRemoteTool (which routes to one specific
   // repo's DO) doesn't apply here -- a direct API call instead, same
   // as any other plain CLI->Worker call. Safe specifically because

@@ -15,12 +15,12 @@
 // own ensureCloned), but every Lane/Ladder write from here on tried to
 // read it back from the stale, nonexistent demo-repos/<name> path
 // instead. One real resolveRepo(), reused, not two that can disagree.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Backend, LadderSearchHit } from "./backend.js";
-import type { Lane } from "./types.js";
+import type { Lane, RepoPolicy } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import { writeLadder, appendRepoChildren as appendRepoChildrenImpl, readAnchor as readAnchorImpl } from "./ladderNotes.js";
@@ -42,6 +42,25 @@ function repoDirOf(slug: string): string {
 
 function stateDirOf(slug: string): string {
   return resolveRepo(slug).stateDir;
+}
+
+// A trivial local stand-in for RepoPolicy -- real, RBAC-enforced
+// governance only exists remotely (worker/src/repoMeta.ts's own
+// zz-meta branch), since a single local user has no one to govern.
+// Still a real, persisted value (not just a hardcoded default
+// returned on every read): a vote_request about Policy, run entirely
+// locally, has somewhere real to land, matching what the demo looks
+// like once it's pushed/synced to a real remote repo.
+const DEFAULT_LOCAL_POLICY: RepoPolicy = { require_changeset_review: false, visibility: "public" };
+
+function policyPath(stateDir: string): string {
+  return join(stateDir, ".zz", "policy.json");
+}
+
+function readPolicyFile(stateDir: string): RepoPolicy {
+  const path = policyPath(stateDir);
+  if (!existsSync(path)) return DEFAULT_LOCAL_POLICY;
+  return JSON.parse(readFileSync(path, "utf8")) as RepoPolicy;
 }
 
 /** Every "owner/repo" slug with a real clone under ~/.zz/repos/ -- the local counterpart to searchLadder's own cross-repo scan, now that a repo's real location is a two-level owner/name tree (cli/lib/repo.ts's own convention) rather than one flat demo-repos/<name> directory. */
@@ -171,6 +190,16 @@ export function createLocalBackend(): Backend {
 
     async withLane(repo, laneId, mutate): Promise<Lane> {
       return withLaneImpl(stateDirOf(repo), laneId, mutate);
+    },
+
+    async readPolicy(repo): Promise<RepoPolicy> {
+      return readPolicyFile(stateDirOf(repo));
+    },
+
+    async writePolicy(repo, policy): Promise<void> {
+      const path = policyPath(stateDirOf(repo));
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, JSON.stringify(policy, null, 2) + "\n");
     },
   };
 }

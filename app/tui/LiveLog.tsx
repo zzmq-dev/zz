@@ -22,7 +22,7 @@ function kindOf(e: FlatEvent): string | null {
   return e.entry.type === "ASK" ? e.entry.kind : null;
 }
 
-function scopeOf(e: FlatEvent): "coordinator" | "open" | "maintainer" | null {
+function scopeOf(e: FlatEvent): "coordinator" | "open" | "maintainer" | "committee" | null {
   if (e.entry.type !== "ASK") return null;
   return ASK_SCOPE[e.entry.kind] ?? null;
 }
@@ -40,7 +40,7 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
   const [repoFilter, setRepoFilter] = useState("all");
   const [laneFilter, setLaneFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState("all");
-  const [scope, setScope] = useState<"all" | "coordinator" | "open" | "maintainer">("all");
+  const [scope, setScope] = useState<"all" | "coordinator" | "open" | "maintainer" | "committee">("all");
   const { isRawModeSupported } = useStdin();
   // Wide enough for repo/lane/verb/detail to all fit on one line with
   // real column separation -- narrower than that, the detail line
@@ -53,7 +53,7 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
       if (input === "r") setRepoFilter((v) => cycle(repos, repos.includes(v) ? v : "all"));
       if (input === "L") setLaneFilter((v) => cycle(lanes, lanes.includes(v) ? v : "all"));
       if (input === "t") setKindFilter((v) => cycle(kinds, kinds.includes(v) ? v : "all"));
-      if (input === "s") setScope((v) => (v === "all" ? "coordinator" : v === "coordinator" ? "maintainer" : v === "maintainer" ? "open" : "all"));
+      if (input === "s") setScope((v) => (v === "all" ? "coordinator" : v === "coordinator" ? "maintainer" : v === "maintainer" ? "committee" : v === "committee" ? "open" : "all"));
     },
     { isActive: isRawModeSupported },
   );

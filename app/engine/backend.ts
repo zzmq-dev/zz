@@ -8,7 +8,7 @@
 // that doc's build sequencing: define this, move today's code behind
 // LocalBackend with zero behavior change, before anything Cloudflare
 // exists.
-import type { Lane } from "./types.js";
+import type { Lane, RepoPolicy } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import type { CommitRow, FileChangeRow } from "./ingest.js";
@@ -59,6 +59,18 @@ export interface Backend {
   listLanes(repo: string): Promise<Lane[]>;
   /** Atomic read-modify-write -- the race-free primitive every ask()/answer() mutation goes through. `mutate` itself stays synchronous (it's pure in-memory logic -- RBAC checks, pushing onto history) even though the surrounding read/write now genuinely isn't. */
   withLane(repo: string, laneId: string, mutate: (lane: Lane) => void): Promise<Lane>;
+
+  // Policy -- real, RBAC-enforced repo governance (visibility,
+  // require_changeset_review, ...) only exists remotely today (the
+  // zz-meta branch, worker/src/repoMeta.ts): a single local user has
+  // no one to govern. Still a real Backend method, not a remote-only
+  // side door, so engine/lane.ts's tallyVotes (the one thing that
+  // writes a passed policy vote's outcome) stays backend-agnostic --
+  // LocalBackend's own implementation is a trivial stand-in, not a
+  // throw, so a vote_request about Policy still runs end to end
+  // locally, just against a policy with no actual enforcement behind it.
+  readPolicy(repo: string): Promise<RepoPolicy>;
+  writePolicy(repo: string, policy: RepoPolicy): Promise<void>;
 }
 
 let cachedLocal: Backend | null = null;

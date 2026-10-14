@@ -15,6 +15,16 @@ export interface AgentRoles {
   grants: RoleGrant[];
 }
 
+// The canonical shape -- worker/src/repoMeta.ts's own RepoPolicy
+// imports this instead of redeclaring it, so the governance layer
+// (engine/lane.ts's tallyVotes, which writes a passed policy vote's
+// outcome through Backend.writePolicy) and the Worker's own zz-meta
+// storage never drift apart on what a Policy actually contains.
+export interface RepoPolicy {
+  require_changeset_review: boolean;
+  visibility: "public" | "private";
+}
+
 export type LaneStatus =
   | "proposed"
   | "open"
@@ -76,7 +86,39 @@ export type AskKind =
   // the original proposal (files/message/summary) and the conflict
   // reason, so whoever claims this reconciles the two instead of
   // starting over from the task description alone.
-  | "resolve_conflict";
+  | "resolve_conflict"
+  // A formal Committee ballot (site/content/docs/governance -- "for
+  // decisions lazy consensus doesn't settle, such as granting Roles
+  // above Contributor, changing Policy, or replacing an Owner, a
+  // Committee holds a formal Vote"). Scope "committee" (ASK_SCOPE,
+  // engine/lane.ts) -- resolved against the Lane's own `maintainers`
+  // list, same as changeset_review; Committee is not a separate list.
+  // payload.decisionKind names what's being decided ("policy" |
+  // "role_grant" | "owner_succession" | "other"); payload.proposal
+  // carries the kind-specific detail (e.g. a RepoPolicy diff for
+  // "policy"). Never carries a `deadline` -- a vote_request is
+  // structurally exempt from lazy consensus (tallyVotes/engine/lane.ts
+  // is the only thing that ever closes one), which is the actual
+  // enforcement of "Policy needs a real Vote, not just nobody
+  // objecting in time."
+  | "vote_request"
+  // A report that some already-posted work is tainted (bad
+  // provenance: leaked info, a reverted commit, a low-trust source) or
+  // that an Agent defected (broke protocol: misreported scope, lied
+  // about a claim) -- site/content/docs/protocol's "Tainted work and
+  // defecting agents". Posting one is unrestricted (ask() itself never
+  // scope-checks who may post, only engine/lane.ts's answer() checks
+  // who may act on one) -- anyone can file a report. ASK_SCOPE below
+  // is "coordinator" though: only the Lane's own coordinator (the
+  // repo's Owner, for the root Lane) may complete it, which is the
+  // direct action that runs the incident runbook (runIncidentRunbook,
+  // engine/lane.ts) -- no review needed to undo already-reviewed-and-
+  // now-discovered-bad work, but also not something a random reporter
+  // can trigger just by filing the report. STOPs this Lane, DROPs the
+  // reported Agent's other pending Asks in it, and (if
+  // payload.targetCommit names an already-merged commit) ROLLs it back
+  // with a real revert commit plus a `trap`-kind Insight recording why.
+  | "whistleblow";
 
 export interface AskEntry {
   id: string;
@@ -89,6 +131,19 @@ export interface AskEntry {
   depends_on?: string[];
   /** Higher = more urgent. A query-time sort hint (see engine/workqueue.ts), not a scheduling guarantee. */
   priority?: number;
+  /**
+   * Lazy consensus (site/content/docs/protocol -- "An Ask can carry a
+   * deadline. If no one vetoes it before the deadline passes, it is
+   * treated as approved"). ISO timestamp; checkLazyConsensus
+   * (engine/lane.ts) auto-grants an ask past its deadline with no
+   * veto/deny posted. Never set on a vote_request -- that kind is
+   * structurally exempt (tallyVotes is the only thing that ever closes
+   * one), which is what actually enforces "Policy/Role grants above
+   * Contributor/Owner succession need a real Vote, not just nobody
+   * objecting in time" rather than leaving it a convention someone
+   * could forget.
+   */
+  deadline?: string;
   at: string;
 }
 
@@ -98,8 +153,18 @@ export interface AnswerEntry {
   /** The AskEntry.id this answers. */
   ask: string;
   from: string;
-  action: "grant" | "deny" | "complete";
-  /** Kind-specific data: a grant id for a claim, a built Rung for a work item, etc. */
+  // "veto": a hard, terminal rejection of one changeset_review by a
+  // Maintainer/Committee member, for a design/priority disagreement
+  // negotiation couldn't resolve -- distinct from "deny" (didn't meet
+  // the bar) in both meaning and effect (sets the Lane to "vetoed", a
+  // LaneStatus value that already existed, unused, before this).
+  // "vote": one Committee member's ballot on a vote_request --
+  // non-terminal and, uniquely, posted more than once per Ask (one per
+  // distinct voter; engine/lane.ts's answer() special-cases this one
+  // action instead of its usual one-answer-per-ask rule). payload:
+  // {ballot: "+1" | "+0" | "-0" | "-1"}.
+  action: "grant" | "deny" | "complete" | "veto" | "vote";
+  /** Kind-specific data: a grant id for a claim, a built Rung for a work item, a ballot for a vote, etc. */
   payload?: unknown;
   at: string;
 }

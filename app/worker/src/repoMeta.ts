@@ -13,13 +13,11 @@
 import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
+import type { RepoPolicy } from "../../engine/types.js";
+
+export type { RepoPolicy };
 
 export const META_REF = "refs/heads/zz-meta";
-
-export interface RepoPolicy {
-  require_changeset_review: boolean;
-  visibility: "public" | "private";
-}
 
 export interface RepoMeta {
   description: string;

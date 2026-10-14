@@ -9,9 +9,10 @@
 // ask()/answer() primitives here.
 import { randomBytes } from "node:crypto";
 import { resolveBackend } from "./backend.js";
-import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, LaneStatus, RelatedLaneEntry, Trigger } from "./types.js";
+import type { AnswerEntry, AskEntry, AskKind, InsightEntry, Lane, LaneRef, LaneStatus, RelatedLaneEntry, Trigger } from "./types.js";
 import type { Rung, RungKind } from "./ladder.js";
 import { REPO_RUNG_PATH } from "./ladder.js";
+import type { ChangesetFile } from "./changeset.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -110,14 +111,34 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
   // answer and correctly reports "already answered" instead of
   // clobbering it.
   await resolveBackend().withLane(repo, laneId, (lane) => {
-    const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id);
-    if (existing) {
-      // `resolved: true` is a structural signal (see agent/loop.ts), not
-      // just phrasing -- a model that keeps retrying this exact call
-      // despite the message has, in practice, kept retrying it (observed
-      // repeatedly); the loop itself ends on this signal instead of
-      // depending on the model reading and acting on the text correctly.
-      throw Object.assign(new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`), { resolved: true });
+    // "vote" is the one action that's allowed more than once per ask --
+    // one per distinct Committee member, not one ever for the whole
+    // ask -- so the usual "already answered" rule checks per-actor
+    // instead of "does any answer exist" for this action specifically.
+    // tallyVotes is the only thing that ever posts the real, terminal
+    // "complete" that closes a vote_request, and that one still only
+    // ever happens once, caught by the same check as everything else.
+    if (input.action === "vote") {
+      const alreadyVoted = lane.history.some((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id && e.action === "vote" && e.from === input.from);
+      if (alreadyVoted) {
+        throw Object.assign(new Error(`"${input.from}" already voted on ask ${theAsk.id} -- a ballot can't be recast. If you're checking whether the vote itself is resolved, use vote_tally instead of answering again.`), { resolved: true });
+      }
+    } else {
+      // Exclude "vote" answers from this check -- a vote_request
+      // accumulates several of those (one per actor) before its one
+      // real terminal answer (tallyVotes's own "complete") exists at
+      // all; without this exclusion, that terminal answer would always
+      // see an existing "vote" entry and wrongly conclude it's a
+      // duplicate.
+      const existing = lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === theAsk.id && e.action !== "vote");
+      if (existing) {
+        // `resolved: true` is a structural signal (see agent/loop.ts), not
+        // just phrasing -- a model that keeps retrying this exact call
+        // despite the message has, in practice, kept retrying it (observed
+        // repeatedly); the loop itself ends on this signal instead of
+        // depending on the model reading and acting on the text correctly.
+        throw Object.assign(new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`), { resolved: true });
+      }
     }
     // RBAC enforcement: a coordinator-scope ask (ASK_SCOPE below) may
     // only be granted/completed/denied by one of this Lane's actual
@@ -139,6 +160,26 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       throw new Error(
         `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that requires being one of lane "${laneId}"'s maintainers (${lane.maintainers.join(", ")}).`,
       );
+    }
+    // Committee is not a separate list (site/content/docs/governance:
+    // "by default the Agents holding Maintainer") -- same check as
+    // maintainer-scope above, just a clearer error for a vote/veto
+    // specifically.
+    if (ASK_SCOPE[theAsk.kind] === "committee" && !lane.maintainers.includes(input.from)) {
+      throw new Error(
+        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's a Committee decision, and this Lane's Committee is its maintainers list (${lane.maintainers.join(", ")}), which "${input.from}" isn't on.`,
+      );
+    }
+    // A VETO only makes sense as a response to a specific proposed
+    // change (site/content/docs/protocol: "Reject one specific
+    // proposed change") -- rejecting anything else is just "deny".
+    if (input.action === "veto" && theAsk.kind !== "changeset_review") {
+      throw new Error(`"veto" only applies to a "changeset_review" ask -- ask ${theAsk.id} is "${theAsk.kind}". Use "deny" instead.`);
+    }
+    // A "vote" ballot only ever makes sense on a vote_request -- every
+    // other kind resolves through grant/deny/complete.
+    if (input.action === "vote" && theAsk.kind !== "vote_request") {
+      throw new Error(`"vote" only applies to a "vote_request" ask -- ask ${theAsk.id} is "${theAsk.kind}". Use "grant"/"deny"/"complete" instead.`);
     }
     // The mechanical merge backstop: a submit_changeset may not be
     // completed without a changeset_review it depends_on actually
@@ -169,7 +210,17 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       );
     }
     lane.history.push(entry);
-    if (input.action === "grant") {
+    if (input.action === "veto") {
+      // Terminal, like a denial, but site/content/docs/protocol is
+      // explicit that it's a different thing ("ends that attempt"):
+      // LaneStatus already had "vetoed" in its union, unused, before
+      // this -- the first thing to actually set it.
+      lane.status = "vetoed";
+    } else if (input.action === "vote") {
+      // Non-terminal (tallyVotes posts the real, terminal "complete"
+      // once every expected Committee member has voted) -- a single
+      // ballot doesn't move the Lane's own status at all.
+    } else if (input.action === "grant") {
       const nextStatus = STATUS_ON_GRANT[theAsk.kind];
       if (nextStatus) lane.status = nextStatus;
     } else if ((input.action === "complete" || input.action === "deny") && theAsk.kind !== "claim_request" && theAsk.kind !== "review_request") {
@@ -190,11 +241,13 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
 // given kind: "coordinator" means only someone in that lane's
 // `coordinators` list, "maintainer" only someone in its `maintainers`
 // list (the Maintainer role, site/content/governance -- can be a
-// strict subset of coordinators), "open" means anyone. A property of
-// the kind, not a central lock -- the query that reads this
-// (engine/workqueue.ts's claimableAsks) is what a real concurrent
-// actor would run against a shared queue.
-export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer"> = {
+// strict subset of coordinators), "committee" the same list again
+// (Committee is Maintainers by default, not a separate list -- see
+// governance's own "planned" section), "open" means anyone. A
+// property of the kind, not a central lock -- the query that reads
+// this (engine/workqueue.ts's claimableAsks) is what a real
+// concurrent actor would run against a shared queue.
+export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer" | "committee"> = {
   claim_request: "coordinator",
   claim_release: "coordinator",
   merge_request: "coordinator",
@@ -210,6 +263,13 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer"> =
   submit_changeset: "coordinator",
   resolve_conflict: "open",
   changeset_review: "maintainer",
+  vote_request: "committee",
+  // Posting (filing a report) is unrestricted -- ask() never
+  // scope-checks. This governs who may act on one (complete it, which
+  // runs the incident runbook) -- the Lane's coordinator, same
+  // authority level site/content/docs/protocol gives an Owner to
+  // "invoke any of [STOP/DROP/ROLL] directly."
+  whistleblow: "coordinator",
 };
 
 /**
@@ -227,4 +287,181 @@ export async function mergeLaneLadder(repo: string, laneLadder: Rung | Rung[]): 
   if (asChildren.length) {
     await resolveBackend().appendRepoChildren(repo, asChildren.map((r) => ({ path: r.path, kind: r.kind as RungKind })));
   }
+}
+
+/** Posts an Insight -- a norm observed or a trap found (site/content/docs/nouns), never answered the way an Ask is. The first real poster of one: before runIncidentRunbook below, nothing in the codebase ever pushed an INSIGHT entry. */
+export async function postInsight(repo: string, laneId: string, input: { kind: "norm" | "trap"; text: string; from: string }): Promise<InsightEntry> {
+  const entry: InsightEntry = { type: "INSIGHT", kind: input.kind, text: input.text, from: input.from, at: nowIso() };
+  await resolveBackend().withLane(repo, laneId, (lane) => {
+    lane.history.push(entry);
+  });
+  return entry;
+}
+
+export interface VoteTally {
+  /** False while any expected Committee member (this Lane's `maintainers`) hasn't cast a ballot yet -- nothing is closed, no "complete" posted. */
+  resolved: boolean;
+  approved?: boolean;
+  ballots: Record<string, "+1" | "+0" | "-0" | "-1">;
+  missing: string[];
+}
+
+/**
+ * Counts ballots on a vote_request and, once every one of this Lane's
+ * maintainers (the Committee -- site/content/docs/governance: "by
+ * default the Agents holding Maintainer") has voted, posts the real,
+ * terminal "complete" that closes it -- the only thing that ever
+ * does. Demo-level tallying (simple majority of +1 vs -1, +0/-0 count
+ * toward quorum but not the result) -- the real design wants
+ * stakes-scaled thresholds (a Role grant above Contributor needing a
+ * bigger majority, an Owner succession needing zero -1s); not built
+ * here. On approval of a "policy" decision, writes the passed change
+ * through Backend.writePolicy -- the actual enforcement of what a
+ * passed Policy vote means, not just a record that it happened.
+ */
+export async function tallyVotes(repo: string, laneId: string, askId: string, closedBy: string): Promise<VoteTally> {
+  const backend = resolveBackend();
+  const lane = await backend.readLane(repo, laneId);
+  if (!lane) throw new Error(`no such lane "${laneId}" in ${repo}`);
+  const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
+  if (!theAsk || theAsk.kind !== "vote_request") throw new Error(`"${askId}" is not a "vote_request" ask in ${repo}/${laneId}`);
+  const alreadyClosed = lane.history.some((e) => e.type === "ANSWER" && e.ask === askId && e.action === "complete");
+  if (alreadyClosed) throw new Error(`vote "${askId}" is already closed -- no need to tally it again.`);
+
+  const ballots: Record<string, "+1" | "+0" | "-0" | "-1"> = {};
+  for (const e of lane.history) {
+    if (e.type === "ANSWER" && e.ask === askId && e.action === "vote") {
+      ballots[e.from] = (e.payload as { ballot: "+1" | "+0" | "-0" | "-1" }).ballot;
+    }
+  }
+  const missing = lane.maintainers.filter((m) => !(m in ballots));
+  if (missing.length > 0) return { resolved: false, ballots, missing };
+
+  const forVotes = Object.values(ballots).filter((b) => b === "+1").length;
+  const againstVotes = Object.values(ballots).filter((b) => b === "-1").length;
+  const approved = forVotes > againstVotes;
+
+  await answer(repo, laneId, theAsk, { from: closedBy, action: "complete", payload: { approved, ballots } });
+
+  if (approved) {
+    const decision = (theAsk.payload ?? {}) as { decisionKind?: string; proposal?: Partial<import("./types.js").RepoPolicy> };
+    if (decision.decisionKind === "policy" && decision.proposal) {
+      const current = await backend.readPolicy(repo);
+      await backend.writePolicy(repo, { ...current, ...decision.proposal });
+    }
+  }
+
+  return { resolved: true, approved, ballots, missing: [] };
+}
+
+/**
+ * Lazy consensus (site/content/docs/protocol: "An Ask can carry a
+ * deadline. If no one vetoes it before the deadline passes, it is
+ * treated as approved") -- auto-grants a routine ask past its
+ * deadline with no answer posted yet. Structurally refuses a
+ * vote_request: that kind's whole point is that nothing about it ever
+ * resolves without a real, counted Vote (tallyVotes), not silence.
+ */
+export async function checkLazyConsensus(repo: string, laneId: string, askId: string, closedBy: string): Promise<boolean> {
+  const lane = await resolveBackend().readLane(repo, laneId);
+  if (!lane) throw new Error(`no such lane "${laneId}" in ${repo}`);
+  const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
+  if (!theAsk) throw new Error(`no such ask "${askId}" in ${repo}/${laneId}`);
+  if (theAsk.kind === "vote_request") {
+    throw new Error(`"${askId}" is a "vote_request" -- lazy consensus never applies to one of these. Policy changes, Role grants above Contributor, and Owner succession need a real Vote (tallyVotes), not nobody objecting in time.`);
+  }
+  if (!theAsk.deadline || new Date(theAsk.deadline).getTime() > Date.now()) return false;
+  const alreadyAnswered = lane.history.some((e) => e.type === "ANSWER" && e.ask === askId);
+  if (alreadyAnswered) return false;
+  await answer(repo, laneId, theAsk, { from: closedBy, action: "grant", payload: { lazyConsensus: true } });
+  return true;
+}
+
+/**
+ * ROLL: reverts an already-merged commit for real, by reusing
+ * Backend.commitChangeset wholesale -- for each file that commit
+ * touched, reads what it looked like at the commit's own parent and
+ * submits that as the "new" state. No new git mechanism, just the
+ * same primitive submit_changeset already commits through, run
+ * backwards. A file the tainted commit itself added or deleted is
+ * skipped (there's no delete primitive on a changeset yet -- the same
+ * gap ladder-sync.ts already documents for the Ladder side); a
+ * demo/incident-response example should use a modified file, not a
+ * newly-added one, to actually exercise this.
+ */
+async function rollBackCommit(repo: string, targetSha: string, reason: string, actor: string): Promise<string> {
+  const backend = resolveBackend();
+  const commits = await backend.listCommits(repo);
+  const target = commits.find((c) => c.sha === targetSha);
+  if (!target) throw new Error(`ROLL: no such commit "${targetSha}" in ${repo}`);
+  if (!target.parent) throw new Error(`ROLL: commit "${targetSha}" has no parent (it's the repo's root commit) -- nothing to revert to.`);
+  const changes = await backend.diffCommit(repo, target);
+  const files: ChangesetFile[] = [];
+  for (const c of changes) {
+    if (c.status !== "modified") continue;
+    const oldContent = await backend.readFileAtCommit(repo, target.parent, c.path);
+    files.push({ path: c.path, content: oldContent });
+  }
+  if (files.length === 0) {
+    throw new Error(`ROLL: nothing revertible in "${targetSha}" -- every touched file was added or deleted, not modified, and there's no delete primitive yet to undo those.`);
+  }
+  return backend.commitChangeset(repo, { files, message: `Revert ${targetSha.slice(0, 8)}: ${reason}`, author: { name: "zz-incident", email: "zz-incident@zzmq.dev" } });
+}
+
+export interface IncidentResult {
+  dropped: string[];
+  rolled: { commit: string; revertCommit: string } | null;
+}
+
+/**
+ * The incident runbook (site/content/docs/protocol's "Tainted work and
+ * defecting agents" -- STOP/DROP/ROLL), run as the direct action of a
+ * coordinator completing a "whistleblow" ask. STOP: this Lane only
+ * (not a repo-wide or account-wide block -- out of scope for a demo).
+ * DROP: denies the reported Agent's other still-pending Asks in this
+ * same Lane. ROLL: reverts the named commit, if any, via
+ * rollBackCommit. Always ends with a `trap`-kind Insight recording
+ * what happened, whether or not a commit was rolled back.
+ */
+export async function runIncidentRunbook(repo: string, laneId: string, report: { targetAgent: string; targetCommit?: string; reason: string }, closedBy: string): Promise<IncidentResult> {
+  // DROP before STOP: each deny below goes through the ordinary
+  // answer() path, which (like any other deny/complete) bumps a
+  // non-claim/review Lane's status back to "active" -- running DROP
+  // first and setting the terminal "stopped" status last is what
+  // keeps STOP's own effect from being clobbered by DROP's.
+  const lane = await resolveBackend().readLane(repo, laneId);
+  const dropped: string[] = [];
+  if (lane) {
+    const answeredAskIds = new Set(lane.history.filter((e): e is AnswerEntry => e.type === "ANSWER").map((e) => e.ask));
+    const pending = lane.history.filter((e): e is AskEntry => e.type === "ASK" && e.from === report.targetAgent && !answeredAskIds.has(e.id));
+    for (const p of pending) {
+      await answer(repo, laneId, p, { from: closedBy, action: "deny", payload: { reason: `Dropped as part of incident response: ${report.reason}` } });
+      dropped.push(p.id);
+    }
+  }
+
+  let rolled: IncidentResult["rolled"] = null;
+  if (report.targetCommit) {
+    const revertSha = await rollBackCommit(repo, report.targetCommit, report.reason, closedBy);
+    await mergeLaneLadder(repo, {
+      path: `changesets/${revertSha}`,
+      kind: "changeset",
+      summary: `Incident response: reverts ${report.targetCommit.slice(0, 8)} -- ${report.reason}`,
+      sources: [{ kind: "commit", ref: revertSha, title: `Revert ${report.targetCommit.slice(0, 8)}`, author: closedBy, at: nowIso() }],
+      children: [],
+    });
+    rolled = { commit: report.targetCommit, revertCommit: revertSha };
+  }
+
+  await resolveBackend().withLane(repo, laneId, (lane) => {
+    lane.status = "stopped";
+  });
+
+  await postInsight(repo, laneId, {
+    kind: "trap",
+    from: closedBy,
+    text: `${report.targetAgent}: ${report.reason}${rolled ? ` -- ${report.targetCommit!.slice(0, 8)} reverted as ${rolled.revertCommit.slice(0, 8)}` : ""}`,
+  });
+
+  return { dropped, rolled };
 }
