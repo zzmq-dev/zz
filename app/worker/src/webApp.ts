@@ -233,7 +233,17 @@ function textBlock(text: string): string {
 // "&lt;script&gt;". Code block/inline-code contents are stashed before
 // the other passes run so bold/italic/header markup never reaches
 // inside them.
-function renderMarkdown(src: string): string {
+/** A README's own markdown links are written relative to the repo root (findReadme only ever looks there) -- "LICENSE", "./docs/x.md", "docs/x.md" all need to become a real site path (the repo's own /blob/<ref>/ convention) to go anywhere when clicked, instead of resolving against the CURRENT PAGE's own URL the way a plain relative href normally would. Left untouched: a real absolute URL (any "scheme:"), a protocol-relative "//host/...", and a same-page "#anchor". `href` is already-HTML-escaped text (it comes from renderMarkdown's own pre-escaped `html` string) -- only slug/ref, raw here, need escaping before this gets dropped straight into an href attribute. */
+function resolveReadmeLink(href: string, slug: string, ref: string): string {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//") || href.startsWith("#")) return href;
+  const hashIdx = href.indexOf("#");
+  const pathPart = hashIdx === -1 ? href : href.slice(0, hashIdx);
+  const hashPart = hashIdx === -1 ? "" : href.slice(hashIdx);
+  const normalized = pathPart.replace(/^\.\//, "").replace(/^\/+/, "");
+  return `/${esc(slug)}/blob/${esc(ref)}/${normalized}${hashPart}`;
+}
+
+function renderMarkdown(src: string, slug: string, ref: string): string {
   let html = esc(src);
 
   const codeBlocks: string[] = [];
@@ -257,7 +267,7 @@ function renderMarkdown(src: string): string {
     .replace(/^# (.*)$/gm, "<h1>$1</h1>")
     .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
     .replace(/\*([^*\n]+)\*/g, "<i>$1</i>")
-    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text, href) => `<a href="${resolveReadmeLink(href, slug, ref)}" target="_blank" rel="noopener noreferrer">${text}</a>`)
     .replace(/(?:^[-*] .*(?:\n|$))+/gm, (block) => `<ul>${block.trim().split("\n").map((l) => `<li>${l.replace(/^[-*] /, "")}</li>`).join("")}</ul>\n`);
 
   html = html
@@ -2707,7 +2717,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     : "";
 
   const fileTabs = [
-    readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme)}</div>` } : null,
+    readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme, slug, info.defaultBranch)}</div>` } : null,
     {
       id: "ladder",
       label: "Ladder",
