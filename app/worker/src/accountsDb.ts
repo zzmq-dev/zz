@@ -229,6 +229,10 @@ export async function updateRepoVisibility(db: D1Database, slug: string, visibil
   await db.prepare("UPDATE repos SET visibility = ? WHERE slug = ?").bind(visibility, slug).run();
 }
 
+export async function updateRepoDescription(db: D1Database, slug: string, description: string): Promise<void> {
+  await db.prepare("UPDATE repos SET description = ? WHERE slug = ?").bind(description, slug).run();
+}
+
 export async function touchRepoUpdatedAt(db: D1Database, slug: string): Promise<void> {
   await db.prepare("UPDATE repos SET updated_at = ? WHERE slug = ?").bind(new Date().toISOString(), slug).run();
 }

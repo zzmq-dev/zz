@@ -66,6 +66,7 @@ import {
   trackRepo,
   untrackRepo,
   updateIdentityTokens,
+  updateRepoDescription,
   updateRepoOwner,
   updateRepoVisibility,
   upsertRepo,
@@ -102,6 +103,28 @@ export interface WebEnv extends OAuthEnv {
 
 function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// http(s) URL detection, plain and deliberately conservative -- a
+// trailing sentence-punctuation character right after a URL (".",
+// ",", ")", etc., the common case in a hand-written description: "see
+// https://example.com.") is excluded from the match rather than
+// swallowed into the link, so the link target doesn't end up with a
+// stray period baked in.
+const URL_PATTERN = /https?:\/\/[^\s<>"]+[^\s<>".,;:!?)]/g;
+
+/** Same escaping `esc` does, plus turning any raw http(s) URL in the text into a real, clickable link -- used for repo descriptions specifically (free-text the owner typed, same as a GitHub repo's own "Website" blurb, not markdown), not every `esc` call generally. */
+function autolinkText(s: string): string {
+  let out = "";
+  let last = 0;
+  for (const m of s.matchAll(URL_PATTERN)) {
+    out += esc(s.slice(last, m.index));
+    const url = m[0];
+    out += `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer nofollow">${esc(url)}</a>`;
+    last = m.index + url.length;
+  }
+  out += esc(s.slice(last));
+  return out;
 }
 
 /** An Ask/Answer payload, pretty-printed instead of dumped as one unreadable JSON.stringify() line -- a scrollable box so a large field (e.g. a proposal's full file contents) doesn't blow out the rest of the page's layout. */
@@ -518,8 +541,19 @@ async function resolveRequestAgent(request: Request, env: WebEnv): Promise<Agent
   return null;
 }
 
-async function handleLogin(request: Request): Promise<Response> {
+async function handleLogin(request: Request, env: WebEnv): Promise<Response> {
   const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
+  // Only when there's no cli_nonce -- the CLI's own login bridge needs
+  // a real OAuth round trip to mint a fresh token for itself even from
+  // an already-logged-in browser, so that flow always shows the
+  // buttons. Without one, this is just "click login from the main
+  // page" (or a stale bookmark/back-button), and a valid session
+  // already answers that -- showing the buttons again instead of just
+  // taking you into the app was the actual complaint.
+  if (!cliNonce) {
+    const me = await resolveRequestAgent(request, env);
+    if (me) return redirect(`/${me.username}`);
+  }
   const qs = cliNonce ? `?cli_nonce=${encodeURIComponent(cliNonce)}` : "";
   return layout(
     "Log in",
@@ -915,6 +949,20 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   await updateRepoVisibility(env.DB, repo.slug, visibility);
 }
 
+/** Same two-places-at-once shape doSetVisibility already uses (zz-meta's meta.json is the real source of truth; the D1 column is a read-side cache the repo page and every listing/search query actually read from) -- description was previously set once at creation (doCreateRepo) and never editable again. */
+async function doSetDescription(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
+  const repo = await getRepoBySlug(env.DB, repoSlug);
+  if (!repo) throw new ApiError(404, "no such repo");
+  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
+  const token = await artifactsRepo.createToken("write", 3600);
+  const info = await artifactsRepo.info();
+  const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
+  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  await writeRepoMeta(info.remote, token, { ...meta, description });
+  await updateRepoDescription(env.DB, repo.slug, description);
+}
+
 /** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
 async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerUsername: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
@@ -1285,7 +1333,7 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
            visible,
            (r) => r.slug,
            (r) => r.shard_of_slug,
-           (r) => `<a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${esc(r.description)}</div>` : ""}`,
+           (r) => `<a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${autolinkText(r.description)}</div>` : ""}`,
          ) || '<li class="empty">No public repos.</li>'
        }</ul>`,
      )}`,
@@ -1468,6 +1516,19 @@ async function handleVisibilityForm(repoSlug: string, request: Request, env: Web
   const form = await request.formData();
   try {
     await doSetVisibility(env, me, repoSlug, String(form.get("visibility") ?? "public") as "public" | "private");
+  } catch (err) {
+    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
+    throw err;
+  }
+  return redirect(`/${repoSlug}/settings`);
+}
+
+async function handleDescriptionForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const form = await request.formData();
+  try {
+    await doSetDescription(env, me, repoSlug, String(form.get("description") ?? "").trim());
   } catch (err) {
     if (err instanceof ApiError) return new Response(err.message, { status: err.status });
     throw err;
@@ -1838,7 +1899,7 @@ function repoRowHtml(r: RepoRow): string {
   // own filter), so this is purely "here's one of mine still importing",
   // not a leak of someone else's in-progress state.
   const ingestBadge = r.ingest_status === "ingesting" ? ` <span class="badge badge-yellow">⏳ ingesting</span>` : "";
-  return `<span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${ingestBadge}${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}`;
+  return `<span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${ingestBadge}${r.description ? ` <span class="desc muted">${autolinkText(r.description)}</span>` : ""}`;
 }
 
 function repoResultHtml(r: RepoRow): string {
@@ -2259,7 +2320,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     `<div class="card">
        ${repoRow.ingest_status === "ingesting" ? `<p><span class="badge badge-yellow">⏳ ingesting</span> <span class="muted">still importing -- content below may be incomplete until this finishes.</span></p>` : ""}
        <div class="card-head">
-         <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
+         <p>${autolinkText(meta?.description ?? repoRow.description ?? "")}</p>
          ${
            me && !isOwner
              ? `<form method="post" action="/${esc(slug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this repo" : "Track this repo"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
@@ -2334,6 +2395,14 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
     `${slug} settings`,
     me,
     `${card(
+      "Description",
+      `<form method="post" action="/${esc(slug)}/settings/description" class="stack">
+        <textarea name="description" rows="2" placeholder="What is this repo?" style="width:100%">${esc(meta?.description ?? "")}</textarea>
+        <button type="submit" class="secondary" style="align-self:flex-start">Save</button>
+      </form>`,
+    )}
+
+     ${card(
       "Roles",
       `<ul class="list">${roleRows || '<li class="empty">No grants yet.</li>'}</ul>`,
       { addModal: "modal-add-role" },
@@ -2666,7 +2735,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   const path = decodeURIComponent(url.pathname);
   const origin = url.origin;
 
-  if (path === "/login") return handleLogin(request);
+  if (path === "/login") return handleLogin(request, env);
   if (path === "/logout") return handleLogout(request, env);
   if (path === "/auth/start/cloudflare") return handleAuthStart("cloudflare", request, env);
   if (path === "/auth/start/google") return handleAuthStart("google", request, env);
@@ -2784,6 +2853,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/visibility$/);
     if (m && request.method === "POST") return handleVisibilityForm(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/description$/);
+    if (m && request.method === "POST") return handleDescriptionForm(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/transfer$/);
