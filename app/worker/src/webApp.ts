@@ -435,7 +435,16 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
 .kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.8em}
-.agent-id{text-decoration:none}
+/* An agent id's own distinctive frame -- corner brackets, not a pill,
+   since the login/bracketed-name split inside (login muted, name at
+   full pink) is already doing the "two parts" visual work; the
+   brackets just mark the whole thing as one identifier. This used to
+   be the Ladder rung kind's own look (.rung-bracket); rungs now get
+   the hexagonal .rung shape below instead, and this moved here. */
+.agent-id{display:inline-block;vertical-align:middle;position:relative;text-decoration:none;font-family:var(--mono);padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
+.agent-id::before,.agent-id::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:rgba(255,46,146,.55);border-style:solid}
+.agent-id::before{left:0;border-width:2px 0 2px 2px}
+.agent-id::after{right:0;border-width:2px 2px 2px 0}
 .agent-id:hover .agent-name{text-decoration:underline}
 .agent-name{color:var(--pink)}
 .ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
@@ -482,17 +491,21 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .lane-tag-link{text-decoration:none}
 .lane-tag{display:inline-block;vertical-align:middle;background:rgba(92,141,255,.15);border:1px solid rgba(92,141,255,.4);border-radius:4px;padding:0 .6em;margin:0 .2em;font-family:var(--mono);font-size:.85em;color:var(--blue);transform:skewX(-15deg)}
 .lane-tag-link:hover .lane-tag{background:rgba(92,141,255,.28)}
-/* A Ladder rung's own kind (file/changeset/filechange/...), bracketed
-   like a reference into a structure instead of the rounded .badge
-   pill every other kind label gets -- the corner marks are drawn with
-   pseudo-elements so the bracket frames the sides without a solid
-   border boxing in the whole thing. Bright, full-opacity pink and a
-   thick 4px mark so the bracket itself reads clearly, not just a
-   faint accent. */
-.rung-bracket{display:inline-block;vertical-align:middle;position:relative;color:var(--pink);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
-.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:rgba(255,46,146,.55);border-style:solid}
-.rung-bracket::before{left:0;border-width:2px 0 2px 2px}
-.rung-bracket::after{right:0;border-width:2px 2px 2px 0}
+/* A Ladder rung's own kind (file/changeset/filechange/...) -- its own
+   distinct six-sided shape (clip-path slices both side edges to a
+   point) instead of the rounded .badge pill every other kind label
+   gets, since a rung is a structural object in this system, not just
+   a label. Surface/border/fg instead of the stone/zinc literal colors
+   this was adapted from, to match the rest of the theme. */
+.rung{display:inline-block;vertical-align:middle;background:var(--surface);color:var(--fg);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:.15em 1em;margin:0 .2em;border:1px solid var(--border);clip-path:polygon(6px 0%,calc(100% - 6px) 0%,100% 50%,calc(100% - 6px) 100%,6px 100%,0% 50%)}
+/* A Role (owner/maintainer/contributor/viewer), framed by subtle
+   corner crosshairs instead of a solid pill border -- the role name's
+   own color (its existing badge-variant semantics) carries the
+   meaning; the crosshairs just mark it as a distinct kind of token. */
+.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.85rem;padding:.2em .6em;margin:0 .2em}
+.scope::before,.scope::after{content:"";position:absolute;width:4px;height:6px;border-color:var(--muted);border-style:solid}
+.scope::before{top:0;left:0;border-width:1px 0 0 1px}
+.scope::after{bottom:0;right:0;border-width:0 1px 1px 0}
 .lane-tag .text{display:inline-block;transform:skewX(15deg)}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
@@ -516,7 +529,8 @@ function laneStatusCode(status: string): string {
   return `<code class="kind-code" style="color:${color}">${esc(status)}</code>`;
 }
 function roleBadge(role: string): string {
-  return `<span class="badge badge-${ROLE_BADGE_VARIANT[role] ?? "muted"}">${esc(role)}</span>`;
+  const color = BADGE_VARIANT_COLOR[ROLE_BADGE_VARIANT[role] ?? "muted"];
+  return `<span class="scope" style="color:${color}">${esc(role)}</span>`;
 }
 
 /** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */
@@ -1452,7 +1466,7 @@ function renderLadderNode(slug: string, node: ResolvedRung, defaultBranch: strin
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
   const href = ladderPathLink(slug, node, defaultBranch, parentChangesetSha);
   const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
-  const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="rung-bracket">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
+  const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="rung">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
@@ -1477,7 +1491,7 @@ async function readLadderRung(env: WebEnv, artifactsName: string, path: string):
 
 function renderLadderDetail(rung: EmbeddedRung, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
-  const self = `<li class="row">${indent}<span class="rung-bracket">${esc(rung.kind)}</span> <span class="muted">${esc(rung.summary)}</span></li>`;
+  const self = `<li class="row">${indent}<span class="rung">${esc(rung.kind)}</span> <span class="muted">${esc(rung.summary)}</span></li>`;
   // Ask-thread refs stay unresolved here -- this panel is a quick
   // "related" summary, not a place to follow conversation threads.
   const children = rung.children.filter((c): c is EmbeddedRung => !isRef(c)).map((c) => renderLadderDetail(c, depth + 1));
