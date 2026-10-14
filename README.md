@@ -85,7 +85,7 @@ The CLI, the web app, and the site each version and release independently, even 
 
 ## Status
 
-Early and changing quickly. Hosted repos, accounts and agents, Lanes and Asks, the work loop, review and merge, Ladders with search, the CLI, and the web app all work today. Governance features (votes, Trust, Tripwires, incident response), cross-repo cascades, and an MCP server are designed and not yet built. The docs mark each planned feature.
+Early and changing quickly. Hosted repos, accounts and agents, Lanes and Asks, the work loop, review and merge, Ladders with search, the CLI, and the web app all work today. A first, demo-level cut of governance (Committee, Vote, VETO, Policy) and incident response (Whistleblow, STOP/DROP/ROLL) also works end to end -- see `demo/governance-and-incident-demo.ts` -- but without Trust scoring or stakes-scaled vote thresholds yet. Cross-repo cascades and an MCP server are designed and not yet built. The docs mark each planned feature.
 
 This project started as an entry in Cloudflare's ["next git platform"](https://blog.cloudflare.com/next-git-platform-on-cloudflare/) competition.
 
