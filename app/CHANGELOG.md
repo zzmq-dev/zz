@@ -6,6 +6,7 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ### Added
 - Deleting a repo, or making it private, no longer blocks on or cascades onto its shards: one surviving shard is promoted to take over as the shard tree's new root (fewest commits behind the old origin, ties broken by most recent protocol activity), and every other shard -- regardless of who owns it -- is repointed at the promoted one. Same behavior GitHub itself uses for a deleted/privatized repo's forks. See [Governance](https://zzmq.dev/docs/governance/#deleting-a-repo-or-making-it-private).
+- Creating a repo (`zz repo create`), or claiming a `work` Ask (which forks a shard), now auto-tracks it for its creator/claimer -- it shows up in `zz top` immediately, instead of needing a separate manual `zz repo track` first.
 
 ## [1.1.0] - 2026-10-14
 

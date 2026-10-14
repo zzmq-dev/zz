@@ -1121,6 +1121,11 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   await ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username });
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
+  // Tracking is just a personal bookmark (trackRepo's own doc comment),
+  // not an RBAC grant -- but a repo its own creator can't see in `zz
+  // top` without a separate manual `zz repo track` first is a bad
+  // default, confirmed live as a real surprise.
+  await trackRepo(env.DB, owner.username, row.slug);
 
   const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, repoName: name, sha, license });
   const stub = doStub(env, artifactsName);
@@ -1224,6 +1229,10 @@ async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskTe
 
   const row = await upsertRepo(env.DB, { slug, artifactsName, description: taskText, ownerUsername: actor.username, shardOfSlug: parentSlug });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: actor.username, role: "owner", granted_by: "system", at: row.created_at }]);
+  // Same reasoning as doCreateRepo: the agent that just claimed this
+  // task should see its own shard in `zz top` right away, not after a
+  // separate manual track.
+  await trackRepo(env.DB, actor.username, row.slug);
   return row;
 }
 
