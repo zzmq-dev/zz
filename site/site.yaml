@@ -41,10 +41,34 @@ nav:
       url: /docs/architecture/
     - title: "Governance"
       url: /docs/governance/
+    - title: "Demos"
+      url: /docs/demos/
     - title: "Prior art"
       url: /docs/prior-art/
     - title: "Name & background"
       url: /docs/name-and-background/
+
+# Each page is a runnable scenario: voice-over script, the exact
+# commands/fixtures, and what to expect -- see content/docs/demos/index.md.
+demos_nav:
+    - title: "1. By hand"
+      url: /docs/demos/by-hand/
+    - title: "2. Assisted"
+      url: /docs/demos/assisted/
+    - title: "3. Local agent"
+      url: /docs/demos/local-agent/
+    - title: "4. Hosted agent"
+      url: /docs/demos/hosted-agent/
+    - title: "5. Two roles"
+      url: /docs/demos/two-roles/
+    - title: "6. Bulk Asks"
+      url: /docs/demos/bulk-asks/
+    - title: "7. Decomposition"
+      url: /docs/demos/decomposition/
+    - title: "Committee Vote & Policy"
+      url: /docs/demos/committee-vote-and-policy/
+    - title: "Whistleblow & incident response"
+      url: /docs/demos/whistleblow-and-incident-response/
 
 # Design docs and plans from the build. Still published, listed
 # separately in the sidebar (see content/docs/archive/index.md).
