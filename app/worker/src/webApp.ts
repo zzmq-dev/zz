@@ -305,7 +305,7 @@ h1{font-size:1.5rem;margin:0 0 1.25rem}
 .card h2{margin:0 0 .6rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
 .stack>*+*{margin-top:.75rem}
 .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;line-height:1.5}
-.badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:8px;font-size:.78rem;font-weight:600;border:1px solid;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:8px;font-size:.9rem;font-weight:600;border:1px solid;white-space:nowrap}
 .badge-pink{color:var(--pink);background:rgba(255,46,146,.12);border-color:rgba(255,46,146,.4)}
 .badge-yellow{color:var(--yellow);background:rgba(232,255,61,.1);border-color:rgba(232,255,61,.35)}
 .badge-cyan{color:var(--cyan);background:rgba(46,230,255,.1);border-color:rgba(46,230,255,.35)}
@@ -424,7 +424,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-date{opacity:.85}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
-.kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.92em}
+.kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.8em}
 .agent-id{text-decoration:none}
 .agent-id:hover .agent-name{text-decoration:underline}
 .agent-name{color:var(--pink)}
@@ -471,6 +471,16 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .lane-tag-link{text-decoration:none}
 .lane-tag{display:inline-block;vertical-align:middle;background:rgba(92,141,255,.15);border:1px solid rgba(92,141,255,.4);border-radius:4px;padding:0 .6em;margin:0 .2em;font-family:var(--mono);font-size:.85em;color:var(--blue);transform:skewX(-15deg)}
 .lane-tag-link:hover .lane-tag{background:rgba(92,141,255,.28)}
+/* A Ladder rung's path, bracketed like a reference into a structure
+   rather than just colored text -- the corner marks are drawn with
+   pseudo-elements so the bracket frames the sides without a solid
+   border boxing in the whole pill the way .badge does. */
+.rung-bracket{display:inline-block;vertical-align:middle;position:relative;color:var(--pink);font-family:var(--mono);font-size:.92em;padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
+.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:3px;border-color:var(--border);border-style:solid}
+.rung-bracket::before{left:0;border-width:1px 0 1px 1px}
+.rung-bracket::after{right:0;border-width:1px 1px 1px 0}
+.rung-bracket-link{text-decoration:none}
+.rung-bracket-link:hover .rung-bracket{background:rgba(255,46,146,.22)}
 .lane-tag .text{display:inline-block;transform:skewX(15deg)}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
@@ -1398,7 +1408,8 @@ const LADDER_KIND_ORDER: Record<string, number> = {
 // a commit-scoped locator the same way (a file/directory rung's path
 // is its CURRENT-state location, not pinned to any one commit), so
 // this is deliberately narrow rather than guessing a link for every kind.
-function ladderPathLink(slug: string, node: ResolvedRung): string | null {
+function ladderPathLink(slug: string, node: ResolvedRung, defaultBranch: string): string | null {
+  if (node.kind === "file") return `/${esc(slug)}/blob/${esc(defaultBranch)}/${esc(node.path)}`;
   if (node.kind !== "changeset" && node.kind !== "filechange") return null;
   const rest = node.path.startsWith("changesets/") ? node.path.slice("changesets/".length) : null;
   if (rest === null) return null;
@@ -1408,21 +1419,22 @@ function ladderPathLink(slug: string, node: ResolvedRung): string | null {
   return `/${esc(slug)}/blob/${esc(rest.slice(0, slashIdx))}/${esc(rest.slice(slashIdx + 1))}`;
 }
 
-function renderLadderNode(slug: string, node: ResolvedRung, depth = 0): string {
+function renderLadderNode(slug: string, node: ResolvedRung, defaultBranch: string, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   // data-search: lowercased path+summary+kind, read by the ladder
   // search box's own JS (zzInitLadderSearch) to decide whether to hide
   // this row -- a plain client-side filter over what's already
   // rendered, not a second query against anything.
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
-  const href = ladderPathLink(slug, node);
-  const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
+  const href = ladderPathLink(slug, node, defaultBranch);
+  const bracket = `<span class="rung-bracket">${esc(node.path)}</span>`;
+  const pathHtml = href ? `<a href="${href}" class="rung-bracket-link">${bracket}</a>` : bracket;
   const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
   const children = node.kind === "ask" ? node.children : [...node.children].sort((a, b) => (LADDER_KIND_ORDER[a.kind] ?? 99) - (LADDER_KIND_ORDER[b.kind] ?? 99));
-  return [self, ...children.map((c) => renderLadderNode(slug, c, depth + 1))].join("");
+  return [self, ...children.map((c) => renderLadderNode(slug, c, defaultBranch, depth + 1))].join("");
 }
 
 // One rung read directly by its own path -- the commit/file view's
@@ -2694,7 +2706,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
                    .join("")}
                </select>
              </div>
-             <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
+             <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
     },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
     { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
