@@ -431,7 +431,7 @@ function zzExploreSearch(inputEl, listEl) {
         listEl.innerHTML = '';
         (data.repos || []).forEach(function (r) { addItem('pink', r.slug, '/' + r.slug); });
         (data.agents || []).forEach(function (a) { addItem('cyan', a.username, '/' + a.username); });
-        (data.ladderHits || []).forEach(function (h) { addItem('yellow', h.repo_slug + ': ' + h.summary.slice(0, 60), '/' + h.repo_slug + '/blob/' + h.path); });
+        (data.ladderHits || []).forEach(function (h) { addItem('yellow', h.repo_slug + ': ' + h.summary.slice(0, 60), '/' + h.repo_slug + '/blob/' + (h.commit_sha || 'HEAD') + '/' + h.path); });
         listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0 && (data.ladderHits || []).length === 0;
       });
     }, 200);
@@ -1874,7 +1874,7 @@ function agentResultHtml(a: Agent): string {
 // links (file content as it is now, and the commit that summary is
 // actually anchored to), not just one link like the other two types.
 function ladderResultHtml(h: LadderSearchHit): string {
-  const fileLink = `<a href="/${esc(h.repo_slug)}/blob/${esc(h.path)}" class="mono">${esc(h.path)}</a>`;
+  const fileLink = `<a href="/${esc(h.repo_slug)}/blob/${esc(h.commit_sha || "HEAD")}/${esc(h.path)}" class="mono">${esc(h.path)}</a>`;
   const commitLink = h.commit_sha ? ` -- <a href="/${esc(h.repo_slug)}/commit/${esc(h.commit_sha)}" class="mono">${esc(h.commit_sha.slice(0, 8))}</a>` : "";
   return `<li class="row"><span class="badge badge-yellow">LADDER</span> <span class="desc">${esc(h.summary)}</span><br><span class="muted">in <a href="/${esc(h.repo_slug)}">${esc(h.repo_slug)}</a>: ${fileLink}${commitLink}</span></li>`;
 }
@@ -1920,6 +1920,13 @@ interface TreeEntry {
   mode: string;
 }
 
+/** log/readTree/readFile all resolve a branch, tag, or commit sha directly as `ref` -- but not the literal "HEAD", which a caller might reasonably construct when there's no specific commit to point at (the ladder-search autocomplete below does exactly this, having no sha of its own to use). Normalizes that one case to the repo's real default branch name; anything else passes through untouched. */
+async function resolveRefName(repo: ArtifactsRepo, ref: string): Promise<string> {
+  if (ref !== "HEAD") return ref;
+  const info = await repo.info();
+  return info.defaultBranch;
+}
+
 /** repo.readTree only ever returns one level -- this walks one path segment at a time to list a subdirectory's own entries, returning null if any segment along the way is missing or isn't itself a directory. `path` of "" returns `rootEntries` unchanged (the repo root itself needs no walk). */
 async function readTreeAtPath(repo: ArtifactsRepo, rootEntries: TreeEntry[], path: string): Promise<TreeEntry[] | null> {
   if (!path) return rootEntries;
@@ -1932,12 +1939,12 @@ async function readTreeAtPath(repo: ArtifactsRepo, rootEntries: TreeEntry[], pat
   return entries;
 }
 
-/** Shared by handleRepoPage's "Files" tab and handleTree below, so a directory link added to one always matches the other's own route. Files link to /blob/<path> (always at HEAD, same as handleBlob itself); directories link to /tree/<path> -- previously rendered as plain unlinked text, the exact "can't navigate into a directory" gap this fixes. */
-function fileListRowsHtml(slug: string, basePath: string, entries: TreeEntry[], summaryFor?: (name: string) => string | undefined): string {
+/** Shared by handleRepoPage's "Files" tab, handleCommit's tree, and handleTree below, so a directory link added to one always matches the others' own route. `ref` is whatever the caller is already browsing at -- a real commit sha (handleCommit's own tree, pinned to that commit) or the default branch name (handleRepoPage's "Files" tab, i.e. HEAD) -- carried into both the file and directory links so clicking through stays pinned to the same point in history rather than silently jumping to HEAD. Previously a directory rendered as a plain unlinked <span>; that's the "can't navigate into a directory" gap this fixes. */
+function fileListRowsHtml(slug: string, ref: string, basePath: string, entries: TreeEntry[], summaryFor?: (name: string) => string | undefined): string {
   return entries
     .map((e) => {
       const fullPath = basePath ? `${basePath}/${e.name}` : e.name;
-      const href = e.type === "tree" ? `/${esc(slug)}/tree/${esc(fullPath)}` : `/${esc(slug)}/blob/${esc(fullPath)}`;
+      const href = e.type === "tree" ? `/${esc(slug)}/tree/${esc(ref)}/${esc(fullPath)}` : `/${esc(slug)}/blob/${esc(ref)}/${esc(fullPath)}`;
       const label = `<a href="${href}" class="mono">${esc(e.name)}</a>`;
       const summary = summaryFor?.(e.name);
       return summary ? `<li class="stack"><div class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</div>${summaryDetailHtml(summary)}</li>` : `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</li>`;
@@ -1945,34 +1952,42 @@ function fileListRowsHtml(slug: string, basePath: string, entries: TreeEntry[], 
     .join("");
 }
 
+/** The repo-name link plus one clickable crumb per path segment, each pointing at that ancestor directory's own /tree/<ref>/<path> -- shared by handleTree (every segment, including the last, links to itself -- harmless, and keeps the breadcrumb's own build simpler) and handleBlob (the last segment is the file name, not a directory, so it renders as plain text instead). */
+function pathBreadcrumbHtml(slug: string, ref: string, path: string, lastIsLink: boolean): string {
+  const segments = path.split("/").filter(Boolean);
+  const crumbs = [`<a href="/${esc(slug)}">${esc(slug)}</a>`];
+  let acc = "";
+  segments.forEach((seg, i) => {
+    acc = acc ? `${acc}/${seg}` : seg;
+    const isLast = i === segments.length - 1;
+    crumbs.push(isLast && !lastIsLink ? `<span class="mono">${esc(seg)}</span>` : `<a href="/${esc(slug)}/tree/${esc(ref)}/${esc(acc)}" class="mono">${esc(seg)}</a>`);
+  });
+  return crumbs.join(" / ");
+}
+
 /** The "Files" tab's own tree, one directory deeper -- GitHub's /tree/<path> equivalent, always at HEAD (no ref segment in the path, same convention handleBlob already uses). */
-async function handleTree(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+/** `ref` is a branch name, tag, or commit sha -- repo.log/readTree/readFile all resolve any of the three directly, so a tree reached from a historical commit's own page stays pinned to that commit rather than jumping to HEAD, and the ref lives in the URL path (not a query param) so the page itself is the permalink. */
+async function handleTree(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
-  const info = await repo.info();
-  const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
-  const rootEntries: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
+  ref = await resolveRefName(repo, ref);
+  const [head] = await repo.log({ ref, limit: 1 });
+  if (!head) return new Response("no such ref", { status: 404 });
+  const rootEntries: TreeEntry[] = (await repo.readTree(head.treeHash)) ?? [];
   const entries = await readTreeAtPath(repo, rootEntries, path);
   if (!entries) return new Response("no such directory", { status: 404 });
 
-  const segments = path.split("/").filter(Boolean);
-  const crumbs = [`<a href="/${esc(slug)}">${esc(slug)}</a>`];
-  let acc = "";
-  for (const seg of segments) {
-    acc = acc ? `${acc}/${seg}` : seg;
-    crumbs.push(`<a href="/${esc(slug)}/tree/${esc(acc)}" class="mono">${esc(seg)}</a>`);
-  }
-
   return layout(
-    path,
+    path || slug,
     me,
     `<div class="card">
-      <h2>${crumbs.join(" / ")}</h2>
-      <ul class="list">${fileListRowsHtml(slug, path, entries) || '<li class="empty">Empty directory.</li>'}</ul>
+      <h2>${pathBreadcrumbHtml(slug, ref, path, true)}</h2>
+      <p class="muted">at <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a></p>
+      <ul class="list">${fileListRowsHtml(slug, ref, path, entries) || '<li class="empty">Empty directory.</li>'}</ul>
     </div>`,
     { titleHtml: ` \xb7 <a href="/${esc(slug)}">${esc(slug)}</a>` },
   );
@@ -2128,7 +2143,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const hasMoreCommits = commitsFetched.length > COMMITS_PAGE_SIZE;
   const commits = hasMoreCommits ? commitsFetched.slice(0, COMMITS_PAGE_SIZE) : commitsFetched;
 
-  const fileListHtml = fileListRowsHtml(slug, "", tree);
+  const fileListHtml = fileListRowsHtml(slug, info.defaultBranch, "", tree);
 
   const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row"><a href="/${esc(g.principal)}" class="mono">${esc(g.principal)}</a>${roleBadge(g.role)}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
@@ -2393,11 +2408,9 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
     fileSummaries.set(child.path.split("/").pop() ?? child.path, child.summary);
   }
 
-  // Directory links here go through handleTree's own /tree/<path> --
-  // always at HEAD, not pinned to this commit's own tree (this page
-  // has no "browse this historical commit's subdirectory" route of
-  // its own, and a plain unlinked span is a dead end either way).
-  const fileListHtml = fileListRowsHtml(slug, "", tree, (name) => fileSummaries.get(name));
+  // sha as ref -- clicking into a file or directory from this
+  // historical commit's own tree stays pinned to it, not HEAD.
+  const fileListHtml = fileListRowsHtml(slug, sha, "", tree, (name) => fileSummaries.get(name));
 
   const navHtml = `<div class="commit-nav">
     ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}" class="mono">&larr; prev ${esc(older.slice(0, 8))}</a>` : "<span></span>"}
@@ -2424,13 +2437,12 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
 }
 
 /** The file's actual bytes, unchanged from what /blob/ used to serve directly -- the viewer's download button and anything else that wants the real file content (not an HTML page) points here now. */
-async function handleDownload(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+async function handleDownload(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
-  const info = await repo.info();
-  const blob = await repo.readFile({ ref: info.defaultBranch, path });
+  const blob = await repo.readFile({ ref: await resolveRefName(repo, ref), path });
   if (!blob) return new Response("not found", { status: 404 });
   return new Response(blob, { headers: { "content-type": blob.type || "application/octet-stream" } });
 }
@@ -2453,7 +2465,7 @@ function looksBinary(bytes: Uint8Array): boolean {
 }
 
 /** The file viewer page: syntax-highlighted (via highlight.js from cdnjs -- a real CDN dependency, not hand-rolled, since this is a normal deployed website, not a sandboxed Artifact), line-numbered, with a header (repo, latest commit, path, download). GitHub's /blob/ convention -- this is the page a file link lands on; /download/ is the actual bytes now. */
-async function handleBlob(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+async function handleBlob(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
@@ -2462,12 +2474,18 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   // Started here, awaited down by the render -- a separate DO
   // round-trip with no dependency on the Artifacts reads that follow.
   // A file rung's path IS the file's own path, so this is one direct
-  // read, no searching.
+  // read, no searching. Always the current Ladder summary regardless
+  // of `ref` -- a rung tracks a file's current state, not a per-commit
+  // history of it, so there's nothing more "correct" to show for an
+  // older ref here even though the code body itself is pinned to one.
   const ladderRung = readLadderRung(env, ctx.repoRow.artifacts_name, path);
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
-  const info = await repo.info();
-  const [blob, [head]] = await Promise.all([repo.readFile({ ref: info.defaultBranch, path }), repo.log({ ref: info.defaultBranch, limit: 1 })]);
+  // ref resolves a branch, tag, or commit sha directly (both calls
+  // below) -- the same ref a historical commit's own tree view links
+  // here with, so the file shown is that commit's version, not HEAD's.
+  ref = await resolveRefName(repo, ref);
+  const [blob, [head]] = await Promise.all([repo.readFile({ ref, path }), repo.log({ ref, limit: 1 })]);
   if (!blob) return new Response("not found", { status: 404 });
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
@@ -2478,9 +2496,9 @@ async function handleBlob(slug: string, path: string, request: Request, env: Web
   // one continuous box because the body has no top border), breaking
   // that illusion. Staying inside the header's own border keeps it intact.
   const headerHtml = `<div class="blob-header">
-    <a href="/${esc(slug)}">${esc(slug)}</a>
+    <span>${pathBreadcrumbHtml(slug, ref, path, false)}</span>
     ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
-    <a href="/${esc(slug)}/download/${esc(path)}" class="download-btn" download>Download</a>
+    <a href="/${esc(slug)}/download/${esc(ref)}/${esc(path)}" class="download-btn" download>Download</a>
     ${ladderDetailHtml(await ladderRung)}
   </div>`;
 
@@ -2702,16 +2720,19 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     if (m) return handleArchive(`${m[1]}/${m[2]}`, request, env);
   }
   {
-    const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
-    if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
+    // ref is always a required, separate path segment (a branch name,
+    // tag, or commit sha) -- /tree/<ref> alone (no path) is the repo
+    // root at that ref, same as GitHub's own convention.
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/([^/]+)\/(.+)$/);
+    if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], m[4], request, env);
   }
   {
-    const m = path.match(/^\/([^/]+)\/([^/]+)\/tree\/(.+)$/);
-    if (m) return handleTree(`${m[1]}/${m[2]}`, m[3], request, env);
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.+))?$/);
+    if (m) return handleTree(`${m[1]}/${m[2]}`, m[3], m[4] ?? "", request, env);
   }
   {
-    const m = path.match(/^\/([^/]+)\/([^/]+)\/download\/(.+)$/);
-    if (m) return handleDownload(`${m[1]}/${m[2]}`, m[3], request, env);
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/download\/([^/]+)\/(.+)$/);
+    if (m) return handleDownload(`${m[1]}/${m[2]}`, m[3], m[4], request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/commit\/([0-9a-f]+)$/);
