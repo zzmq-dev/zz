@@ -2,11 +2,14 @@
 // pushes into (zz top's lanes tab, zz work --assist's lane picker):
 // see what's already queued/answered, filter by status ("s", cycled --
 // same convention as LiveLog.tsx's own filter bar), post a new one
-// ("n"), or (in --assist only, via onViewAsk/onClaimAsk) view one's
-// full detail (enter) or claim it and start a work session right from
-// the list ("c") -- zz top passes neither callback, since it's a pure
-// watcher with no work session to start; cursor navigation stays
-// harmlessly inert there.
+// ("n"), and view one's full detail (enter). In --assist (onViewAsk/
+// onClaimAsk both given), enter hands off to AssistApp's own richer
+// detail view, and "c" claims it and starts a work session right from
+// the list. zz top passes neither callback -- it's a pure watcher,
+// nothing to claim -- so enter there instead opens this component's
+// own fallback: the ask's full JSON, pretty-printed (jsonDetail state
+// below), since that's otherwise nowhere to see past describePayload's
+// one-line summary.
 import React, { useEffect, useState } from "react";
 import { Box, Text, useInput, useStdin } from "ink";
 import type { LaneSnapshot } from "./types.js";
@@ -73,6 +76,15 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
   const [draft, setDraft] = useState("");
   const [posting, setPosting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // zz top has no onViewAsk (it's a pure watcher, nothing to claim) --
+  // "enter" there opens this instead: the ask's own full JSON, pretty-
+  // printed, since describePayload's one-line summary above is the
+  // only other place its payload ever shows up. `zz work --assist`
+  // still gets its own onViewAsk behavior unchanged when that prop IS
+  // given (see the "enter" handler below) -- this is purely the
+  // no-callback fallback, not a replacement for it.
+  const [jsonDetail, setJsonDetail] = useState<ClaimableEntry | null>(null);
+  const [jsonScroll, setJsonScroll] = useState(0);
   const { isRawModeSupported } = useStdin();
 
   const snapshot = snapshots.find((s) => s.repo === repo && s.lane.id === laneId);
@@ -108,6 +120,16 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
 
   useInput(
     (input, key) => {
+      if (jsonDetail) {
+        if (key.escape) {
+          setJsonDetail(null);
+          setJsonScroll(0);
+          return;
+        }
+        if (key.upArrow) setJsonScroll((s) => Math.max(0, s - 1));
+        if (key.downArrow) setJsonScroll((s) => s + 1);
+        return;
+      }
       if (composing) {
         if (posting) return; // the post is in flight -- no input changes anything until it resolves
         if (key.escape) {
@@ -159,7 +181,9 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
       }
       if (key.return) {
         const entry = entries[cursor];
-        if (entry) onViewAsk?.(entry);
+        if (!entry) return;
+        if (onViewAsk) onViewAsk(entry);
+        else setJsonDetail(entry);
         return;
       }
       if (input === "c") {
@@ -177,6 +201,32 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
     },
     { isActive: isRawModeSupported },
   );
+
+  if (jsonDetail) {
+    const lines = JSON.stringify(jsonDetail.ask, null, 2).split("\n");
+    const bodyRows = Math.max(1, maxRows - 2);
+    const maxScroll = Math.max(0, lines.length - bodyRows);
+    const scroll = Math.min(jsonScroll, maxScroll);
+    const shownLines = lines.slice(scroll, scroll + bodyRows);
+    return (
+      <Box flexDirection="column">
+        <Text bold color={CYAN} wrap="truncate-end">
+          {jsonDetail.ask.id} ({jsonDetail.ask.kind})
+        </Text>
+        {shownLines.map((line, i) => (
+          <Text key={scroll + i} wrap="truncate-end">
+            {line}
+          </Text>
+        ))}
+        <Box marginTop={1}>
+          <Text color={MUTED} wrap="truncate-end">
+            {lines.length > bodyRows ? `line ${scroll + 1}-${Math.min(scroll + bodyRows, lines.length)} of ${lines.length}   ` : ""}
+            up/down: scroll   esc: back
+          </Text>
+        </Box>
+      </Box>
+    );
+  }
 
   const listRows = Math.max(1, maxRows - 2);
   const windowStart = Math.max(0, Math.min(cursor - Math.floor(listRows / 2), Math.max(0, entries.length - listRows)));
@@ -236,7 +286,7 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
           {message ??
             (composing
               ? `describe the ask for ${repo}/${laneId} (enter: post, esc: cancel):`
-              : [onViewAsk && "enter: view detail", onClaimAsk && "c: claim and start", "s: filter by status", allowPost && "n: post a new ask", "esc: back"].filter(Boolean).join("   "))}
+              : ["enter: view detail", onClaimAsk && "c: claim and start", "s: filter by status", allowPost && "n: post a new ask", "esc: back"].filter(Boolean).join("   "))}
         </Text>
         {composing && (
           <Text wrap="truncate-start">
