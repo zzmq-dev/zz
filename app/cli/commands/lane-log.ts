@@ -18,6 +18,8 @@ export interface LaneLogOptions {
   lane?: string;
   out?: string;
   local?: boolean;
+  /** Don't truncate a payload's JSON fallback at 80 chars -- the text format is meant for a quick scan, but a kind with no dedicated summarizePayload case (a new AskKind, an unusual payload shape) otherwise cuts off mid-object with no way to see the rest short of --format json. */
+  full?: boolean;
 }
 
 interface LogRow {
@@ -41,7 +43,7 @@ function flatten(lanes: Lane[]): LogRow[] {
 // just a few scalar fields -- print enough to identify what's being
 // asked for/answered without dumping a full diff or Ladder subtree into
 // every line of the log.
-function summarizePayload(payload: unknown): string {
+function summarizePayload(payload: unknown, full: boolean): string {
   if (payload === undefined || payload === null) return "";
   if (typeof payload !== "object") return String(payload);
   const p = payload as Record<string, unknown>;
@@ -59,26 +61,26 @@ function summarizePayload(payload: unknown): string {
   }
   if ("path" in p && "kind" in p) return `{${p.kind}:${p.path}}`;
   const json = JSON.stringify(payload);
-  return json.length > 80 ? json.slice(0, 77) + "..." : json;
+  return !full && json.length > 80 ? json.slice(0, 77) + "..." : json;
 }
 
-function renderEntry(entry: HistoryEntry): string {
+function renderEntry(entry: HistoryEntry, full: boolean): string {
   if (entry.type === "ASK") {
     const deps = entry.depends_on?.length ? ` deps=[${entry.depends_on.join(",")}]` : "";
-    return `ASK    ${entry.id.padEnd(14)} ${entry.kind.padEnd(18)} from ${entry.from}${deps} ${summarizePayload(entry.payload)}`;
+    return `ASK    ${entry.id.padEnd(14)} ${entry.kind.padEnd(18)} from ${entry.from}${deps} ${summarizePayload(entry.payload, full)}`;
   }
   if (entry.type === "ANSWER") {
-    return `ANSWER ${entry.id.padEnd(14)} -> ${entry.ask.padEnd(14)} ${entry.action.padEnd(9)} from ${entry.from} ${summarizePayload(entry.payload)}`;
+    return `ANSWER ${entry.id.padEnd(14)} -> ${entry.ask.padEnd(14)} ${entry.action.padEnd(9)} from ${entry.from} ${summarizePayload(entry.payload, full)}`;
   }
   return `INSIGHT ${entry.kind.padEnd(17)} from ${entry.from}: ${entry.text}`;
 }
 
-function renderText(lanes: Lane[], rows: LogRow[]): string {
+function renderText(lanes: Lane[], rows: LogRow[], full: boolean): string {
   const lines: string[] = [];
   lines.push(`${lanes.length} lanes, ${rows.length} protocol events.`);
   lines.push("");
   for (const row of rows) {
-    lines.push(`${row.at}  [${row.lane}] ${renderEntry(row.entry)}`);
+    lines.push(`${row.at}  [${row.lane}] ${renderEntry(row.entry, full)}`);
   }
   lines.push("");
   lines.push("lanes:");
@@ -97,7 +99,7 @@ export async function laneLog(slug: string, options: LaneLogOptions): Promise<vo
   const rows = flatten(lanes);
 
   const format = options.format ?? "text";
-  const output = format === "json" ? JSON.stringify({ repo: slug, lanes, events: rows }, null, 2) : renderText(lanes, rows);
+  const output = format === "json" ? JSON.stringify({ repo: slug, lanes, events: rows }, null, 2) : renderText(lanes, rows, options.full ?? false);
 
   if (options.out) {
     await import("node:fs").then((fs) => fs.writeFileSync(options.out!, output));
