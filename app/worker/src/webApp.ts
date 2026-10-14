@@ -94,7 +94,7 @@ import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
 import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { claimableAsks, claimHolder } from "../../engine/workqueue.js";
-import type { AskEntry, HistoryEntry, Lane } from "../../engine/types.js";
+import type { AnswerEntry, AskEntry, HistoryEntry, InsightEntry, Lane } from "../../engine/types.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -116,6 +116,35 @@ function timestampStackHtml(iso: string): string {
   const time = `${two(d.getUTCHours())}${two(d.getUTCMinutes())}${two(d.getUTCSeconds())}`;
   const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
   return `<span class="ts-stack" title="${esc(iso)}"><span class="ts-date">${date}.</span><span class="ts-time">${time}.</span><span class="ts-ms">${ms}</span></span>`;
+}
+
+// A stable hue per distinct string, not a hand-maintained map -- there
+// are 14+ AskKinds and 5 Answer actions already, more whenever a new
+// one is added, and a hash keeps every one of them a distinct, same
+// color every time it appears without this needing to be revisited.
+// Fixed saturation/lightness tuned to stay readable on the dark theme
+// this site only ever renders in (no light-mode branch to also tune).
+function stringToHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+/** An AskKind or Answer action, as inline code at its own stable color (see stringToHue) -- the specific verb (`deny`, `whistleblow`, `vote`, ...), not the ASK/ANSWER/INSIGHT envelope type those already have a fixed color for. */
+function kindCode(kind: string): string {
+  return `<code class="kind-code" style="color:hsl(${stringToHue(kind)},70%,68%)">${esc(kind)}</code>`;
+}
+
+/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracketed agent name -- the part that actually distinguishes this actor in a scenario with several -- at full, slightly tinted contrast. A bare human login (no bracket) renders plain, unsplit. */
+function formatAgentId(username: string): string {
+  const i = username.indexOf("[");
+  if (i === -1) return esc(username);
+  return `<span class="muted">${esc(username.slice(0, i))}</span><span class="agent-name">${esc(username.slice(i))}</span>`;
+}
+
+/** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
+function askIdLink(askId: string): string {
+  return `<a href="#${esc(askId)}" class="ask-id-link">${esc(askId)}</a>`;
 }
 
 // http(s) URL detection, plain and deliberately conservative -- a
@@ -333,11 +362,16 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    reasoning the 0.5 skill's "reduce to what's actually load-bearing"
    applies to any repeated element. The real ISO instant is the title
    tooltip, for whenever the exact moment is what's actually needed. */
-.ts-stack{display:inline-flex;flex-direction:column;justify-content:center;margin-right:.6em;font-family:var(--mono);font-size:.45em;line-height:1;cursor:help}
+.ts-stack{display:inline-flex;flex-direction:column;justify-content:center;margin-right:1.5em;font-family:var(--mono);font-size:.45em;line-height:1;cursor:help}
 .ts-stack span{display:block}
 .ts-stack .ts-date{opacity:.85}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
+.kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:4px;font-size:.92em}
+.agent-name{color:var(--pink)}
+.ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
+.ask-id-link:hover{text-decoration:none;border-bottom-style:solid}
+.ask-answer-row{margin-left:1.25rem;padding-left:.6rem;border-left:2px solid rgba(255,255,255,.12)}
 .md h1,.md h2,.md h3{margin:1rem 0 .5rem}
 .md h1:first-child,.md h2:first-child,.md h3:first-child{margin-top:0}
 .md p{margin:.6rem 0}
@@ -396,9 +430,37 @@ function agentAutocompleteField(name: string, placeholder: string, idSuffix: str
 // rendered and form-POST-driven already, so this stays a handful of
 // plain DOM calls rather than a client-side rendering layer.
 const WEB_JS = `
-function zzInitTabs(container) {
+// Reads the CURRENT location.hash and activates/scrolls to whatever it
+// names in this one container -- split out from wiring up the click
+// handlers (zzInitTabs, below) because a same-page anchor click (an
+// ask-id link, e.g.) only ever changes location.hash, it doesn't
+// reload the page, so this needs to be callable again on its own, on
+// 'hashchange', not just once at load.
+function zzApplyHash(container) {
   var btns = container.querySelectorAll('.tab-btn');
   var hash = location.hash.slice(1);
+  // A hash naming a specific element inside one of this container's
+  // panels (an Ask's own id="ask-..." anchor, e.g.) needs THAT
+  // element's panel activated, not just a literal tab-id match below --
+  // an ask-id link always points at one, since that's the only way to
+  // reach a hidden tab's content at all.
+  var targetEl = hash ? document.getElementById(hash) : null;
+  var targetPanel = targetEl ? targetEl.closest('.tab-panel') : null;
+  btns.forEach(function (btn) {
+    // dataset.target is "<groupId>-<tabId>" -- match on the tabId
+    // suffix so a reload from a Commits pager link (or any other
+    // cross-tab link ending in #<tabId>) reopens on that tab instead
+    // of always landing back on whichever one renders first.
+    if (hash && btn.dataset.target.endsWith('-' + hash)) {
+      btn.click();
+    } else if (targetPanel && btn.dataset.target === targetPanel.id) {
+      btn.click();
+    }
+  });
+  if (targetEl) targetEl.scrollIntoView({ block: 'center' });
+}
+function zzInitTabs(container) {
+  var btns = container.querySelectorAll('.tab-btn');
   btns.forEach(function (btn) {
     btn.addEventListener('click', function () {
       btns.forEach(function (b) { b.classList.remove('active'); });
@@ -406,16 +468,14 @@ function zzInitTabs(container) {
       container.querySelectorAll('.tab-panel').forEach(function (p) { p.hidden = true; });
       document.getElementById(btn.dataset.target).hidden = false;
     });
-    // dataset.target is "<groupId>-<tabId>" -- match on the tabId
-    // suffix so a reload from a Commits pager link (or any other
-    // cross-tab link ending in #<tabId>) reopens on that tab instead
-    // of always landing back on whichever one renders first.
-    if (hash && btn.dataset.target.endsWith('-' + hash)) {
-      btn.click();
-    }
   });
+  zzApplyHash(container);
 }
-document.querySelectorAll('[data-tabs]').forEach(zzInitTabs);
+var zzTabContainers = document.querySelectorAll('[data-tabs]');
+zzTabContainers.forEach(zzInitTabs);
+window.addEventListener('hashchange', function () {
+  zzTabContainers.forEach(zzApplyHash);
+});
 
 // A plain client-side filter over the Ladder tab's own already-rendered
 // rows (each one's data-search attribute, set by renderLadderNode) --
@@ -2388,13 +2448,32 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const [lanes, ladder] = await lanesAndLadder;
   const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
 
-  const asksHtml = (rootLane?.history ?? [])
+  // One entry per Ask, its own Answer(s) nested inside instead of
+  // listed separately -- this used to repeat almost everything
+  // Activity already shows, one flat row per ASK/ANSWER/INSIGHT, just
+  // reordered; grouping by the thing an Answer actually answers is
+  // what Activity (a live-feed-style read, deliberately flat and
+  // chronological) can't do and this tab exists to.
+  const rootHistory = rootLane?.history ?? [];
+  const answersByAsk = new Map<string, AnswerEntry[]>();
+  for (const e of rootHistory) {
+    if (e.type !== "ANSWER") continue;
+    const list = answersByAsk.get(e.ask) ?? [];
+    list.push(e);
+    answersByAsk.set(e.ask, list);
+  }
+  const asksHtml = rootHistory
+    .filter((e): e is AskEntry | InsightEntry => e.type === "ASK" || e.type === "INSIGHT")
     .slice()
     .reverse()
     .map((e) => {
-      if (e.type === "ASK") return `<li class="stack"><div class="row"><span class="badge badge-yellow">ASK</span> ${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")} <span class="muted">${esc(e.at)}</span></div>${jsonBlock(e.payload)}</li>`;
-      if (e.type === "ANSWER") return `<li class="row"><span class="badge badge-green">ANSWER</span> ${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")} <span class="muted">${esc(e.at)}</span></li>`;
-      return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${esc(e.text)} <span class="muted">${esc(e.at)}</span></li>`;
+      if (e.type === "INSIGHT") {
+        return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${esc(e.text)}</li>`;
+      }
+      const answersHtml = (answersByAsk.get(e.id) ?? [])
+        .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
+        .join("");
+      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")}</div>${jsonBlock(e.payload)}${answersHtml}</li>`;
     })
     .join("");
 
@@ -2413,7 +2492,12 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .slice(0, 150)
     .map(({ laneId, entry: e }) => {
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
-      const rest = e.type === "ASK" ? `${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")}` : e.type === "ANSWER" ? `${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")}` : esc(e.text);
+      const rest =
+        e.type === "ASK"
+          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")}`
+          : e.type === "ANSWER"
+            ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?")}`
+            : esc(e.text);
       return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
