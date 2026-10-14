@@ -489,7 +489,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    corner crosshairs instead of a solid pill border -- the role name's
    own color (its existing badge-variant semantics) carries the
    meaning; the crosshairs just mark it as a distinct kind of token. */
-.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.82rem;padding:0em .5em;margin:0 .2em;background:rgba(92,141,255,.15);border-radius:4px}
+.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.82rem;padding:0em .5em;margin:0 .2em;border-radius:4px}
 .scope::before,.scope::after{content:"";position:absolute;width:4px;height:6px;border-color:var(--muted);border-style:solid}
 .scope::before{top:0;left:0;border-width:1px 0 0 1px}
 .scope::after{bottom:0;right:0;border-width:0 1px 1px 0}
@@ -515,9 +515,11 @@ function laneStatusCode(status: string): string {
   const color = BADGE_VARIANT_COLOR[LANE_STATUS_BADGE_VARIANT[status] ?? "muted"];
   return `<code class="kind-code" style="color:${color}">${esc(status)}</code>`;
 }
-function roleBadge(role: string): string {
+/** `agentLinkHtml`: the formatAgentId-formatted link of whoever holds this role, when there's a specific agent to name (a repo's own Roles list) -- rendered INSIDE the .scope span, right before the role name, not as a sibling element. Omitted where a role is shown with no separate agent to link (a profile's own Repos list: "this repo, your role X" has no second party to name). */
+function roleBadge(role: string, agentLinkHtml?: string): string {
   const color = BADGE_VARIANT_COLOR[ROLE_BADGE_VARIANT[role] ?? "muted"];
-  return `<span class="scope" style="color:${color}">${esc(role)}</span>`;
+  const prefix = agentLinkHtml ? `${agentLinkHtml} ` : "";
+  return `<span class="scope" style="color:${color}">${prefix}${esc(role)}</span>`;
 }
 
 /** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */
@@ -2631,7 +2633,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const fileListHtml = fileListRowsHtml(slug, info.defaultBranch, "", tree);
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row">${formatAgentId(g.principal)}${roleBadge(g.role)}</li>`).join("");
+  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row">${roleBadge(g.role, formatAgentId(g.principal))}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
   const tracking = !isOwner && (await trackingCheck);
@@ -2678,7 +2680,10 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="scope">coordinator</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
+    .map((l) => {
+      const coordHtml = (l.coordinators ?? []).map(formatAgentId).join(", ");
+      return `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="scope">${coordHtml ? `${coordHtml} ` : ""}coordinator</span>${coordHtml ? "" : ' <span class="muted">none</span>'}</li>`;
+    })
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
