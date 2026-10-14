@@ -219,7 +219,7 @@ function jsonBlock(value: unknown): string {
 
 /** Same box jsonBlock renders, for an Insight's own free-text body instead of a payload -- one visual language for "here's the real content of this entry," whether that content is JSON or prose. */
 function textBlock(text: string): string {
-  return `<pre class="json-blob">${esc(text)}</pre>`;
+  return `<pre class="json-blob text-blob">${esc(text)}</pre>`;
 }
 
 // A deliberately small markdown-to-HTML renderer for README display --
@@ -455,6 +455,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .diff-del .diff-marker{color:var(--red)}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 .json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:.4rem 0 0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
+.text-blob{white-space:pre-wrap;word-break:break-word}
 .json-key{color:var(--cyan)}
 .json-string{color:var(--green)}
 .json-number{color:var(--yellow)}
@@ -1466,7 +1467,7 @@ async function readLadderRung(env: WebEnv, artifactsName: string, path: string):
 
 function renderLadderDetail(rung: EmbeddedRung, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
-  const self = `<li class="row">${indent}<span class="badge badge-pink">${esc(rung.kind)}</span> <span class="muted">${esc(rung.summary)}</span></li>`;
+  const self = `<li class="row">${indent}<span class="rung-bracket">${esc(rung.kind)}</span> <span class="muted">${esc(rung.summary)}</span></li>`;
   // Ask-thread refs stay unresolved here -- this panel is a quick
   // "related" summary, not a place to follow conversation threads.
   const children = rung.children.filter((c): c is EmbeddedRung => !isRef(c)).map((c) => renderLadderDetail(c, depth + 1));
