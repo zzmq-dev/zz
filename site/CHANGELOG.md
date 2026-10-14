@@ -20,6 +20,7 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - A highlighted code block's own line numbers rendered with zero horizontal space before the code -- turned off entirely (`.chroma .ln { display: none }`) rather than patched with padding.
 - Two more stale `require_changeset_review` mentions, on the Data format and Core Concepts (nouns) pages -- missed in the earlier pass since they weren't inside the Governance/CLI/Agent-tools/demo pages that pass specifically audited.
 - The CLI reference's `zz top` tab table still named the old **activity**/**protocol** tabs and said the activity feed reads newest-at-the-bottom -- stale since this session's own TUI rename/reorder (now **live feed**/**activity**, newest-at-top), caught only now while adding `--no-wait`/`--ask` nearby.
+- The [Assisted](https://zzmq.dev/docs/demos/assisted/) demo said approving a changeset_review inside `--assist` merges it -- found live by a reader stuck exactly there: `--assist`'s own picker never offers `submit_changeset` (merging is mechanical, not a judgment call), so the Ask was just sitting open with no way to act on it from that view. Now says so, with the separate `zz work --ask <id>` command that actually merges it.
 
 ## [0.2.0] - 2026-10-14
 
