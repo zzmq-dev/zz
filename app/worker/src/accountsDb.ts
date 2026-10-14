@@ -52,6 +52,14 @@ export interface RepoRow {
   owner_username: string;
   visibility: "public" | "private";
   shard_of_slug: string | null; // immediate-parent repo this was forked from as a task shard, or null for an ordinary repo -- see webApp.ts's ensureShard
+  // 'ingesting' for as long as a bulk import (`zz ladder push`) or
+  // future incremental sync is still writing -- set back to 'ready'
+  // only on that run's own success, so a run that fails or is killed
+  // mid-way leaves the repo correctly flagged not-ready rather than
+  // silently reverting. Gates discovery (INGEST_VISIBLE_CLAUSE below),
+  // not the repo's own page -- its owner can always open it directly
+  // to watch progress.
+  ingest_status: "ready" | "ingesting";
   created_at: string;
   updated_at: string;
 }
@@ -225,6 +233,10 @@ export async function touchRepoUpdatedAt(db: D1Database, slug: string): Promise<
   await db.prepare("UPDATE repos SET updated_at = ? WHERE slug = ?").bind(new Date().toISOString(), slug).run();
 }
 
+export async function setIngestStatus(db: D1Database, slug: string, status: "ready" | "ingesting"): Promise<void> {
+  await db.prepare("UPDATE repos SET ingest_status = ? WHERE slug = ?").bind(status, slug).run();
+}
+
 // Every repo-listing query below takes `viewerUsername` (null for an
 // anonymous visitor) and excludes private repos the viewer has no
 // repo_roles grant on -- a private repo is invisible on /explore and
@@ -234,10 +246,19 @@ export async function touchRepoUpdatedAt(db: D1Database, slug: string): Promise<
 // entirely).
 const VISIBILITY_CLAUSE = "(r.visibility = 'public' OR r.slug IN (SELECT repo_slug FROM repo_roles WHERE principal = ?))";
 
+// A repo mid-import (ingest_status = 'ingesting') is still a real,
+// readable repo -- its own page works, it's just not surfaced to
+// strangers via search/listing while incomplete, the same way a
+// private repo is readable by URL but not discoverable. The owner
+// still sees their own mid-import repo in both places (so `zz repo
+// list` after kicking off an import doesn't look like it silently
+// vanished); everyone else sees it once it's 'ready'.
+const INGEST_VISIBLE_CLAUSE = "(r.ingest_status = 'ready' OR r.owner_username = ?)";
+
 export async function listRecentRepos(db: D1Database, limit: number, viewerUsername: string | null): Promise<RepoRow[]> {
   const result = await db
-    .prepare(`SELECT * FROM repos r WHERE ${VISIBILITY_CLAUSE} ORDER BY updated_at DESC LIMIT ?`)
-    .bind(viewerUsername ?? "", limit)
+    .prepare(`SELECT * FROM repos r WHERE ${VISIBILITY_CLAUSE} AND ${INGEST_VISIBLE_CLAUSE} ORDER BY updated_at DESC LIMIT ?`)
+    .bind(viewerUsername ?? "", viewerUsername ?? "", limit)
     .all<RepoRow>();
   return result.results;
 }
@@ -248,10 +269,10 @@ export async function searchRepos(db: D1Database, query: string, limit: number, 
     .prepare(
       `SELECT DISTINCT r.* FROM repos r
        LEFT JOIN agents a ON r.owner_username = a.username
-       WHERE (r.slug LIKE ? OR r.description LIKE ? OR a.display_name LIKE ?) AND ${VISIBILITY_CLAUSE}
+       WHERE (r.slug LIKE ? OR r.description LIKE ? OR a.display_name LIKE ?) AND ${VISIBILITY_CLAUSE} AND ${INGEST_VISIBLE_CLAUSE}
        ORDER BY r.updated_at DESC LIMIT ?`,
     )
-    .bind(like, like, like, viewerUsername ?? "", limit)
+    .bind(like, like, like, viewerUsername ?? "", viewerUsername ?? "", limit)
     .all<RepoRow>();
   return result.results;
 }

@@ -13,8 +13,15 @@
 import { execFileSync } from "node:child_process";
 import { resolveRepo } from "../lib/repo.js";
 import { readAnchor, isRef, type EmbeddedRung, type EmbeddedRef } from "../../engine/ladderNotes.js";
-import { remoteCallTool } from "../lib/remoteTools.js";
+import { remoteCallTool, splitSlug } from "../lib/remoteTools.js";
 import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
+import { apiFetch } from "../lib/api.js";
+
+/** Owner-only (handleApiSetIngestStatus checks this server-side); targetSlug's owner is always whoever's logged in here, since `zz repo create` (run right before this, same identity) always creates under the caller unless --owner names someone else -- not this command's concern either way, the server enforces it regardless. */
+async function setIngestStatus(targetSlug: string, status: "ready" | "ingesting"): Promise<void> {
+  const [owner, name] = splitSlug(targetSlug);
+  await apiFetch("POST", `/api/repos/${owner}/${name}/ingest-status`, { status });
+}
 
 interface FlatAnchor {
   path: string;
@@ -60,6 +67,11 @@ function embedChildren(rung: EmbeddedRung, byPath: Map<string, EmbeddedRung>): (
 export async function ladderPush(sourceSlug: string, targetSlug: string): Promise<void> {
   const source = resolveRepo(sourceSlug);
   const identity = requireCredentials();
+
+  // Left as "ingesting" (never reverted) if anything below throws --
+  // an interrupted or failed push genuinely isn't ready, and that's
+  // exactly the state a retry should start from too.
+  await setIngestStatus(targetSlug, "ingesting");
 
   console.error(`pushing ${sourceSlug}'s real git history to ${targetSlug}...`);
   const cloneUrl = authedCloneUrl(identity.apiBase, identity.token, targetSlug);
@@ -108,5 +120,6 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
     done += batch.length;
     console.error(`  pushed ${done}/${payloads.length}`);
   }
+  await setIngestStatus(targetSlug, "ready");
   console.error("done.");
 }

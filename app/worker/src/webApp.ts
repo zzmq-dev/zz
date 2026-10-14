@@ -58,6 +58,7 @@ import {
   searchExplore,
   searchLadderIndex,
   searchRepos,
+  setIngestStatus,
   shortId,
   syncRepoRoleCache,
   touchAgentToken,
@@ -1265,7 +1266,12 @@ async function handleAgentPage(username: string, request: Request, env: WebEnv):
 async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
   const owned = await listReposOwnedBy(env.DB, agent.username);
   const visible: RepoRow[] = [];
+  // Always a different viewer than `agent` here (handleAgentPage
+  // routes you to renderOwnProfile for your own page instead), so an
+  // ingesting repo never belongs on this list -- same reasoning
+  // accountsDb.ts's INGEST_VISIBLE_CLAUSE gates search/listing with.
   for (const r of owned) {
+    if (r.ingest_status === "ingesting") continue;
     const ctx = await getRepoAccessContext(r.slug, env);
     if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.roles))) visible.push(r);
   }
@@ -1658,6 +1664,20 @@ async function handleApiDeleteRepo(slug: string, request: Request, env: WebEnv):
   });
 }
 
+/** `zz ladder push`'s own mark-ingesting/mark-ready calls, bracketing a bulk import or (later) an incremental sync run -- see accountsDb.ts's RepoRow.ingest_status for what this gates. A plain owner_username check, not the Artifacts-roles round trip doDeleteRepo makes for a real delete -- this is reversible and low-stakes (worst case, a repo shows up in search a little early or a little late), so the D1 row's own recorded owner is authority enough. */
+async function handleApiSetIngestStatus(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const repo = await getRepoBySlug(env.DB, slug);
+    if (!repo) throw new ApiError(404, "no such repo");
+    if (repo.owner_username !== me.username) throw new ApiError(403, `${me.username} is not the owner of ${slug}`);
+    const body = (await request.json()) as { status?: string };
+    if (body.status !== "ready" && body.status !== "ingesting") throw new ApiError(400, 'status must be "ready" or "ingesting"');
+    await setIngestStatus(env.DB, slug, body.status);
+    return json({ ok: true });
+  });
+}
+
 async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
@@ -1812,7 +1832,13 @@ async function handleApiLadderSearch(request: Request, env: WebEnv): Promise<Res
 }
 
 function repoRowHtml(r: RepoRow): string {
-  return `<span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}`;
+  // Only ever reached here for your own repo (everyone else's ingesting
+  // repos are already filtered out of every listing this renders into --
+  // see accountsDb.ts's INGEST_VISIBLE_CLAUSE and renderPublicProfile's
+  // own filter), so this is purely "here's one of mine still importing",
+  // not a leak of someone else's in-progress state.
+  const ingestBadge = r.ingest_status === "ingesting" ? ` <span class="badge badge-yellow">⏳ ingesting</span>` : "";
+  return `<span class="badge badge-pink">REPO</span> <a href="/${esc(r.slug)}" class="name mono">${esc(r.slug)}</a>${ingestBadge}${r.description ? ` <span class="desc muted">${esc(r.description)}</span>` : ""}`;
 }
 
 function repoResultHtml(r: RepoRow): string {
@@ -2231,6 +2257,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     slug,
     me,
     `<div class="card">
+       ${repoRow.ingest_status === "ingesting" ? `<p><span class="badge badge-yellow">⏳ ingesting</span> <span class="muted">still importing -- content below may be incomplete until this finishes.</span></p>` : ""}
        <div class="card-head">
          <p>${esc(meta?.description ?? repoRow.description ?? "")}</p>
          ${
@@ -2684,6 +2711,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/roles$/);
     if (m && request.method === "POST") return handleApiRbacGrant(`${m[1]}/${m[2]}`, request, env);
+  }
+  {
+    const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/ingest-status$/);
+    if (m && request.method === "POST") return handleApiSetIngestStatus(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)\/shard$/);
