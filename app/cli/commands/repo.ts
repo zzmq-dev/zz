@@ -5,6 +5,7 @@
 // Maintainer+" RBAC rule) is identical regardless of which surface
 // you used.
 import { execFileSync } from "node:child_process";
+import { createInterface } from "node:readline/promises";
 import { apiFetch } from "../lib/api.js";
 import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
 
@@ -40,6 +41,28 @@ export async function repoList(query?: string): Promise<void> {
     return;
   }
   for (const r of repos) console.log(`${r.slug}${r.description ? ` -- ${r.description}` : ""}`);
+}
+
+// Irreversible (doDeleteRepo tears down the real Artifacts repo, not
+// a soft-delete), so this asks you to type the slug back rather than
+// just a y/n -- same reasoning a real git host's own "delete this
+// repo" confirmation uses, and cheap insurance against `--yes` muscle
+// memory from some other CLI firing on the wrong repo. Owner check
+// happens server-side (doDeleteRepo); this only gates the prompt.
+export async function repoDelete(slug: string, opts: { yes?: boolean } = {}): Promise<void> {
+  if (!opts.yes) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the repo slug to confirm: `);
+    rl.close();
+    if (typed.trim() !== slug) {
+      console.error("Slug didn't match -- not deleting anything.");
+      process.exitCode = 1;
+      return;
+    }
+  }
+  const [owner, name] = splitSlug(slug);
+  await apiFetch("DELETE", `/api/repos/${owner}/${name}`);
+  console.log(`Deleted ${slug}.`);
 }
 
 export async function repoGrant(slug: string, principal: string, role: string): Promise<void> {

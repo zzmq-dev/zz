@@ -1634,6 +1634,15 @@ async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
   });
 }
 
+/** Token-authenticated sibling of handleDeleteRepoForm's own session-cookie flow (the repo settings page's delete button) -- same doDeleteRepo, same Owner check and orphan-row fallback, just reachable from the CLI (`zz repo delete`) instead of only a browser session. */
+async function handleApiDeleteRepo(slug: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    await doDeleteRepo(env, me, slug);
+    return json({ ok: true });
+  });
+}
+
 async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
@@ -2598,6 +2607,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/repos\/([^/]+)\/([^/]+)$/);
     if (m && request.method === "GET") return handleApiGetRepo(`${m[1]}/${m[2]}`, env);
+    if (m && request.method === "DELETE") return handleApiDeleteRepo(`${m[1]}/${m[2]}`, request, env);
   }
 
   {

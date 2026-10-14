@@ -27,7 +27,7 @@ export function setActiveToken(token: string): void {
 }
 
 /** `allowAnonymous`: for a call that's genuinely fine with no credentials at all (Explore search, used by `zz top` before/without login) -- skips the requireCredentials() fallback and sends no Authorization header rather than throwing when nothing's set. Every other caller is unaffected: the normal chain (tokenOverride -> activeToken -> requireCredentials()) still throws a clear "not logged in" error, which is the right behavior for anything that actually needs to act as someone. */
-export async function apiFetch<T>(method: "GET" | "POST", path: string, body?: unknown, tokenOverride?: string, allowAnonymous = false): Promise<T> {
+export async function apiFetch<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, tokenOverride?: string, allowAnonymous = false): Promise<T> {
   const token = tokenOverride ?? activeToken ?? (allowAnonymous ? null : requireCredentials().token);
   const resp = await fetch(`${apiBase()}${path}`, {
     method,

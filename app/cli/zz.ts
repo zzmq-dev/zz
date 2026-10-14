@@ -23,7 +23,7 @@ import { review } from "./commands/review.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList } from "./commands/agent.js";
-import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone } from "./commands/repo.js";
+import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
@@ -322,6 +322,14 @@ repoCmd
   .description("git clone a repo with your zz login token embedded automatically -- no need to paste it into a username/password prompt by hand")
   .action(async (slug: string, dir?: string) => {
     await repoClone(slug, dir);
+  });
+
+repoCmd
+  .command("delete <owner/repo>")
+  .description("permanently delete a repo -- real git history, Ladder, Lanes, all of it. Needs Owner on the repo yourself.")
+  .option("-y, --yes", "skip the type-the-slug-to-confirm prompt")
+  .action(async (slug: string, opts: { yes?: boolean }) => {
+    await repoDelete(slug, { yes: opts.yes });
   });
 
 repoCmd
