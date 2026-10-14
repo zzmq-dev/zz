@@ -176,6 +176,41 @@ export async function writeRung(remote: string, token: { plaintext: string } | s
   await pushNote(remote, token, fs, dir, ref, anchorSha, embed(rung));
 }
 
+// writeRung's own fetch+push cycle is cheap for one note at a time
+// (the live agent loop's own usage -- a single changeset/ask landing),
+// but every "file"/"directory"/"repo"/etc. rung shares the one "code"
+// ref, and a fresh scopedNotesCheckout re-fetches that ref's ENTIRE
+// accumulated history from scratch every time (no local cache carries
+// over between calls). Confirmed live: onboarding a real, non-trivial
+// repo through writeRung called once per rung projected to multiple
+// HOURS for ~240 rungs, individual calls getting slower over the run
+// as the "code" ref's own history grew with each note added to it --
+// a real O(n^2) cost, not a fixed per-call latency. This groups by ref
+// instead: one checkout (one fetch) per ref, every rung sharing that
+// ref added to the SAME in-memory note commit, one push per ref at
+// the end -- the git-level cost of n notes on one ref drops from n
+// fetches of a growing history to 1.
+export async function writeRungsBatch(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, rungs: SimpleRung[]): Promise<void> {
+  const withAnchors = await Promise.all(rungs.map(async (rung) => ({ rung, ref: notesRefFor(rung.kind), anchorSha: await anchorShaForRung(repo, rung) })));
+  const byRef = new Map<string, typeof withAnchors>();
+  for (const item of withAnchors) {
+    const group = byRef.get(item.ref);
+    if (group) group.push(item);
+    else byRef.set(item.ref, [item]);
+  }
+  const person = { name: "zz-ladder", email: "zz-ladder@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
+  for (const [ref, items] of byRef) {
+    const { fs, dir } = await scopedNotesCheckout(remote, token, ref);
+    for (const { rung, anchorSha } of items) {
+      await git.addNote({ fs, dir, ref, oid: anchorSha, note: JSON.stringify(embed(rung)), force: true, author: person, committer: person });
+    }
+    const onAuth = () => ({ username: "x-token-auth", password: tokenString(token) });
+    const pushResult = await git.push({ fs, http, dir, url: remote, onAuth, ref, remoteRef: ref });
+    const refStatus = pushResult.refs?.[ref];
+    if (!refStatus?.ok) throw new Error(`push of ${ref} rejected: ${refStatus?.error ?? JSON.stringify(pushResult)}`);
+  }
+}
+
 // One repo-wide Ladder read (the "_repo" root plus each of its
 // top-level file/changeset children, resolved one DO call at a time
 // by webApp.ts's getLadderTree) used to re-run scopedNotesCheckout

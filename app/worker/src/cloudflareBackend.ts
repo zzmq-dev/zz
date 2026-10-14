@@ -15,7 +15,7 @@ import { resolveLadderTree, type ResolvedRung } from "../../engine/ladderRender.
 import type { CommitRow, FileChangeRow } from "../../engine/ingest.js";
 import type { ChangesetFile, CommitAuthor } from "../../engine/changeset.js";
 import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtCommitImpl, type ArtifactsNamespace, type ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
-import { writeRung, readRung, appendRepoChildren as appendRepoChildrenImpl, rootCommitOid, type SimpleRung, type NotesCache } from "./cloudflareLadderBackend.js";
+import { writeRungsBatch, readRung, appendRepoChildren as appendRepoChildrenImpl, rootCommitOid, type SimpleRung, type NotesCache } from "./cloudflareLadderBackend.js";
 import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
 
 interface RepoInfo {
@@ -323,7 +323,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       const rungs = (Array.isArray(rung) ? rung : [rung]).map(toSimpleRung);
       await withRepo(artifacts, artifactsName, async (repo, remote) => {
         const token = await repo.createToken("write", 3600);
-        for (const one of rungs) await writeRung(remote, token, repo, one);
+        await writeRungsBatch(remote, token, repo, rungs);
       });
       // Built directly from the rungs just written -- see
       // mergeRungsIntoLadderTreeCache's doc comment for why this

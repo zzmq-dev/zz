@@ -77,8 +77,17 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
   console.error(`found ${anchors.length} rung(s) to push`);
   const byPath = new Map(anchors.map(({ path, rung }) => [path, rung]));
 
-  let done = 0;
-  for (const { rung } of anchors) {
+  // One ladder_write_rung call for every rung (ladder_write_rung's own
+  // "rung" param accepts an array of top-level rungs), not one call
+  // per rung -- confirmed live: at one HTTP round trip per rung, each
+  // doing its own full git-notes fetch+push of an ever-growing shared
+  // ref, 16 rungs alone took 13 minutes and climbing (a real O(n^2)
+  // cost -- see cloudflareLadderBackend.ts's writeRungsBatch, the
+  // server-side half of this same fix). Chunked rather than one giant
+  // call, both for a saner request size and so a failure partway
+  // through doesn't lose everything already confirmed sent.
+  const BATCH_SIZE = 40;
+  const payloads = anchors.map(({ rung }) => {
     // "repo"/"directory" have no commit source locally (writeLadder
     // never needed one -- see its own anchor-by-kind comment), but the
     // remote write validates one for every structural-anchor kind
@@ -89,9 +98,15 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
     // blob (cloudflareLadderBackend.ts's own ROOT_ANCHORED_KINDS).
     const sources = rung.sources.length ? rung.sources : (rung.kind === "repo" || rung.kind === "directory" ? [{ kind: "commit" as const, ref: rootCommit, title: "onboarded via zz ladder build/push", author: "zz-local", at: new Date().toISOString() }] : rung.sources);
     const children = embedChildren(rung, byPath);
-    await remoteCallTool("ladder_write_rung", { repo: targetSlug, rung: { path: rung.path, kind: rung.kind, summary: rung.summary, sources, children } });
-    done += 1;
-    if (done % 10 === 0 || done === anchors.length) console.error(`  pushed ${done}/${anchors.length}`);
+    return { path: rung.path, kind: rung.kind, summary: rung.summary, sources, children };
+  });
+
+  let done = 0;
+  for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
+    const batch = payloads.slice(i, i + BATCH_SIZE);
+    await remoteCallTool("ladder_write_rung", { repo: targetSlug, rung: batch });
+    done += batch.length;
+    console.error(`  pushed ${done}/${payloads.length}`);
   }
   console.error("done.");
 }
