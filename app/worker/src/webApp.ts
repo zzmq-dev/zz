@@ -431,9 +431,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
 .kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.8em}
-.agent-id{color:var(--pink);text-decoration:none}
+.agent-id{color:var(--muted);text-decoration:none}
 .agent-id:hover{text-decoration:underline}
-.agent-name{color:darkslategray}
+.agent-name{color:steelblue}
 .ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
 .ask-id-link:hover{text-decoration:none;border-bottom-style:solid}
 .ask-answer-row{margin:.6rem 0 0 1.25rem;padding-left:.6rem;border-left:2px solid rgba(255,255,255,.12)}
@@ -489,7 +489,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    corner crosshairs instead of a solid pill border -- the role name's
    own color (its existing badge-variant semantics) carries the
    meaning; the crosshairs just mark it as a distinct kind of token. */
-.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.85rem;padding:.2em .6em;margin:0 .2em;background:rgba(92,141,255,.15);border-radius:4px}
+.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.82rem;padding:0em .5em;margin:0 .2em;background:rgba(92,141,255,.15);border-radius:4px}
 .scope::before,.scope::after{content:"";position:absolute;width:4px;height:6px;border-color:var(--muted);border-style:solid}
 .scope::before{top:0;left:0;border-width:1px 0 0 1px}
 .scope::after{bottom:0;right:0;border-width:0 1px 1px 0}
