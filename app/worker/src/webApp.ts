@@ -1415,32 +1415,39 @@ const LADDER_KIND_ORDER: Record<string, number> = {
 // a commit-scoped locator the same way (a file/directory rung's path
 // is its CURRENT-state location, not pinned to any one commit), so
 // this is deliberately narrow rather than guessing a link for every kind.
-function ladderPathLink(slug: string, node: ResolvedRung, defaultBranch: string): string | null {
-  if (node.kind === "file") return `/${esc(slug)}/blob/${esc(defaultBranch)}/${esc(node.path)}`;
-  if (node.kind !== "changeset" && node.kind !== "filechange") return null;
-  const rest = node.path.startsWith("changesets/") ? node.path.slice("changesets/".length) : null;
-  if (rest === null) return null;
-  if (node.kind === "changeset") return `/${esc(slug)}/commit/${esc(rest)}`;
-  const slashIdx = rest.indexOf("/");
-  if (slashIdx === -1) return null;
-  return `/${esc(slug)}/blob/${esc(rest.slice(0, slashIdx))}/${esc(rest.slice(slashIdx + 1))}`;
+/** A changeset rung's own path IS "changesets/<sha>" -- the sha, extracted here once and reused both for that rung's own commit link and, passed down to its filechange children, for theirs. */
+function changesetShaOf(node: ResolvedRung): string | null {
+  if (node.kind !== "changeset" || !node.path.startsWith("changesets/")) return null;
+  return node.path.slice("changesets/".length);
 }
 
-function renderLadderNode(slug: string, node: ResolvedRung, defaultBranch: string, depth = 0): string {
+/** parentChangesetSha: the nearest ancestor changeset's sha, threaded down from renderLadderNode -- a filechange rung's own path is just its bare filename (no "changesets/<sha>/" prefix; it's nested, not top-level, so nothing re-derives that context from the rung itself), so linking it to that file's content at that specific commit (where the blob view's own historical-ref handling shows the inline diff automatically) needs the parent's sha handed in. */
+function ladderPathLink(slug: string, node: ResolvedRung, defaultBranch: string, parentChangesetSha: string | null): string | null {
+  if (node.kind === "file") return `/${esc(slug)}/blob/${esc(defaultBranch)}/${esc(node.path)}`;
+  if (node.kind === "changeset") {
+    const sha = changesetShaOf(node);
+    return sha ? `/${esc(slug)}/commit/${esc(sha)}` : null;
+  }
+  if (node.kind === "filechange" && parentChangesetSha) return `/${esc(slug)}/blob/${esc(parentChangesetSha)}/${esc(node.path)}`;
+  return null;
+}
+
+function renderLadderNode(slug: string, node: ResolvedRung, defaultBranch: string, depth = 0, parentChangesetSha: string | null = null): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   // data-search: lowercased path+summary+kind, read by the ladder
   // search box's own JS (zzInitLadderSearch) to decide whether to hide
   // this row -- a plain client-side filter over what's already
   // rendered, not a second query against anything.
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
-  const href = ladderPathLink(slug, node, defaultBranch);
+  const href = ladderPathLink(slug, node, defaultBranch, parentChangesetSha);
   const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
   const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="rung-bracket">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
   const children = node.kind === "ask" ? node.children : [...node.children].sort((a, b) => (LADDER_KIND_ORDER[a.kind] ?? 99) - (LADDER_KIND_ORDER[b.kind] ?? 99));
-  return [self, ...children.map((c) => renderLadderNode(slug, c, defaultBranch, depth + 1))].join("");
+  const childSha = changesetShaOf(node) ?? parentChangesetSha;
+  return [self, ...children.map((c) => renderLadderNode(slug, c, defaultBranch, depth + 1, childSha))].join("");
 }
 
 // One rung read directly by its own path -- the commit/file view's
