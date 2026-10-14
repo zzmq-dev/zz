@@ -284,7 +284,7 @@ A full-screen session for doing one Ask at a time with a model as a collaborator
 
 1. **Pick a Lane.** The **lanes** tab lists Lanes across your watched repos, busiest (most Asks) first; switch to the **unclaimed** tab (`←`/`→` or `1`/`2`) for a flat list of every open Ask across those repos instead of picking through Lanes one at a time.
 2. **Pick an Ask.** Either tab's Ask list can be filtered by status (`s`, cycles open/granted/complete/denied). Press `enter` to read an Ask's full detail, `c` to claim it and start, or `n` to post a new Ask into the current Lane (lanes tab only -- the unclaimed tab has no single Lane to post into).
-3. **Work it in conversation.** For a `work` Ask, the model drafts the change and writes it into a shard checkout. For a `changeset_review` Ask, it gives a recommendation with the diff. Type feedback to get a revision, or use a command:
+3. **Work it in conversation.** For a `work` Ask, the model drafts the change and writes it into a shard checkout. For a `changeset_review` Ask, it gives a recommendation with the diff. For a `submit_changeset` Ask -- the merge step an approved review's own `/approve` posts -- there's nothing to draft or discuss, so it's shown as-is with `/merge` the only real command. Type feedback to get a revision, or use a command:
 
 | Command | Ask kind | Effect |
 | --- | --- | --- |
@@ -293,8 +293,9 @@ A full-screen session for doing one Ask at a time with a model as a collaborator
 | `/deny [reason]` | work | Decline the Ask. |
 | `/approve [reason]` | review | Approve the change. |
 | `/request-changes [reason]` | review | Send it back. The reason becomes a follow-up `work` Ask. |
-| `/release` | both | Give up the claim so anyone can take the Ask. |
-| `esc` | both | Pause. You keep the claim and can resume from the picker. |
+| `/merge` | submit_changeset | Commit it for real and write the Ladder -- the same mechanics `zz work`'s autonomous loop runs for this Ask kind. |
+| `/release` | all | Give up the claim so anyone can take the Ask. |
+| `esc` | all | Pause. You keep the claim and can resume from the picker. |
 
 `ctrl+/` (or typing `!` into the feedback box) opens a shell in the shard checkout so you can edit or test files directly. `ctrl+y` copies the transcript.
 

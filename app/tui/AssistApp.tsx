@@ -1,9 +1,14 @@
-// `zz work --assist`'s interface: pick a claimable work/changeset_review
-// ask out of the repos you're watching, then chat with the model about
-// its draft (or, for a review, its recommendation) before explicitly
-// submitting it back into the protocol as a real ANSWER -- a
-// human-in-the-loop counterpart to `zz work`'s own fully autonomous
-// claim-draft-verify-submit loop, not a replacement for it.
+// `zz work --assist`'s interface: pick a claimable work/changeset_review/
+// submit_changeset ask out of the repos you're watching, then chat with
+// the model about its draft (or, for a review, its recommendation)
+// before explicitly submitting it back into the protocol as a real
+// ANSWER -- a human-in-the-loop counterpart to `zz work`'s own fully
+// autonomous claim-draft-verify-submit loop, not a replacement for it.
+// submit_changeset is the one kind with nothing to draft or discuss
+// (an approved review's payload IS the merge, unchanged) -- picking one
+// just shows it and waits for an explicit /merge, the same real
+// three-way-merge/commit/Ladder-write mechanics `zz work` runs
+// autonomously for this ask kind, not a separate human-only path.
 //
 // A real full-screen frame (cli/commands/workAssist.ts calls
 // enterFullscreen, same as `zz top`/`zz work`'s own TUIs), not a plain
@@ -37,6 +42,7 @@ import {
   proposeReview,
   acceptReview,
   discussReview,
+  runCoordinatorSubmitChangeset,
   type ContributorProposal,
   type ReviewProposal,
   type ScriptedFlowOptions,
@@ -46,6 +52,8 @@ import { diffFileSets } from "../cli/lib/fileDiff.js";
 import type { ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
 import { ask } from "../engine/lane.js";
+import { resolveBackend as resolveStorageBackend } from "../engine/backend.js";
+import type { AnswerEntry, Lane } from "../engine/types.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { useMouse } from "./useMouse.js";
 import { copyToClipboard } from "./clipboard.js";
@@ -95,6 +103,13 @@ function formatRevisedProposal(previous: ContributorProposal["proposal"], p: Con
 
 function formatDecision(d: ReviewProposal): string {
   return `Decision: ${d.decision}\nReason: ${d.reason}`;
+}
+
+/** Already fully decided (an approved changeset_review's own payload, carried forward unchanged) -- nothing to draft or discuss, just shown so /merge isn't a leap of faith. */
+function formatSubmitChangeset(payload: unknown): string {
+  const p = payload as { taskDescription?: string; message: string; summary: string; files: { path: string; content: string }[] };
+  const filesBlock = p.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+  return `${p.summary}\n(commit message: "${p.message}")\n\nAlready reviewed and approved -- /merge commits this for real and writes the Ladder.\n\n${filesBlock}`;
 }
 
 const roleLabel: Record<TranscriptEntry["role"], string> = { assistant: "model", user: "you", system: "system" };
@@ -259,7 +274,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // network twice. This is also why this no longer needs its own
   // useEffect/interval at all: it's just a plain computed value.
   const claimableList = useMemo(
-    () => claimableFromSnapshots(laneSnapshots, agent, scope).filter((c) => c.ask.kind === "work" || c.ask.kind === "changeset_review"),
+    () => claimableFromSnapshots(laneSnapshots, agent, scope).filter((c) => c.ask.kind === "work" || c.ask.kind === "changeset_review" || c.ask.kind === "submit_changeset"),
     [laneSnapshots, agent, scope],
   );
 
@@ -335,6 +350,14 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
             pushEntry("assistant", formatFreshProposal(res.result.proposal, res.result.resolved.repoDir));
             setStatus("type feedback, /submit, /commit, /deny [reason], /release, or esc to pause");
           }
+        } else if (selected.ask.kind === "submit_changeset") {
+          // Nothing to draft -- an approved changeset_review's payload
+          // IS the merge, carried forward unchanged. Just show it and
+          // wait for an explicit /merge, same "never auto-act" rule as
+          // every other ask kind here, even though there's no judgment
+          // call left to make.
+          pushEntry("assistant", formatSubmitChangeset(selected.ask.payload));
+          setStatus("/merge to commit it for real and write the Ladder, /release, or esc to pause");
         } else {
           setStatus("preparing the files for review...");
           const workspace = await modeRun(() => prepareReviewWorkspace(flowOpts));
@@ -450,6 +473,44 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       return;
     }
 
+    if (selected.ask.kind === "submit_changeset") {
+      if (cmd === "merge") {
+        setBusy(true);
+        setStatus("merging...");
+        // The exact mechanics `zz work` runs autonomously for this same
+        // ask kind (agent/scriptedWork.ts) -- a real three-way merge,
+        // commit, and Ladder write, not a separate human-only path.
+        // flowOpts.onLog already drives setStatus (see the draft
+        // useEffect above), so its own "committing ..."/"wrote the
+        // Ladder" progress shows up here the same way it would in
+        // zz work's own log.
+        await modeRun(() => runCoordinatorSubmitChangeset(flowOpts));
+        // runCoordinatorSubmitChangeset resolves normally even when it
+        // hit a conflict and denied instead of merging (it posts a
+        // resolve_conflict ask and returns, same as zz work's own
+        // caller sees) -- read the ask's own recorded answer back
+        // rather than assuming success just because nothing threw.
+        const lane = useRemote
+          ? ((await callRemoteTool(selected.repo, "lane_get", { lane_id: selected.laneId })) as Lane | null)
+          : await resolveStorageBackend().readLane(selected.repo, selected.laneId);
+        const finalAnswer = lane?.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === selected.ask.id);
+        if (finalAnswer?.action === "complete") {
+          pushEntry("system", "Merged.");
+        } else if (finalAnswer?.action === "deny") {
+          const reason = (finalAnswer.payload as { reason?: string } | undefined)?.reason;
+          pushEntry("system", `Hit a merge conflict -- denied and posted a resolve_conflict ask instead of merging.${reason ? ` ${reason}` : ""}`);
+        } else {
+          pushEntry("system", "Done -- check the Lanes tab to confirm the outcome.");
+        }
+        setStatus("");
+        setDone(true);
+        setBusy(false);
+        return;
+      }
+      pushEntry("system", `Unknown command "/${cmd}". Try /merge, /release, or /cancel.`);
+      return;
+    }
+
     if ((cmd === "approve" || cmd === "request-changes") && reviewResultRef.current) {
       const decision = cmd === "approve" ? ("approve" as const) : ("request_changes" as const);
       setBusy(true);
@@ -467,6 +528,14 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   async function handleFeedback(text: string): Promise<void> {
     const flowOpts = flowOptsRef.current;
     if (!flowOpts || !selected) return;
+    if (selected.ask.kind === "submit_changeset") {
+      // Nothing left to discuss or revise -- the content was already
+      // fixed by the changeset_review that approved it. Don't silently
+      // feed free text into discussReview below, which has nothing of
+      // its own to say back for this ask kind.
+      pushEntry("system", `Nothing to discuss here -- the change was already approved. /merge to commit it, /release, or esc to pause.`);
+      return;
+    }
     pushEntry("user", text);
     setBusy(true);
     if (selected.ask.kind === "work") {

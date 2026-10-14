@@ -13,6 +13,7 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - `zz review`'s new `--ask <id>` flag, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-review) page. The [By hand](https://zzmq.dev/docs/demos/by-hand/) demo's Correction 1 now uses it instead of relying on the wait loop having exactly one thing to review.
 - `zz review`/`zz work`'s new `--no-wait`, and `zz work`'s new `--ask <id>`, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work) page.
 - A new "Why `zz repo clone` sets `pull.rebase`" section on the [Git compatibility](https://zzmq.dev/docs/git-compatibility/) page: `zz repo submit` never pushes your local commit, so a later plain `git pull` needs rebase (not merge or `--ff-only`) to land cleanly on the coordinator's real merged commit.
+- `zz work --assist` now merges `submit_changeset` Asks directly (`/merge`), documented on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work-assist) page. The [Assisted](https://zzmq.dev/docs/demos/assisted/) demo's run sheet now merges from the same `--assist` session instead of a separate terminal.
 
 ### Fixed
 - The Demos index still said "there's no `zz agent delete` yet" -- it's existed since the CLI's own `v1.0.0`.
@@ -20,7 +21,7 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - A highlighted code block's own line numbers rendered with zero horizontal space before the code -- turned off entirely (`.chroma .ln { display: none }`) rather than patched with padding.
 - Two more stale `require_changeset_review` mentions, on the Data format and Core Concepts (nouns) pages -- missed in the earlier pass since they weren't inside the Governance/CLI/Agent-tools/demo pages that pass specifically audited.
 - The CLI reference's `zz top` tab table still named the old **activity**/**protocol** tabs and said the activity feed reads newest-at-the-bottom -- stale since this session's own TUI rename/reorder (now **live feed**/**activity**, newest-at-top), caught only now while adding `--no-wait`/`--ask` nearby.
-- The [Assisted](https://zzmq.dev/docs/demos/assisted/) demo said approving a changeset_review inside `--assist` merges it -- found live by a reader stuck exactly there: `--assist`'s own picker never offers `submit_changeset` (merging is mechanical, not a judgment call), so the Ask was just sitting open with no way to act on it from that view. Now says so, with the separate `zz work --ask <id>` command that actually merges it.
+- The [Assisted](https://zzmq.dev/docs/demos/assisted/) demo said approving a changeset_review inside `--assist` merges it -- found live by a reader stuck exactly there: `--assist`'s own picker never offered `submit_changeset` at all, so the Ask was just sitting open with no way to act on it from that view. Fixed properly rather than just documented: see `--assist`'s new `/merge` support above.
 
 ## [0.2.0] - 2026-10-14
 
