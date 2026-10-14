@@ -151,13 +151,15 @@ const askCmd = program.command("ask").description("post Asks into a Lane's queue
 
 askCmd
   .command("post <repo> <lane>")
-  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up')
+  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Local-only unless --remote.')
   .option("--kind <kind>", 'Ask kind (default: "work")')
-  .option("--from <agent>", 'who it\'s from (default: "human")')
+  .option("--from <agent>", 'who it\'s from, local mode only (default: "human")')
   .option("--description <text>", 'shorthand for payload { description: text } -- what kind "work" expects')
   .option("--payload <json>", "raw JSON payload, for any other kind")
   .option("--priority <n>", "higher = more urgent at query time", (v) => parseInt(v, 10))
-  .action(async (repo: string, laneId: string, opts: { kind?: string; from?: string; description?: string; payload?: string; priority?: number }) => {
+  .option("--remote", "post to a real hosted repo instead of the local backend -- needed for a kind with no dedicated REST endpoint (e.g. vote_request, whistleblow)")
+  .option("--as <name>", "post as a managed agent instead of yourself, remote mode only")
+  .action(async (repo: string, laneId: string, opts: { kind?: string; from?: string; description?: string; payload?: string; priority?: number; remote?: boolean; as?: string }) => {
     await askPost(repo, laneId, opts);
   });
 
