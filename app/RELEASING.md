@@ -17,6 +17,20 @@ From `app/`:
 
 Pushing the tag is what triggers the release workflow: it verifies the tag matches `package.json`'s version, typechecks, builds, `npm publish`es, and creates a GitHub Release with auto-generated notes from the commits since the last tag.
 
+## Publishing manually (no `NPM_TOKEN` set up yet)
+
+Without the repo secret, the release workflow's own `npm publish` step fails with `npm error code ENEEDAUTH` -- the tag, the GitHub Release, and the CHANGELOG entry are all still real and correct, just not the actual publish. From `app/`, on a machine logged in as an npm account with publish rights to `zzmq`:
+
+```
+npm login                 # one-time per machine -- skip if `npm whoami` already shows the right account
+npm ci
+npx tsc --noEmit -p .
+npm run build
+npm publish --access public
+```
+
+`--access public` matters here (`zzmq` has no scope, so it's the default anyway, but it's harmless to be explicit) -- what CI's own run additionally passes, `--provenance`, only works from a supported CI environment's own OIDC token, not a plain local publish, so it's left off here.
+
 ## Verifying a release landed
 
 - `npm view zzmq version` should show the new version within a minute or two of the workflow finishing.
