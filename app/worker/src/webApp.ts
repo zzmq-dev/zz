@@ -138,8 +138,15 @@ function kindCode(kind: string): string {
 /** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracketed agent name -- the part that actually distinguishes this actor in a scenario with several -- at full, slightly tinted contrast. A bare human login (no bracket) renders plain, unsplit. */
 function formatAgentId(username: string): string {
   const i = username.indexOf("[");
-  if (i === -1) return esc(username);
-  return `<span class="muted">${esc(username.slice(0, i))}</span><span class="agent-name">${esc(username.slice(i))}</span>`;
+  // Always one wrapping span -- a flex row's own `gap` (`.row`) applies
+  // between every direct child, so without this, the login part and
+  // the bracketed name rendered as two siblings picked up an extra gap
+  // between them that no other two-word pairing on the row gets. A
+  // bare human login (no bracket at all) gets the same highlight the
+  // bracketed name would -- it IS the whole identifying part here, not
+  // secondary provenance the way a managed agent's login prefix is.
+  if (i === -1) return `<span class="agent-id agent-name">${esc(username)}</span>`;
+  return `<span class="agent-id"><span class="muted">${esc(username.slice(0, i))}</span><span class="agent-name">${esc(username.slice(i))}</span></span>`;
 }
 
 /** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
@@ -256,7 +263,7 @@ h1{font-size:1.5rem;margin:0 0 1.25rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.4rem;margin-bottom:1.25rem}
 .card h2{margin:0 0 .6rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
 .stack>*+*{margin-top:.75rem}
-.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;line-height:1.5}
 .badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;border:1px solid;white-space:nowrap}
 .badge-pink{color:var(--pink);background:rgba(255,46,146,.12);border-color:rgba(255,46,146,.4)}
 .badge-yellow{color:var(--yellow);background:rgba(232,255,61,.1);border-color:rgba(232,255,61,.35)}
@@ -349,7 +356,14 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .clone-row pre{margin:0;padding:.33rem 2.3rem .33rem .66rem;overflow-x:auto}
 .clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem;padding:0}
 .log-feed{font-family:var(--mono);font-size:.85rem;line-height:1.8}
-.log-line{display:flex;align-items:center;white-space:nowrap;overflow-x:auto}
+/* Plain inline flow, not flex -- a flex container treats every loose
+   text run between its inline children (a badge, a space, a link, ...)
+   as its own anonymous flex item, and collapses/repositions the
+   whitespace at each one's edges instead of just leaving it exactly as
+   written the way normal inline text does. .ts-stack's own
+   vertical-align keeps it lined up with the text beside it without
+   needing the parent to be a flex container to get there. */
+.log-line{white-space:nowrap;overflow-x:auto}
 .log-line .t-ask{color:var(--yellow);font-weight:600}
 .log-line .t-answer{color:var(--green);font-weight:600}
 .log-line .t-insight{color:var(--cyan);font-weight:600}
@@ -362,7 +376,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    reasoning the 0.5 skill's "reduce to what's actually load-bearing"
    applies to any repeated element. The real ISO instant is the title
    tooltip, for whenever the exact moment is what's actually needed. */
-.ts-stack{display:inline-flex;flex-direction:column;justify-content:center;margin-right:1.5em;font-family:var(--mono);font-size:.45em;line-height:1;cursor:help}
+.ts-stack{display:inline-flex;flex-direction:column;justify-content:center;vertical-align:middle;margin-right:1.5em;font-family:var(--mono);font-size:.45em;line-height:.8;cursor:help}
 .ts-stack span{display:block}
 .ts-stack .ts-date{opacity:.85}
 .ts-stack .ts-time{opacity:.55}
@@ -371,7 +385,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .agent-name{color:var(--pink)}
 .ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
 .ask-id-link:hover{text-decoration:none;border-bottom-style:solid}
-.ask-answer-row{margin-left:1.25rem;padding-left:.6rem;border-left:2px solid rgba(255,255,255,.12)}
+.ask-answer-row{margin:.6rem 0 0 1.25rem;padding-left:.6rem;border-left:2px solid rgba(255,255,255,.12)}
 .md h1,.md h2,.md h3{margin:1rem 0 .5rem}
 .md h1:first-child,.md h2:first-child,.md h3:first-child{margin-top:0}
 .md p{margin:.6rem 0}
@@ -395,7 +409,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .diff-del{background:rgba(255,68,102,.12)}
 .diff-del .diff-marker{color:var(--red)}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
-.json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
+.json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:.4rem 0 0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
 .summary-detail ul,.summary-detail p{margin-top:.5rem}
@@ -2446,39 +2460,38 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const tracking = !isOwner && (await trackingCheck);
 
   const [lanes, ladder] = await lanesAndLadder;
-  const rootLane = lanes.find((l) => l.id === "_repo") ?? null;
 
   // One entry per Ask, its own Answer(s) nested inside instead of
   // listed separately -- this used to repeat almost everything
   // Activity already shows, one flat row per ASK/ANSWER/INSIGHT, just
   // reordered; grouping by the thing an Answer actually answers is
   // what Activity (a live-feed-style read, deliberately flat and
-  // chronological) can't do and this tab exists to.
-  const rootHistory = rootLane?.history ?? [];
+  // chronological) can't do and this tab exists to. Every Lane, not
+  // just "_repo" -- a governance Lane's own vote_request/changeset_review
+  // Asks live elsewhere, and this used to only ever show the root one.
+  const flatProtocol = flattenProtocol(lanes);
   const answersByAsk = new Map<string, AnswerEntry[]>();
-  for (const e of rootHistory) {
-    if (e.type !== "ANSWER") continue;
-    const list = answersByAsk.get(e.ask) ?? [];
-    list.push(e);
-    answersByAsk.set(e.ask, list);
+  for (const { entry } of flatProtocol) {
+    if (entry.type !== "ANSWER") continue;
+    const list = answersByAsk.get(entry.ask) ?? [];
+    list.push(entry);
+    answersByAsk.set(entry.ask, list);
   }
-  const asksHtml = rootHistory
-    .filter((e): e is AskEntry | InsightEntry => e.type === "ASK" || e.type === "INSIGHT")
-    .slice()
-    .reverse()
-    .map((e) => {
+  const asksHtml = flatProtocol
+    .filter((e): e is { laneId: string; entry: AskEntry | InsightEntry } => e.entry.type === "ASK" || e.entry.type === "INSIGHT")
+    .map(({ laneId, entry: e }) => {
       if (e.type === "INSIGHT") {
-        return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${esc(e.text)}</li>`;
+        return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)} <span class="badge badge-muted">${esc(laneId)}</span></li>`;
       }
       const answersHtml = (answersByAsk.get(e.id) ?? [])
-        .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
+        .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}<span class="badge badge-green">ANSWER</span> ${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
         .join("");
-      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")}</div>${jsonBlock(e.payload)}${answersHtml}</li>`;
+      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} <span class="mono">${esc(e.id)}</span> <span class="badge badge-muted">${esc(laneId)}</span></div>${jsonBlock(e.payload)}${answersHtml}</li>`;
     })
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row"><span class="mono">${esc(l.id)}</span> <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord: ${esc(l.coordinators?.join(", ") ?? "")}</span></li>`)
+    .map((l) => `<li class="row"><span class="mono">${esc(l.id)}</span> <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
@@ -2494,10 +2507,10 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
       const rest =
         e.type === "ASK"
-          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")}`
+          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} <span class="mono">${esc(e.id)}</span>`
           : e.type === "ANSWER"
             ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?")}`
-            : esc(e.text);
+            : `${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)}`;
       return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
