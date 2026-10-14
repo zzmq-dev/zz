@@ -108,6 +108,16 @@ function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/** A protocol event's timestamp, as a 3-line stack (YYMMDD. / HHMMSS. / mmm) that reads top to bottom at decreasing contrast -- compact enough to sit to the left of the line it's on instead of trailing after it, in the same vertical space, with the real ISO string in a title tooltip for whoever needs the exact moment. See the `.ts-stack` CSS below for the actual 1/3-height-per-line layout. */
+function timestampStackHtml(iso: string): string {
+  const d = new Date(iso);
+  const two = (n: number) => String(n).padStart(2, "0");
+  const date = `${two(d.getUTCFullYear() % 100)}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}`;
+  const time = `${two(d.getUTCHours())}${two(d.getUTCMinutes())}${two(d.getUTCSeconds())}`;
+  const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
+  return `<span class="ts-stack" title="${esc(iso)}"><span class="ts-date">${date}.</span><span class="ts-time">${time}.</span><span class="ts-ms">${ms}</span></span>`;
+}
+
 // http(s) URL detection, plain and deliberately conservative -- a
 // trailing sentence-punctuation character right after a URL (".",
 // ",", ")", etc., the common case in a hand-written description: "see
@@ -310,10 +320,24 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .clone-row pre{margin:0;padding:.33rem 2.3rem .33rem .66rem;overflow-x:auto}
 .clone-row .icon-btn{position:absolute;top:50%;right:.35rem;transform:translateY(-50%);width:1.6rem;height:1.6rem;padding:0}
 .log-feed{font-family:var(--mono);font-size:.85rem;line-height:1.8}
-.log-line{white-space:nowrap;overflow-x:auto}
+.log-line{display:flex;align-items:center;white-space:nowrap;overflow-x:auto}
 .log-line .t-ask{color:var(--yellow);font-weight:600}
 .log-line .t-answer{color:var(--green);font-weight:600}
 .log-line .t-insight{color:var(--cyan);font-weight:600}
+/* A timestamp as a 3-line stack (date/time/ms) instead of one trailing
+   string -- compact enough to sit leftmost, in the same vertical space
+   as the single line of text beside it. Each line is font-size .45em
+   at line-height 1, so all three together (1.35em) land close to a
+   normal line's own height; opacity steps down date->time->ms since
+   the date rarely matters once you're reading a live-ish feed, same
+   reasoning the 0.5 skill's "reduce to what's actually load-bearing"
+   applies to any repeated element. The real ISO instant is the title
+   tooltip, for whenever the exact moment is what's actually needed. */
+.ts-stack{display:inline-flex;flex-direction:column;justify-content:center;margin-right:.6em;font-family:var(--mono);font-size:.45em;line-height:1;cursor:help}
+.ts-stack span{display:block}
+.ts-stack .ts-date{opacity:.85}
+.ts-stack .ts-time{opacity:.55}
+.ts-stack .ts-ms{opacity:.3}
 .md h1,.md h2,.md h3{margin:1rem 0 .5rem}
 .md h1:first-child,.md h2:first-child,.md h3:first-child{margin-top:0}
 .md p{margin:.6rem 0}
@@ -2390,7 +2414,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .map(({ laneId, entry: e }) => {
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
       const rest = e.type === "ASK" ? `${esc(e.kind ?? "?")} from ${esc(e.from ?? "?")}` : e.type === "ANSWER" ? `${esc(e.action ?? "?")} by ${esc(e.from ?? "?")} on ${esc(e.ask ?? "?")}` : esc(e.text);
-      return `<div class="log-line"><span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}&nbsp;&nbsp;<span class="muted">${esc(e.at)}</span></div>`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
 
