@@ -1,9 +1,10 @@
 // `zz top`: the real-time dashboard. Same building blocks as `zz
-// work`'s view (TabView/LaneList/LiveLog/LadderView), just without an
-// activity tab since `zz top` isn't itself running an agent -- it's
-// purely a watcher. Plus Explore, reachable as an ordinary tab at any
-// time (the plan's own requirement), for finding more repos to watch
-// without quitting and hand-editing ~/.zz/config.json.
+// work`'s view (TabView/LaneList/LiveLog/LadderView), just without a
+// live feed tab since `zz top` isn't itself running an agent -- it's
+// purely a watcher, with nothing of its own to feed one. Plus Explore,
+// reachable as an ordinary tab at any time (the plan's own
+// requirement), for finding more repos to watch without quitting and
+// hand-editing ~/.zz/config.json.
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { Text, useInput } from "ink";
 import { TabView } from "./TabView.js";
@@ -14,7 +15,8 @@ import { LadderView } from "./LadderView.js";
 import { Explore } from "./Explore.js";
 import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { useLadderTrees } from "./useLadderTrees.js";
-import { flattenEvents } from "./types.js";
+import { useRepoInfos } from "./useRepoInfos.js";
+import { flattenEvents, withCreateEvents } from "./types.js";
 import { laneListText, liveLogText, ladderText } from "./textExport.js";
 import { GREEN, MUTED, YELLOW } from "./theme.js";
 
@@ -58,6 +60,7 @@ export function TopApp({
   const repos = watchedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir }));
   const snapshots = useLaneSnapshots(repos, 500, remote);
   const ladders = useLadderTrees(repos, 2000, remote);
+  const repoInfos = useRepoInfos(watchedRepos.map((r) => r.slug), remote);
   const [exploreEditing, setExploreEditing] = useState(false);
   const [laneEditing, setLaneEditing] = useState(false);
   const [laneDetail, setLaneDetail] = useState<{ repo: string; laneId: string } | null>(null);
@@ -153,9 +156,11 @@ export function TopApp({
         },
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
         {
-          label: "protocol",
-          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} watchedRepos={watchedRepos.map((r) => r.slug)} maxRows={maxRows} scrollOffset={scrollOffset} />,
-          getFullText: () => liveLogText(flattenEvents(snapshots)),
+          label: "activity",
+          content: (maxRows, scrollOffset) => (
+            <LiveLog events={withCreateEvents(flattenEvents(snapshots), repoInfos)} watchedRepos={watchedRepos.map((r) => r.slug)} maxRows={maxRows} scrollOffset={scrollOffset} />
+          ),
+          getFullText: () => liveLogText(withCreateEvents(flattenEvents(snapshots), repoInfos)),
         },
       ]}
     />

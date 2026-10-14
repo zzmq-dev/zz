@@ -202,5 +202,15 @@ export function createLocalBackend(): Backend {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, JSON.stringify(policy, null, 2) + "\n");
     },
+
+    // No local equivalent of the remote meta.json's owner/created_at
+    // (a single local user has no one else to attribute a repo to) --
+    // the root commit's own author/timestamp is the closest honest
+    // stand-in, same spirit as DEFAULT_LOCAL_POLICY above.
+    async readRepoInfo(repo): Promise<{ owner: string; createdAt: string }> {
+      const [root] = listCommitsChronological(repoDirOf(repo));
+      if (!root) throw new Error(`${repo}: no commits yet`);
+      return { owner: root.author, createdAt: root.at };
+    },
   };
 }

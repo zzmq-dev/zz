@@ -76,6 +76,9 @@ export const remoteBackend: Backend = {
   // cloudflareBackend there, never this client-side Backend).
   readPolicy: () => notSupported("readPolicy"),
   writePolicy: () => notSupported("writePolicy"),
+  async readRepoInfo(repo) {
+    return (await callRemoteTool(repo, "repo_info", {}, true)) as { owner: string; createdAt: string };
+  },
   // Cross-repo, so callRemoteTool (which routes to one specific
   // repo's DO) doesn't apply here -- a direct API call instead, same
   // as any other plain CLI->Worker call. Safe specifically because

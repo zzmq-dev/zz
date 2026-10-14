@@ -808,6 +808,19 @@ const runInSandbox: ToolDef = {
   },
 };
 
+const repoInfo: ToolDef = {
+  name: "repo_info",
+  description: "Reads a repo's owner and creation time. Anyone who can read the repo can call this -- same visibility as policy_show, just metadata instead of governance rules.",
+  parameters: {
+    type: "object",
+    properties: { repo: { type: "string" } },
+    required: ["repo"],
+  },
+  async execute({ repo }) {
+    return resolveBackend().readRepoInfo(repo as string);
+  },
+};
+
 const policyShow: ToolDef = {
   name: "policy_show",
   description: 'Reads a repo\'s current Policy document: `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
@@ -852,7 +865,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, policyShow, policySet];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

@@ -429,5 +429,14 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         await writeRepoMeta(remote, token, { ...meta, policy });
       });
     },
+
+    async readRepoInfo(): Promise<{ owner: string; createdAt: string }> {
+      return withRepo(artifacts, artifactsName, async (repo, remote) => {
+        const token = await repo.createToken("read", 3600);
+        const { meta } = await readRepoMetaAndRoles(remote, token);
+        if (!meta) throw new Error(`${artifactsName}: repo has no metadata yet`);
+        return { owner: meta.owner, createdAt: meta.created_at };
+      });
+    },
   };
 }

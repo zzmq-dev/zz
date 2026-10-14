@@ -1,5 +1,10 @@
 // A scrolling feed of ASK/ANSWER/INSIGHT history entries as they land,
-// with a filter bar (repo, Lane, ask kind, coordinator-vs-open role)
+// newest at the top, plus two synthesized "LANE" entries that aren't
+// real protocol verbs (yet): a submit_changeset's actual merge moment
+// (isMergeAnswer) and a repo's own creation (types.ts's
+// withCreateEvents) -- both displayed as LANE events since that's
+// what they'll likely become, per this feature's CHANGELOG entry.
+// Has a filter bar (repo, Lane, ask kind, coordinator-vs-open role)
 // cycled by key presses -- the "watch it happen live" building block, as
 // opposed to reading a static dump after the fact. Scrolling itself
 // (up/down, Page Up/Down, Home/End) is handled by the parent TabView,
@@ -11,6 +16,11 @@ import { ASK_SCOPE } from "../engine/lane.js";
 import type { FlatEvent } from "./types.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { YELLOW, GREEN, CYAN, MUTED, PINK } from "./theme.js";
+
+/** True for the one ANSWER that's actually the merge moment (engine/lane.ts's answer() backstop is where a submit_changeset's "complete" really runs the git merge) -- not yet a real protocol verb of its own (see this feature's CHANGELOG entry), just displayed as one. */
+function isMergeAnswer(e: FlatEvent): boolean {
+  return e.entry.type === "ANSWER" && e.entry.action === "complete" && e.answeredAskKind === "submit_changeset";
+}
 
 // HH:MM:SS.mmm, local time -- a live feed is almost always read same-day,
 // so the date would just be dead weight, but the milliseconds stay: this
@@ -25,10 +35,13 @@ function shortTime(iso: string): string {
   return `${d.toLocaleTimeString(undefined, { hour12: false })}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
-function eventParts(e: FlatEvent): { label: string; color: string; rest: string } {
-  if (e.entry.type === "ASK") return { label: "ASK", color: YELLOW, rest: `${e.entry.kind} from ${e.entry.from}` };
-  if (e.entry.type === "ANSWER") return { label: "ANSWER", color: GREEN, rest: `${e.entry.action} (${e.entry.ask}) from ${e.entry.from}` };
-  return { label: "NOTE", color: CYAN, rest: `${e.entry.kind}: ${e.entry.text}` };
+/** label/color (the VERB column) and kind (its own column) and extra (whatever doesn't fit the structured "[VERB] [KIND] on [REPO] [LANE] by [USER]" row -- the answered ask's id, or an Insight's actual text). */
+function eventParts(e: FlatEvent): { label: string; color: string; kind: string; extra: string } {
+  if (e.entry.type === "LANE") return { label: "LANE", color: PINK, kind: e.entry.kind, extra: "" };
+  if (isMergeAnswer(e)) return { label: "LANE", color: PINK, kind: "merge", extra: "" };
+  if (e.entry.type === "ASK") return { label: "ASK", color: YELLOW, kind: e.entry.kind, extra: "" };
+  if (e.entry.type === "ANSWER") return { label: "ANSWER", color: GREEN, kind: e.entry.action, extra: `(${e.entry.ask})` };
+  return { label: "NOTE", color: CYAN, kind: e.entry.kind, extra: e.entry.text };
 }
 
 function kindOf(e: FlatEvent): string | null {
@@ -81,58 +94,77 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
     }
     return true;
   });
-  // One row per event on a wide terminal (repo/lane/verb/detail all
-  // fit), two on a narrower one (detail drops to its own line below) --
-  // see the row rendering's own comment for why.
+  // One row per event on a wide terminal (verb/kind/repo/lane/user all
+  // fit), two on a narrower one (extra detail drops to its own line
+  // below) -- see the row rendering's own comment for why.
   const windowSize = wide ? Math.max(1, maxRows - 1) : Math.max(1, Math.floor((maxRows - 1) / 2));
   const maxOffset = Math.max(0, filtered.length - windowSize);
   const offset = Math.min(scrollOffset, maxOffset);
-  const end = filtered.length - offset;
-  const shown = filtered.slice(Math.max(0, end - windowSize), end);
+  // Newest first (TabView's own contract: scrollOffset 0 = latest) --
+  // `filtered` itself stays chronological (flattenEvents' own sort),
+  // reversed only here so this is the one feed that reads newest-at-
+  // top; ActivityLog (the raw work-loop log, unaffected by any of
+  // this) keeps reading top-to-bottom like a terminal.
+  const reversed = useMemo(() => [...filtered].reverse(), [filtered]);
+  const shown = reversed.slice(offset, offset + windowSize);
 
   return (
     <Box flexDirection="column">
       <Text color={MUTED}>
         filter: repo=[<Text color={repoFilter === "all" ? MUTED : PINK}>{repoFilter}</Text>](r) lane=[<Text color={laneFilter === "all" ? MUTED : PINK}>{laneFilter}</Text>](L) kind=[
         <Text color={kindFilter === "all" ? MUTED : PINK}>{kindFilter}</Text>](t) role=[<Text color={scope === "all" ? MUTED : PINK}>{scope}</Text>](s) --{" "}
-        {filtered.length === 0 ? "no events yet" : `showing ${Math.max(0, end - windowSize) + 1}-${end} of ${filtered.length}${offset > 0 ? ` -- ${offset} back (End to catch up)` : ", live"}`}
+        {filtered.length === 0
+          ? "no events yet"
+          : `showing ${offset + 1}-${Math.min(offset + windowSize, filtered.length)} of ${filtered.length}${offset > 0 ? ` -- ${offset} back (End to catch up)` : ", live"}`}
       </Text>
       {shown.length === 0 ? (
         <Text color={MUTED}>(nothing matches)</Text>
       ) : (
         shown.map((e, i) => {
-          const { label, color, rest } = eventParts(e);
+          const { label, color, kind, extra } = eventParts(e);
           const columns = (
             <>
               <Box width={12} marginRight={1} flexShrink={0}>
                 <Text color={MUTED}>{shortTime(e.entry.at)}</Text>
-              </Box>
-              <Box width={26} marginRight={1} flexShrink={0}>
-                <Text color={MUTED} wrap="truncate-end">
-                  {e.repo}
-                </Text>
-              </Box>
-              <Box width={18} marginRight={1} flexShrink={0}>
-                <Text color={MUTED} wrap="truncate-end">
-                  {e.laneId}
-                </Text>
               </Box>
               <Box width={wide ? 8 : undefined} marginRight={wide ? 1 : 0} flexShrink={0}>
                 <Text bold color={color} wrap="truncate-end">
                   {label}
                 </Text>
               </Box>
+              <Box width={16} marginRight={1} flexShrink={0}>
+                <Text wrap="truncate-end">{kind}</Text>
+              </Box>
+              <Box marginRight={1} flexShrink={0}>
+                <Text color={MUTED}>on</Text>
+              </Box>
+              <Box width={22} marginRight={1} flexShrink={0}>
+                <Text color={MUTED} wrap="truncate-end">
+                  {e.repo}
+                </Text>
+              </Box>
+              <Box width={14} marginRight={1} flexShrink={0}>
+                <Text color={MUTED} wrap="truncate-end">
+                  {e.laneId}
+                </Text>
+              </Box>
+              <Box marginRight={1} flexShrink={0}>
+                <Text color={MUTED}>by</Text>
+              </Box>
+              <Box flexShrink={0}>
+                <Text wrap="truncate-end">{e.entry.from}</Text>
+              </Box>
             </>
           );
           return wide ? (
             <Box key={i}>
               {columns}
-              <Text wrap="truncate-end">{rest}</Text>
+              {extra ? <Text wrap="truncate-end"> {extra}</Text> : null}
             </Box>
           ) : (
             <Box key={i} flexDirection="column">
               <Box>{columns}</Box>
-              <Text wrap="truncate-end"> {rest}</Text>
+              {extra ? <Text wrap="truncate-end"> {extra}</Text> : null}
             </Box>
           );
         })

@@ -1,6 +1,6 @@
-// `zz work`'s default (non --stdio) view: activity / lanes / ladder /
-// protocol, built from the same TabView/LaneList/LiveLog/LadderView used
-// by `zz top`, plus an activity tab fed by the running work loop's
+// `zz work`'s default (non --stdio) view: live feed / lanes / ladder /
+// activity, built from the same TabView/LaneList/LiveLog/LadderView used
+// by `zz top`, plus a live feed tab fed by the running work loop's
 // LogBuffer.
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { TabView } from "./TabView.js";
@@ -10,7 +10,8 @@ import { ActivityLog } from "./ActivityLog.js";
 import { LadderView } from "./LadderView.js";
 import { useLaneSnapshots } from "./useLaneSnapshots.js";
 import { useLadderTrees } from "./useLadderTrees.js";
-import { flattenEvents } from "./types.js";
+import { useRepoInfos } from "./useRepoInfos.js";
+import { flattenEvents, withCreateEvents } from "./types.js";
 import { laneListText, liveLogText, ladderText } from "./textExport.js";
 import type { LogBuffer } from "./LogBuffer.js";
 
@@ -46,6 +47,7 @@ export function WorkApp({
   const repos = watchedRepos.map((r) => ({ repo: r.slug, repoDir: r.repoDir, stateDir: r.stateDir }));
   const snapshots = useLaneSnapshots(repos, 500, remote);
   const ladders = useLadderTrees(repos, 2000, remote);
+  const repoInfos = useRepoInfos(watchedRepos.map((r) => r.slug), remote);
   const [, forceTick] = useState(0);
 
   useEffect(() => {
@@ -59,16 +61,18 @@ export function WorkApp({
       onExit={onExit}
       tabs={[
         {
-          label: "activity",
+          label: "live feed",
           content: (maxRows, scrollOffset) => <ActivityLog lines={logBuffer.all} status={statusRef.current} maxRows={maxRows} scrollOffset={scrollOffset} />,
           getFullText: () => logBuffer.all.join("\n"),
         },
         { label: "lanes", content: (maxRows, scrollOffset) => <LaneList snapshots={snapshots} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => laneListText(snapshots) },
         { label: "ladder", content: (maxRows, scrollOffset) => <LadderView snapshots={ladders} maxRows={maxRows} scrollOffset={scrollOffset} />, getFullText: () => ladderText(ladders) },
         {
-          label: "protocol",
-          content: (maxRows, scrollOffset) => <LiveLog events={flattenEvents(snapshots)} watchedRepos={watchedRepos.map((r) => r.slug)} maxRows={maxRows} scrollOffset={scrollOffset} />,
-          getFullText: () => liveLogText(flattenEvents(snapshots)),
+          label: "activity",
+          content: (maxRows, scrollOffset) => (
+            <LiveLog events={withCreateEvents(flattenEvents(snapshots), repoInfos)} watchedRepos={watchedRepos.map((r) => r.slug)} maxRows={maxRows} scrollOffset={scrollOffset} />
+          ),
+          getFullText: () => liveLogText(withCreateEvents(flattenEvents(snapshots), repoInfos)),
         },
       ]}
     />

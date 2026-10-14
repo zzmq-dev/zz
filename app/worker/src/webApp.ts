@@ -2298,10 +2298,10 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // caller-supplied actor/from field completely, same as the local CLI
 // always has).
 //
-// ANON_READ_TOOLS: the two tools zz top's own views call (lane_list,
-// ladder_tree) are allowed with no auth at all, for a public repo --
-// matching a real, already-existing capability, not a new one: the
-// web repo page itself (handleRepoPage's getLadderTree/getRootLane)
+// ANON_READ_TOOLS: the tools zz top's own views call (lane_list,
+// ladder_tree, repo_info) are allowed with no auth at all, for a public
+// repo -- matching a real, already-existing capability, not a new one:
+// the web repo page itself (handleRepoPage's getLadderTree/getRootLane)
 // already shows this exact content to anonymous visitors by calling
 // stub.callTool() directly, outside this JSON layer entirely. Without
 // this, zz top's "remote, not logged in" mode (the whole point of
@@ -2316,7 +2316,7 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // Maintainer+ regardless of visibility (COORDINATOR_ONLY_REMOTE_TOOLS,
 // below) -- both enforced here now, not just by the CLI's own choice
 // of which tools to hand a model.
-const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree"]);
+const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info"]);
 
 // These two write committed content directly, with no further
 // per-call authority check of their own the way claim/answer have

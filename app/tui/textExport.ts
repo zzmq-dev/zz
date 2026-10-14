@@ -6,10 +6,16 @@ import type { LaneSnapshot, FlatEvent } from "./types.js";
 import type { LadderSnapshot } from "./useLadderTrees.js";
 import type { ResolvedRung } from "../engine/ladderRender.js";
 
+// Same merge special-case as LiveLog.tsx's own isMergeAnswer -- kept
+// as a separate small check rather than a shared import since this
+// file's describeEvent already duplicates LiveLog's ASK/ANSWER/NOTE
+// formatting independently (a plain-text export, not a render path).
 function describeEvent(e: FlatEvent): string {
-  if (e.entry.type === "ASK") return `ASK   ${e.entry.kind} from ${e.entry.from}`;
-  if (e.entry.type === "ANSWER") return `ANSWER ${e.entry.action} (${e.entry.ask}) from ${e.entry.from}`;
-  return `NOTE  ${e.entry.kind}: ${e.entry.text}`;
+  if (e.entry.type === "LANE") return `LANE   ${e.entry.kind} on ${e.repo} ${e.laneId} by ${e.entry.from}`;
+  if (e.entry.type === "ANSWER" && e.entry.action === "complete" && e.answeredAskKind === "submit_changeset") return `LANE   merge on ${e.repo} ${e.laneId} by ${e.entry.from}`;
+  if (e.entry.type === "ASK") return `ASK    ${e.entry.kind} on ${e.repo} ${e.laneId} by ${e.entry.from}`;
+  if (e.entry.type === "ANSWER") return `ANSWER ${e.entry.action} on ${e.repo} ${e.laneId} by ${e.entry.from} (${e.entry.ask})`;
+  return `NOTE   ${e.entry.kind} on ${e.repo} ${e.laneId} by ${e.entry.from}: ${e.entry.text}`;
 }
 
 export function laneListText(snapshots: LaneSnapshot[]): string {
@@ -17,7 +23,7 @@ export function laneListText(snapshots: LaneSnapshot[]): string {
 }
 
 export function liveLogText(events: FlatEvent[]): string {
-  return events.map((e) => `${e.repo}\t${e.laneId}\t${describeEvent(e)}`).join("\n");
+  return events.map((e) => `${e.entry.at}\t${describeEvent(e)}`).join("\n");
 }
 
 function flattenRungText(repo: string, rung: ResolvedRung, depth: number, out: string[]): void {

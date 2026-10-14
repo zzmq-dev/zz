@@ -74,6 +74,9 @@ export interface Backend {
   // to end locally, just with no one else around to govern.
   readPolicy(repo: string): Promise<RepoPolicy>;
   writePolicy(repo: string, policy: RepoPolicy): Promise<void>;
+
+  /** Owner + creation time -- the one bit of repo metadata `zz top`/`zz work`'s own TUI needs that nothing else already exposes (readPolicy's RepoPolicy has neither). Exists for exactly one consumer right now: synthesizing a repo's "created" entry in the Activity feed (tui/LiveLog.tsx), since repo creation isn't a real Lane/Ask event to read back any other way. */
+  readRepoInfo(repo: string): Promise<{ owner: string; createdAt: string }>;
 }
 
 let cachedLocal: Backend | null = null;
