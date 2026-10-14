@@ -1905,6 +1905,64 @@ interface TreeEntry {
   mode: string;
 }
 
+/** repo.readTree only ever returns one level -- this walks one path segment at a time to list a subdirectory's own entries, returning null if any segment along the way is missing or isn't itself a directory. `path` of "" returns `rootEntries` unchanged (the repo root itself needs no walk). */
+async function readTreeAtPath(repo: ArtifactsRepo, rootEntries: TreeEntry[], path: string): Promise<TreeEntry[] | null> {
+  if (!path) return rootEntries;
+  let entries = rootEntries;
+  for (const segment of path.split("/")) {
+    const entry = entries.find((e) => e.name === segment);
+    if (!entry || entry.type !== "tree") return null;
+    entries = (await repo.readTree(entry.hash)) ?? [];
+  }
+  return entries;
+}
+
+/** Shared by handleRepoPage's "Files" tab and handleTree below, so a directory link added to one always matches the other's own route. Files link to /blob/<path> (always at HEAD, same as handleBlob itself); directories link to /tree/<path> -- previously rendered as plain unlinked text, the exact "can't navigate into a directory" gap this fixes. */
+function fileListRowsHtml(slug: string, basePath: string, entries: TreeEntry[], summaryFor?: (name: string) => string | undefined): string {
+  return entries
+    .map((e) => {
+      const fullPath = basePath ? `${basePath}/${e.name}` : e.name;
+      const href = e.type === "tree" ? `/${esc(slug)}/tree/${esc(fullPath)}` : `/${esc(slug)}/blob/${esc(fullPath)}`;
+      const label = `<a href="${href}" class="mono">${esc(e.name)}</a>`;
+      const summary = summaryFor?.(e.name);
+      return summary ? `<li class="stack"><div class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</div>${summaryDetailHtml(summary)}</li>` : `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</li>`;
+    })
+    .join("");
+}
+
+/** The "Files" tab's own tree, one directory deeper -- GitHub's /tree/<path> equivalent, always at HEAD (no ref segment in the path, same convention handleBlob already uses). */
+async function handleTree(slug: string, path: string, request: Request, env: WebEnv): Promise<Response> {
+  const ctx = await getRepoAccessContext(slug, env);
+  if (!ctx) return new Response("no such repo", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
+  const me = await resolveRequestAgent(request, env);
+
+  using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
+  const info = await repo.info();
+  const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
+  const rootEntries: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
+  const entries = await readTreeAtPath(repo, rootEntries, path);
+  if (!entries) return new Response("no such directory", { status: 404 });
+
+  const segments = path.split("/").filter(Boolean);
+  const crumbs = [`<a href="/${esc(slug)}">${esc(slug)}</a>`];
+  let acc = "";
+  for (const seg of segments) {
+    acc = acc ? `${acc}/${seg}` : seg;
+    crumbs.push(`<a href="/${esc(slug)}/tree/${esc(acc)}" class="mono">${esc(seg)}</a>`);
+  }
+
+  return layout(
+    path,
+    me,
+    `<div class="card">
+      <h2>${crumbs.join(" / ")}</h2>
+      <ul class="list">${fileListRowsHtml(slug, path, entries) || '<li class="empty">Empty directory.</li>'}</ul>
+    </div>`,
+    { titleHtml: ` \xb7 <a href="/${esc(slug)}">${esc(slug)}</a>` },
+  );
+}
+
 async function findReadme(repo: ArtifactsRepo, tree: TreeEntry[]): Promise<string | null> {
   const entry = tree.find((e) => /^readme(\.md)?$/i.test(e.name));
   if (!entry) return null;
@@ -2045,12 +2103,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const tree: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
   const readme = head ? await findReadme(repo, tree) : null;
 
-  const fileListHtml = tree
-    .map(
-      (e) =>
-        `<li class="row">${e.type === "tree" ? "📁" : "📄"} ${e.type !== "tree" ? `<a href="${origin}/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`}</li>`,
-    )
-    .join("");
+  const fileListHtml = fileListRowsHtml(slug, "", tree);
 
   const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row"><a href="/${esc(g.principal)}" class="mono">${esc(g.principal)}</a>${roleBadge(g.role)}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
@@ -2304,13 +2357,11 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
     fileSummaries.set(child.path.split("/").pop() ?? child.path, child.summary);
   }
 
-  const fileListHtml = tree
-    .map((e) => {
-      const label = e.type !== "tree" ? `<a href="/${esc(slug)}/blob/${esc(e.name)}" class="mono">${esc(e.name)}</a>` : `<span class="mono">${esc(e.name)}</span>`;
-      const summary = fileSummaries.get(e.name);
-      return `<li class="stack"><div class="row">${e.type === "tree" ? "📁" : "📄"} ${label}</div>${summary ? summaryDetailHtml(summary) : ""}</li>`;
-    })
-    .join("");
+  // Directory links here go through handleTree's own /tree/<path> --
+  // always at HEAD, not pinned to this commit's own tree (this page
+  // has no "browse this historical commit's subdirectory" route of
+  // its own, and a plain unlinked span is a dead end either way).
+  const fileListHtml = fileListRowsHtml(slug, "", tree, (name) => fileSummaries.get(name));
 
   const navHtml = `<div class="commit-nav">
     ${older ? `<a href="/${esc(slug)}/commit/${esc(older)}" class="mono">&larr; prev ${esc(older.slice(0, 8))}</a>` : "<span></span>"}
@@ -2617,6 +2668,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/blob\/(.+)$/);
     if (m) return handleBlob(`${m[1]}/${m[2]}`, m[3], request, env);
+  }
+  {
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/tree\/(.+)$/);
+    if (m) return handleTree(`${m[1]}/${m[2]}`, m[3], request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/download\/(.+)$/);
