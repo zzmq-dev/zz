@@ -1,0 +1,40 @@
+name: Release (web app)
+
+# Fires on a "web-v*" tag -- the web app's own version, completely
+# separate from the CLI's "v*" tags (release.yml) and the site's
+# "site-v*" tags (release-site.yml). Unlike the CLI, this does NOT
+# deploy anything: `wrangler deploy` from app/worker/ stays a manual,
+# local step (see app/worker/CHANGELOG.md's own header). This just
+# gives a tag + GitHub Release a meaningful point to refer to, backed
+# by a real version number and changelog instead of "whatever's on
+# main right now".
+on:
+  push:
+    tags:
+      - "web-v*"
+
+permissions:
+  contents: write # to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is the one source of truth for "what version is this"
+      # -- fail loudly if package.json disagrees, same discipline
+      # release.yml's own CLI release enforces.
+      - name: Verify tag matches app/worker/package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#web-v}"
+          PKG_VERSION="$(node -p "require('./app/worker/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match app/worker/package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes

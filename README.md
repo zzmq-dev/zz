@@ -77,7 +77,11 @@ hyperctl build complete -c site.yaml -i current
 npx wrangler deploy
 ```
 
-Releasing the npm package is covered in [app/RELEASING.md](app/RELEASING.md), and changes are listed in [app/CHANGELOG.md](app/CHANGELOG.md).
+The CLI, the web app, and the site each version and release independently, even though all three live in this one repo -- a `v*` git tag releases the CLI, `web-v*` the web app, `site-v*` the site, each with its own changelog and its own workflow that only looks at its own directory:
+
+- CLI: [app/RELEASING.md](app/RELEASING.md), [app/CHANGELOG.md](app/CHANGELOG.md).
+- Web app: [app/worker/RELEASING.md](app/worker/RELEASING.md), [app/worker/CHANGELOG.md](app/worker/CHANGELOG.md).
+- Site: [site/RELEASING.md](site/RELEASING.md), [site/CHANGELOG.md](site/CHANGELOG.md).
 
 ## Status
 

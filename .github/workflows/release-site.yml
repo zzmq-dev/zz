@@ -1,0 +1,38 @@
+name: Release (site)
+
+# Fires on a "site-v*" tag -- the website's own version, separate
+# from the CLI's "v*" tags (release.yml) and the web app's "web-v*"
+# tags (release-web.yml). Doesn't build or deploy anything: hyperctl
+# isn't installable in a standard GitHub Actions runner (no public
+# package for it), so building (`hyperctl build complete -c
+# site.yaml`) and deploying (`wrangler deploy`) both stay manual,
+# local steps -- see the root README.md and site/CHANGELOG.md's own
+# header. This just gives a tag + GitHub Release a meaningful point
+# to refer to.
+on:
+  push:
+    tags:
+      - "site-v*"
+
+permissions:
+  contents: write # to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches site/package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#site-v}"
+          PKG_VERSION="$(node -p "require('./site/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match site/package.json version ${PKG_VERSION}"
+            exit 1
+          fi
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
