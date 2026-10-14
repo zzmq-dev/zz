@@ -318,6 +318,13 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .download-btn:hover{background:#ff58a8;text-decoration:none}
 .blob-body{border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;overflow:hidden}
 .blob-body pre{margin:0;border:none;border-radius:0}
+.diff-body{font-family:var(--mono);font-size:.85rem;background:#1A0F2E;padding:.5rem 0;overflow-x:auto;white-space:pre}
+.diff-body>div{padding:0 1rem}
+.diff-marker{display:inline-block;width:1.2em;color:var(--muted);user-select:none}
+.diff-add{background:rgba(76,255,110,.12)}
+.diff-add .diff-marker{color:var(--green)}
+.diff-del{background:rgba(255,68,102,.12)}
+.diff-del .diff-marker{color:var(--red)}
 .commit-nav{display:flex;justify-content:space-between;gap:1rem;margin-top:1rem}
 .json-blob{background:var(--code-bg);border:1px solid var(--border);border-radius:6px;padding:.5rem .75rem;margin:0;max-height:260px;overflow:auto;font-family:var(--mono);font-size:.82rem;white-space:pre}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
@@ -2585,6 +2592,71 @@ function looksBinary(bytes: Uint8Array): boolean {
   return false;
 }
 
+interface DiffLine {
+  kind: "same" | "add" | "del";
+  text: string;
+}
+
+// A plain LCS line diff, same algorithm `git diff` itself is built on
+// (minus its hunk-context collapsing -- this shows the whole file,
+// every line tagged same/add/del, not just the changed neighborhoods,
+// since the blob page already shows the whole file either way). The
+// DP table is O(n*m) time AND space, so capped well below what a
+// Worker's own CPU/memory budget could choke on for a genuinely huge
+// generated file -- plenty of headroom for any real source file.
+const DIFF_LINE_CAP = 2000;
+function diffLines(oldText: string, newText: string): DiffLine[] | null {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  if (oldLines.length > DIFF_LINE_CAP || newLines.length > DIFF_LINE_CAP) return null;
+
+  const n = oldLines.length;
+  const m = newLines.length;
+  const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const result: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) {
+      result.push({ kind: "same", text: oldLines[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      result.push({ kind: "del", text: oldLines[i] });
+      i++;
+    } else {
+      result.push({ kind: "add", text: newLines[j] });
+      j++;
+    }
+  }
+  while (i < n) {
+    result.push({ kind: "del", text: oldLines[i] });
+    i++;
+  }
+  while (j < m) {
+    result.push({ kind: "add", text: newLines[j] });
+    j++;
+  }
+  return result;
+}
+
+/** Plain text, not syntax-highlighted -- hljs operates on one contiguous block, and a per-line diff's added/removed rows would need highlighting each line in isolation (no surrounding context for hljs's own lexer) to compose into this, a real gap but a separate, larger piece of work than this view's own point: making a historical commit's change to this file legible at all, which a plain file render -- what every other ref used to show here too -- already was not. */
+function diffLinesHtml(diff: DiffLine[]): string {
+  return diff
+    .map((l) => {
+      const prefix = l.kind === "add" ? "+" : l.kind === "del" ? "-" : "&nbsp;";
+      const cls = l.kind === "add" ? "diff-add" : l.kind === "del" ? "diff-del" : "diff-same";
+      return `<div class="${cls}"><span class="diff-marker">${prefix}</span>${esc(l.text)}</div>`;
+    })
+    .join("");
+}
+
 /** The file viewer page: syntax-highlighted (via highlight.js from cdnjs -- a real CDN dependency, not hand-rolled, since this is a normal deployed website, not a sandboxed Artifact), line-numbered, with a header (repo, latest commit, path, download). GitHub's /blob/ convention -- this is the page a file link lands on; /download/ is the actual bytes now. */
 async function handleBlob(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
@@ -2606,11 +2678,37 @@ async function handleBlob(slug: string, ref: string, path: string, request: Requ
   // below) -- the same ref a historical commit's own tree view links
   // here with, so the file shown is that commit's version, not HEAD's.
   ref = await resolveRefName(repo, ref);
-  const [blob, [head]] = await Promise.all([repo.readFile({ ref, path }), repo.log({ ref, limit: 1 })]);
+  const info = await repo.info();
+  const [blob, [head], [trueHead]] = await Promise.all([repo.readFile({ ref, path }), repo.log({ ref, limit: 1 }), repo.log({ ref: info.defaultBranch, limit: 1 })]);
   if (!blob) return new Response("not found", { status: 404 });
 
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const ext = path.includes(".") ? path.slice(path.lastIndexOf(".") + 1).toLowerCase() : "";
+
+  // Not HEAD's own current version of this file (a real historical
+  // commit, reached via that commit's own tree/changeset view) --
+  // show what changed right there instead of just the plain file:
+  // the filechange rung's own "what and why" alongside an inline
+  // diff against the immediate parent, so you don't have to go dig
+  // up the commit page separately to see either. HEAD itself (and a
+  // commit with no parent -- the repo's very first) keeps the plain
+  // view, same as always: there's no "what changed to get here" to
+  // show for either.
+  const isHistorical = !!head && head.hash !== trueHead?.hash;
+  const parentSha = head?.parents[0];
+  let diffHtml: string | null = null;
+  let filechangeSummary: string | null = null;
+  if (isHistorical && parentSha && !looksBinary(bytes)) {
+    const [oldBlob, changesetRung] = await Promise.all([repo.readFile({ ref: parentSha, path }), readLadderRung(env, ctx.repoRow.artifacts_name, `changesets/${head!.hash}`)]);
+    const oldText = oldBlob ? new TextDecoder().decode(new Uint8Array(await oldBlob.arrayBuffer())) : "";
+    const newText = new TextDecoder().decode(bytes);
+    const diff = diffLines(oldText, newText);
+    if (diff) diffHtml = diffLinesHtml(diff);
+    const basename = path.split("/").pop() ?? path;
+    const filechange = (changesetRung?.children ?? []).find((c) => !isRef(c) && (c.path === path || c.path.split("/").pop() === basename));
+    filechangeSummary = filechange && !isRef(filechange) ? filechange.summary : null;
+  }
+
   // Nested inside .blob-header, not a sibling block after it -- a
   // sibling would land in the gap between the header's rounded-top
   // border and the body's rounded-bottom one (the two only look like
@@ -2620,7 +2718,7 @@ async function handleBlob(slug: string, ref: string, path: string, request: Requ
     <span>${pathBreadcrumbHtml(slug, ref, path, false)}</span>
     ${head ? ` @ <a href="/${esc(slug)}/commit/${esc(head.hash)}" class="mono">${esc(head.hash.slice(0, 8))}</a>` : ""}
     <a href="/${esc(slug)}/download/${esc(ref)}/${esc(path)}" class="download-btn" download>Download</a>
-    ${ladderDetailHtml(await ladderRung)}
+    ${filechangeSummary ? summaryDetailHtml(filechangeSummary) : ladderDetailHtml(await ladderRung)}
   </div>`;
 
   if (looksBinary(bytes)) {
@@ -2628,6 +2726,11 @@ async function handleBlob(slug: string, ref: string, path: string, request: Requ
   }
 
   const text = new TextDecoder().decode(bytes);
+
+  if (diffHtml) {
+    return layout(path, me, `${headerHtml}<div class="blob-body"><div class="diff-body">${diffHtml}</div></div>`);
+  }
+
   // No extension at all (LICENSE, Dockerfile, Makefile, ...) -- hljs
   // treats an empty/unrecognized language class as a signal to run
   // its own auto-detection heuristic instead of rendering plain text,
