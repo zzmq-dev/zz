@@ -141,7 +141,7 @@ function laneTagHtml(laneId: string, repoSlug?: string): string {
   return `<a href="${href}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
 }
 
-/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracket characters themselves plain (inheriting .agent-id's own color), and just the substring INSIDE the brackets -- the part that actually distinguishes this actor in a scenario with several -- in .agent-name. A bare human login (no bracket at all) gets only .agent-id, never .agent-name too: there's no inner distinguishing name to set apart from the rest here, it IS the whole identifying part. */
+/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) and the bracket characters themselves both plain, inheriting .agent-id's own color -- only the substring INSIDE the brackets, the part that actually distinguishes this actor in a scenario with several, gets .agent-name. A bare human login (no bracket at all) gets only .agent-id, never .agent-name too: there's no inner distinguishing name to set apart from the rest here, it IS the whole identifying part. */
 function formatAgentId(username: string): string {
   const i = username.indexOf("[");
   // One wrapping <a> (not two sibling elements) so a flex row's own
@@ -149,7 +149,7 @@ function formatAgentId(username: string): string {
   if (i === -1) return `<a href="/${esc(username)}" class="agent-id">${esc(username)}</a>`;
   const login = username.slice(0, i);
   const inner = username.slice(i + 1, -1);
-  return `<a href="/${esc(username)}" class="agent-id"><span class="muted">${esc(login)}</span>[<span class="agent-name">${esc(inner)}</span>]</a>`;
+  return `<a href="/${esc(username)}" class="agent-id">${esc(login)}[<span class="agent-name">${esc(inner)}</span>]</a>`;
 }
 
 /** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
