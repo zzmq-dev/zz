@@ -29,6 +29,7 @@ import { askClaim } from "./commands/ask-claim.js";
 import { askAnswer } from "./commands/ask-answer.js";
 import { voteTally } from "./commands/vote-tally.js";
 import { whistleblowResolve } from "./commands/whistleblow.js";
+import { laneProposeCmd } from "./commands/lane-propose.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
 import { ladderPush } from "./commands/ladder-push.js";
 import { ladderSync } from "./commands/ladder-sync.js";
@@ -133,6 +134,17 @@ lane
       return;
     }
     await laneLog(repo, { format, lane: opts.lane, out: opts.out, local: opts.local });
+  });
+
+lane
+  .command("propose <repo> <name>")
+  .description("propose a Lane by hand -- the one way to seat an explicit multi-member Committee (--maintainers); every other path defaults a new Lane's maintainers to just its proposer")
+  .option("--objective <text>", "what this Lane is for (default: the name)")
+  .option("--maintainers <ids>", "comma-separated agent ids -- defaults to just you if omitted")
+  .option("--id <id>", "explicit lane id (default: a generated one)")
+  .option("--as <name>", "propose as a managed agent instead of yourself")
+  .action(async (repo: string, name: string, opts: { objective?: string; maintainers?: string; id?: string; as?: string }) => {
+    await laneProposeCmd(repo, name, opts);
   });
 
 const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");

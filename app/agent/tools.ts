@@ -363,10 +363,11 @@ const laneProposeTool: ToolDef = {
       origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
       id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the root Lane a repo\'s Ladder root rung anchors to.' },
+      maintainers: { type: "array", items: { type: "string" }, description: "Who may grant/deny a changeset_review, or (as this Lane's Committee) vote/veto -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee." },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
   },
-  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id }) {
+  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id, maintainers }) {
     const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? (repo as string), lane: origin_lane as string } : undefined;
     return proposeLane(repo as string, {
       id: (id as string) ?? shortId("lane"),
@@ -376,6 +377,7 @@ const laneProposeTool: ToolDef = {
       scope: scope as string[],
       proposedBy: actor as string,
       coordinators: [actor as string],
+      maintainers: maintainers as string[] | undefined,
       origin,
     });
   },
