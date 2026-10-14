@@ -16,6 +16,7 @@ import { readAnchor, isRef, type EmbeddedRung, type EmbeddedRef } from "../../en
 import { remoteCallTool, splitSlug } from "../lib/remoteTools.js";
 import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
 import { apiFetch } from "../lib/api.js";
+import { writeSyncState } from "../lib/syncState.js";
 
 /** Owner-only (handleApiSetIngestStatus checks this server-side); targetSlug's owner is always whoever's logged in here, since `zz repo create` (run right before this, same identity) always creates under the caller unless --owner names someone else -- not this command's concern either way, the server enforces it regardless. */
 async function setIngestStatus(targetSlug: string, status: "ready" | "ingesting"): Promise<void> {
@@ -64,14 +65,16 @@ function embedChildren(rung: EmbeddedRung, byPath: Map<string, EmbeddedRung>): (
   });
 }
 
-export async function ladderPush(sourceSlug: string, targetSlug: string): Promise<void> {
+/** markIngesting: false for ladder-sync.ts's own reuse of this function -- a routine sync of an already-ready repo shouldn't disappear from search every time it runs, only the one-time initial import should gate on it. */
+export async function ladderPush(sourceSlug: string, targetSlug: string, opts: { markIngesting?: boolean } = {}): Promise<void> {
+  const markIngesting = opts.markIngesting ?? true;
   const source = resolveRepo(sourceSlug);
   const identity = requireCredentials();
 
   // Left as "ingesting" (never reverted) if anything below throws --
   // an interrupted or failed push genuinely isn't ready, and that's
   // exactly the state a retry should start from too.
-  await setIngestStatus(targetSlug, "ingesting");
+  if (markIngesting) await setIngestStatus(targetSlug, "ingesting");
 
   console.error(`pushing ${sourceSlug}'s real git history to ${targetSlug}...`);
   const cloneUrl = authedCloneUrl(identity.apiBase, identity.token, targetSlug);
@@ -120,6 +123,10 @@ export async function ladderPush(sourceSlug: string, targetSlug: string): Promis
     done += batch.length;
     console.error(`  pushed ${done}/${payloads.length}`);
   }
-  await setIngestStatus(targetSlug, "ready");
+  if (markIngesting) await setIngestStatus(targetSlug, "ready");
+  // Baseline for `zz ladder sync`'s own "what's changed since" diff --
+  // written here so the very first sync after this push already has
+  // one, with no separate init step.
+  writeSyncState(source.stateDir, rootCommit);
   console.error("done.");
 }

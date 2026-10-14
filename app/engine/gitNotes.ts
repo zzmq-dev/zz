@@ -37,6 +37,17 @@ export async function resolvePathSha(repoDir: string, path: string): Promise<str
   }
 }
 
+/** Whether `path` currently names a directory at HEAD -- readAnchor's own read-side needs this to pick the right anchoring strategy for a path it has no Rung (and so no `kind`) for: a directory anchors to the repo's root commit (ladderNotes.ts's own anchorSha, same reasoning as "repo"), a file to its own blob sha, which only ever matters because the two differ at all. */
+export async function isDirectoryAtHead(repoDir: string, path: string): Promise<boolean> {
+  const oid = await headCommitOid(repoDir);
+  try {
+    await git.readTree({ fs, dir: repoDir, oid, filepath: path });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The repo's first commit (no parents) -- a fixed point that never changes
  * for the life of the repo, unlike HEAD. The anchor for repo-wide things

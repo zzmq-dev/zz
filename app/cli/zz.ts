@@ -28,6 +28,7 @@ import { repoSubmit } from "./commands/repo-submit.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
 import { ladderPush } from "./commands/ladder-push.js";
+import { ladderSync } from "./commands/ladder-sync.js";
 
 registerLocalBackendFactory(createLocalBackend);
 
@@ -101,6 +102,15 @@ ladder
   .description("one-time transfer of a locally-built Ladder (zz ladder build) onto a real remote repo: pushes the real git history, then replays every local rung via ladder_write_rung -- no model calls, no GitHub API calls, just reading back what zz ladder build already wrote")
   .action(async (localRepo: string, targetRepo: string) => {
     await ladderPush(localRepo, targetRepo);
+  });
+
+ladder
+  .command("sync <local-repo> <owner/repo>")
+  .description("keep an already-imported repo in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, picks up any new issues/PRs/releases/contributors/dependencies, then pushes the result -- run `zz ladder push` at least once first")
+  .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare -- same meaning as zz work --provider")
+  .option("--model <name>", "model name for whichever provider -- see zz work --help for each provider's own default")
+  .action(async (localRepo: string, targetRepo: string, opts: { provider?: Provider; model?: string }) => {
+    await ladderSync(localRepo, targetRepo, { provider: opts.provider, model: opts.model });
   });
 
 const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");

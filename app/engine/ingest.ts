@@ -198,6 +198,7 @@ interface FileCommitSummary {
   last: string;
   lastMessage: string;
   lastAuthor: string;
+  lastSha: string;
 }
 
 async function fileCommitSummary(repoDir: string, filepath: string): Promise<FileCommitSummary> {
@@ -209,6 +210,7 @@ async function fileCommitSummary(repoDir: string, filepath: string): Promise<Fil
     last: commits.length ? dateOf(commits[0]) : "",
     lastMessage: commits[0]?.commit.message.split("\n")[0] ?? "",
     lastAuthor: commits[0]?.commit.author.name ?? "",
+    lastSha: commits[0]?.oid ?? "",
   };
 }
 
@@ -231,6 +233,21 @@ export type DescribeFile = (path: string, content: string, mechanical: string) =
 
 const defaultDescribeFile: DescribeFile = async (_path, _content, mechanical) => mechanical;
 
+/** One iteration of walkFileTree's own loop, pulled out so a caller that already knows which single path it cares about (ladder-sync.ts's own re-summarize of a changed file) doesn't need a full tree walk just to redo one file. */
+export async function describeOneFile(repoDir: string, path: string, describeFile: DescribeFile = defaultDescribeFile): Promise<Rung> {
+  const summary = await fileCommitSummary(repoDir, path);
+  const mechanical = `${summary.count} commits, ${summary.first} to ${summary.last}. Last: "${summary.lastMessage}" (${summary.lastAuthor}).`;
+  const content = await readFileSafe(join(repoDir, path));
+  const described = await describeFile(path, content, mechanical);
+  return {
+    path,
+    kind: "file",
+    summary: described,
+    sources: summary.count ? [{ kind: "commit", ref: summary.lastSha, title: summary.lastMessage, author: summary.lastAuthor, at: summary.last }] : [],
+    children: [],
+  };
+}
+
 /**
  * Walks the tracked file tree at HEAD and builds one file/directory Rung
  * per path, each sourced from that file's commit history (count, date
@@ -252,17 +269,7 @@ export async function walkFileTree(repoDir: string, describeFile: DescribeFile =
 
   const fileRungs = new Map<string, Rung>();
   for (const p of paths) {
-    const summary = await fileCommitSummary(repoDir, p);
-    const mechanical = `${summary.count} commits, ${summary.first} to ${summary.last}. Last: "${summary.lastMessage}" (${summary.lastAuthor}).`;
-    const content = await readFileSafe(join(repoDir, p));
-    const described = await describeFile(p, content, mechanical);
-    fileRungs.set(p, {
-      path: p,
-      kind: "file",
-      summary: described,
-      sources: summary.count ? [{ kind: "commit", ref: "HEAD", title: summary.lastMessage, author: summary.lastAuthor, at: summary.last }] : [],
-      children: [],
-    });
+    fileRungs.set(p, await describeOneFile(repoDir, p, describeFile));
   }
 
   const dirRungs = new Map<string, Rung>();

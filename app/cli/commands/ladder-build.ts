@@ -52,7 +52,7 @@ const COORDINATOR = process.env.ZZ_COORDINATOR ?? "zz-coordinator";
  * agent plays both sides -- this is the bootstrap single-actor case the
  * plan describes, not a shortcut around the protocol.
  */
-async function runItemLane(
+export async function runItemLane(
   repoDir: string,
   stateDir: string,
   input: { id: string; repo: string; name: string; objective: string; scope: string[]; origin: LaneRef },
@@ -69,7 +69,7 @@ async function runItemLane(
   await mergeLaneLadder(input.repo, laneLadder);
 }
 
-async function isPresent(repoDir: string, stateDir: string, path: string): Promise<boolean> {
+export async function isPresent(repoDir: string, stateDir: string, path: string): Promise<boolean> {
   return (await readAnchor(repoDir, stateDir, path)) !== null;
 }
 
@@ -86,7 +86,7 @@ ${thread || "(no comments)"}
 Summary:`;
 }
 
-async function buildAskFromIssue(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, i: IssueRow): Promise<void> {
+export async function buildAskFromIssue(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, i: IssueRow): Promise<void> {
   const path = `asks/${i.number}`;
   if (await isPresent(repoDir, stateDir, path)) return;
   const outcome = i.state === "closed" ? "closed" : "open";
@@ -97,7 +97,7 @@ async function buildAskFromIssue(repoDir: string, stateDir: string, origin: Lane
   });
 }
 
-async function buildAskFromPr(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, p: PrRow): Promise<void> {
+export async function buildAskFromPr(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, p: PrRow): Promise<void> {
   const path = `asks/${p.number}`;
   if (await isPresent(repoDir, stateDir, path)) return;
   const outcome = p.merged_at ? "merged" : p.state === "closed" ? "closed without merging" : "open";
@@ -108,7 +108,7 @@ async function buildAskFromPr(repoDir: string, stateDir: string, origin: LaneRef
   });
 }
 
-async function buildRelease(repoDir: string, stateDir: string, origin: LaneRef, slug: string, r: ReleaseRow): Promise<void> {
+export async function buildRelease(repoDir: string, stateDir: string, origin: LaneRef, slug: string, r: ReleaseRow): Promise<void> {
   const path = `releases/${r.tag_name}`;
   if (await isPresent(repoDir, stateDir, path)) return;
   await runItemLane(repoDir, stateDir, { id: `release-${r.tag_name}`, repo: slug, name: `onboard release ${r.tag_name}`, objective: r.tag_name, scope: [path], origin }, async () => {
@@ -118,7 +118,7 @@ async function buildRelease(repoDir: string, stateDir: string, origin: LaneRef, 
   });
 }
 
-async function buildContributor(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, c: ContributorRow): Promise<void> {
+export async function buildContributor(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, c: ContributorRow): Promise<void> {
   const path = `contributors/${c.login}`;
   if (await isPresent(repoDir, stateDir, path)) return;
   await runItemLane(repoDir, stateDir, { id: `contributor-${c.login}`, repo: slug, name: `onboard contributor ${c.login}`, objective: c.login, scope: [path], origin }, async () => {
@@ -130,7 +130,7 @@ async function buildContributor(repoDir: string, stateDir: string, origin: LaneR
   });
 }
 
-async function buildDependency(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, name: string, versionRange: string): Promise<void> {
+export async function buildDependency(repoDir: string, stateDir: string, origin: LaneRef, slug: string, model: ModelBackend, name: string, versionRange: string): Promise<void> {
   const path = `dependencies/${name}`;
   if (await isPresent(repoDir, stateDir, path)) return;
   await runItemLane(repoDir, stateDir, { id: `dependency-${name}`, repo: slug, name: `onboard dependency ${name}`, objective: name, scope: [path], origin }, async () => {
@@ -142,24 +142,27 @@ async function buildDependency(repoDir: string, stateDir: string, origin: LaneRe
   });
 }
 
+/** The repo's own long-lived Lane: proposed once, transitioned to active, and never merged -- everything onboarded under a repo (the file tree, every ask/release/contributor/dependency, and ladder-sync.ts's own re-summarize-a-changed-file writes) has it as origin. Idempotent: a second call (ladder-sync.ts, run against an already-built repo) finds the existing Lane via readLane and reuses it rather than proposing a duplicate. */
+export async function resolveRepoLaneOrigin(slug: string, stateDir: string): Promise<LaneRef> {
+  let repoLane = readLane(stateDir, REPO_RUNG_PATH);
+  if (!repoLane) {
+    repoLane = await proposeLane(slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    const review = await ask(slug, repoLane.id, { kind: "review_request", from: AGENT });
+    await answer(slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
+  }
+  return { repo: slug, lane: repoLane.id };
+}
+
 export async function ladderBuild(slug: string, options: BuildOptions): Promise<void> {
   const repo = resolveRepo(slug);
   ensureCloned(repo);
   const model = await resolveModelBackend(options.provider, options.model);
   console.error(`model backend: ${model.name}`);
 
-  // The repo is its own long-lived Lane: proposed once, transitioned to
-  // active, and never merged -- everything else onboarded below has it
-  // as origin.
-  let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
-  if (!repoLane) {
-    repoLane = await proposeLane(slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
-    const review = await ask(slug, repoLane.id, { kind: "review_request", from: AGENT });
-    await answer(slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
-  }
-  const origin: LaneRef = { repo: slug, lane: repoLane.id };
+  const origin = await resolveRepoLaneOrigin(slug, repo.stateDir);
 
-  if (!(await isPresent(repo.repoDir, repo.stateDir, REPO_RUNG_PATH)) || options.force) {
+  const repoAlreadyPresent = await isPresent(repo.repoDir, repo.stateDir, REPO_RUNG_PATH);
+  if (!repoAlreadyPresent || options.force) {
     console.error("describing the file tree (one Lane for the whole tree; a model call per file)...");
     let done = 0;
     await runItemLane(repo.repoDir, repo.stateDir, { id: "file-tree", repo: slug, name: "describe the file tree", objective: "describe every tracked file and directory", scope: ["**"], origin }, async () => {
@@ -170,6 +173,17 @@ export async function ladderBuild(slug: string, options: BuildOptions): Promise<
         const described = await model.summarize(`Describe in 1-3 sentences what this file does, based on its content below. Name exported functions/classes by name.\n\nFile: ${path}\n---\n${content.slice(0, 6000)}\n---\nSummary:`);
         return described ?? mechanical;
       });
+      // Only the very first build writes "_repo" itself -- its own
+      // summary is a static string that never needs updating, and
+      // mergeLaneLadder/writeLadder overwrite a rung's children
+      // wholesale, not merge them. Including a fresh, empty-children
+      // root in this SAME batch on a --force rebuild of an
+      // already-onboarded repo would wipe out every ask/release/
+      // contributor/dependency path already appended to it since
+      // (confirmed live: it did, until this check existed) --
+      // topLevel alone still gets correctly appended either way via
+      // mergeLaneLadder's own appendRepoChildren call.
+      if (repoAlreadyPresent) return topLevel;
       const root: Rung = { path: REPO_RUNG_PATH, kind: "repo", summary: `${slug}, onboarded via \`zz ladder build\`.`, sources: [], children: [] };
       return [root, ...topLevel];
     });

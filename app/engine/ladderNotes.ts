@@ -8,7 +8,7 @@
 // while still letting you read "everything about this one file" or "this
 // whole ask thread" in a single note.
 import type { Rung, RungKind, RungSource } from "./ladder.js";
-import { resolvePathSha, resolveRootCommit, writeNote, readNote, expandOid } from "./gitNotes.js";
+import { resolvePathSha, resolveRootCommit, writeNote, readNote, expandOid, isDirectoryAtHead } from "./gitNotes.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -28,14 +28,55 @@ const REPO_WIDE_ROOT_KINDS = new Set<RungKind>(["ask", "contributor", "dependenc
 // easily contain (a bot login like "dependabot[bot]" has brackets). Applied
 // consistently on both write and read (both go through this function with
 // the same input path), so the mapping stays stable even though it's lossy.
+// git's own ref-name rules reject more than just the characters the
+// first replace already strips: no path component may start with "."
+// (confirmed live: a real top-level ".zz" directory -- not unusual at
+// all, plenty of real repos have dotfiles/dotdirs -- produced
+// "refs/notes/zz/ladder/dir/.zz", which git refused outright) or
+// contain "..". Applied per "/"-separated component, not to the whole
+// string at once, since a leading "." is only invalid at the START of
+// a component, not wherever it happens to appear overall.
 function sanitizeRefSegment(segment: string): string {
-  return segment.replace(/[^A-Za-z0-9._/-]/g, "-");
+  return segment
+    .replace(/[^A-Za-z0-9._/-]/g, "-")
+    .split("/")
+    .map((part) => part.replace(/^\.+/, "_").replace(/\.\./g, "_"))
+    .join("/");
 }
 
 function notesRef(kind: RungKind, path: string): string {
   if (REPO_WIDE_ROOT_KINDS.has(kind)) return `refs/notes/zz/ladder/${sanitizeRefSegment(path)}`;
   if (kind === "release") return "refs/notes/zz/ladder/release";
   if (kind === "changeset") return "refs/notes/zz/ladder/changeset";
+  // Git notes hold exactly one note per (ref, oid) pair -- a directory
+  // anchors to the repo's own root commit oid now (anchorSha's own
+  // comment), the SAME oid "_repo" itself anchors to, so sharing the
+  // generic "code" ref here would collide the two (and every directory
+  // with every other) onto one slot, each write silently clobbering
+  // whichever was there before. Confirmed live: every directory read
+  // back as "_repo"'s own content once this collision existed. A
+  // path-specific ref, same shape REPO_WIDE_ROOT_KINDS already uses
+  // for exactly this reason, keeps each directory (and "_repo" itself,
+  // on the unprefixed "code" ref) in its own slot despite sharing an
+  // oid. No remote-side cost to this -- unlike cloudflareLadderBackend.ts's
+  // own deliberate ref-sharing (one network fetch per distinct ref),
+  // a local note lives in the already-cloned repo, so more local refs
+  // cost nothing extra.
+  //
+  // The path's own "/" separators can't survive into the ref name,
+  // though, the way REPO_WIDE_ROOT_KINDS's flat "asks/<n>"/
+  // "contributors/<login>" paths safely do -- a directory path is
+  // inherently hierarchical (app, app/agent, app/cli, ...), and git's
+  // own loose-ref storage is a real filesystem tree where a ref name
+  // can't be a path-prefix of another ref name. refs/notes/zz/ladder/
+  // dir/app and refs/notes/zz/ladder/dir/app/agent can't coexist --
+  // the first IS a file at the path the second needs to be a
+  // directory. Confirmed live: "ENOTDIR: not a directory" the moment
+  // a repo had any directory with a subdirectory of its own, which is
+  // every real repo past one level deep. Flattening "/" to "__" first
+  // makes every directory's ref a flat sibling under dir/, with no
+  // ref ever a prefix of another.
+  if (kind === "directory") return `refs/notes/zz/ladder/dir/${sanitizeRefSegment(path.replace(/\//g, "__"))}`;
   return "refs/notes/zz/ladder/code";
 }
 
@@ -121,8 +162,17 @@ async function anchorSha(repoDir: string, stateDir: string, rung: Rung): Promise
   // changes on every commit, which would silently orphan _repo's note
   // (and everything registered under it) on the very next commit in any
   // repo under live development, not just a one-time onboarding pass.
-  if (rung.kind === "repo") return cachedRootCommit(repoDir);
-  if (rung.kind === "file" || rung.kind === "directory") {
+  // "directory" has the exact same problem -- its own tree sha changes
+  // whenever ANY file inside it changes, anywhere in its subtree, not
+  // just a direct child -- and used to anchor there anyway (confirmed
+  // live: ladder-sync.ts's own first real incremental run silently
+  // orphaned every directory note that had a changed file under it,
+  // making the whole subtree unreadable). A directory's own summary
+  // ("N entries: ...") isn't tied to any one file's content either, so
+  // there's nothing lost anchoring it the same stable way "repo" (and
+  // every REPO_WIDE_ROOT_KINDS entry) already does.
+  if (rung.kind === "repo" || rung.kind === "directory") return cachedRootCommit(repoDir);
+  if (rung.kind === "file") {
     const sha = await resolvePathSha(repoDir, rung.path);
     if (!sha) throw new Error(`${rung.path}: not found in the repo at HEAD`);
     return sha;
@@ -190,6 +240,17 @@ export async function readAnchor(repoDir: string, stateDir: string, path: string
     const sha = readIndex(stateDir)[path];
     if (!sha) return null;
     return readNote<EmbeddedRung>(repoDir, notesRef("changeset", path), sha);
+  }
+  // A directory anchors to the repo's root commit now (anchorSha's own
+  // reasoning: its tree sha changes whenever any file anywhere under
+  // it changes, which would orphan the note on the very next unrelated
+  // commit) -- checked before the file case below, since a directory
+  // path would otherwise fall through to resolvePathSha's own
+  // blob-then-tree fallback and get misread as a file-kind note that
+  // was never written at that sha.
+  if (await isDirectoryAtHead(repoDir, path)) {
+    const sha = await cachedRootCommit(repoDir);
+    return readNote<EmbeddedRung>(repoDir, notesRef("directory", path), sha);
   }
   const fileSha = await resolvePathSha(repoDir, path);
   if (fileSha) return readNote<EmbeddedRung>(repoDir, notesRef("file", path), fileSha);
