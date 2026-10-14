@@ -204,7 +204,11 @@ async function runClaimedAsk(
     return;
   }
   if (theAsk.kind === "submit_changeset") {
-    await runCoordinatorSubmitChangeset({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
+    // Same reason "work" passes this (above): a changeset submitted
+    // from a task shard carries a baseCommit that only exists in the
+    // shard's own git history, which the three-way merge below needs
+    // fetched into this repo's local clone first.
+    await runCoordinatorSubmitChangeset({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall, authedCloneUrlFor: identity ? (slug: string) => authedCloneUrl(identity.apiBase, identity.token, slug) : undefined });
     statusRef.current = baseStatus;
     return;
   }
@@ -214,7 +218,10 @@ async function runClaimedAsk(
     return;
   }
   if (theAsk.kind === "changeset_review") {
-    await runChangesetReview({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall });
+    // Lets its own review-prep step clone the real task shard
+    // (scriptedWork.ts's own doc comment on this) instead of silently
+    // falling back to the parent repo when one exists.
+    await runChangesetReview({ resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool: remoteCall, authedCloneUrlFor: identity ? (slug: string) => authedCloneUrl(identity.apiBase, identity.token, slug) : undefined });
     statusRef.current = baseStatus;
     return;
   }

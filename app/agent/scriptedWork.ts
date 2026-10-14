@@ -663,12 +663,26 @@ function parseSummaries(text: string): { perFile: Map<string, string>; changeset
 }
 
 export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): Promise<void> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool, authedCloneUrlFor } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
 
-  const payload = theAsk.payload as ChangesetPayload;
+  const payload = theAsk.payload as ChangesetPayload & { source_repo?: string };
+
+  // baseCommit was read as the task SHARD's own HEAD (postForReview's
+  // caller), not the origin's -- when this changeset came from a
+  // shard, that commit only exists in the shard's own git history.
+  // threeWayMerge below diffs it against resolved.repoDir (the
+  // ORIGIN's local clone), which never has those objects unless
+  // fetched first. Confirmed live: a self-merge (Stage 3, maintainer
+  // reviewing/merging its own sharded work) failed here with git's own
+  // "fatal: bad object" on exactly the second changeset in a row --
+  // the first one's objects happened to already be reachable from a
+  // prior fetch, the second one's weren't.
+  if (payload.source_repo && authedCloneUrlFor) {
+    execFileSync("git", ["-C", resolved.repoDir, "fetch", "--quiet", authedCloneUrlFor(payload.source_repo), "main"], { stdio: "inherit" });
+  }
 
   // A real line-level 3-way merge first (git's own merge-file), not
   // symbol-name comparison -- most "conflicts" aren't conflicts at

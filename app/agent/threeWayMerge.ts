@@ -61,11 +61,17 @@ export function threeWayMerge(repoDir: string, baseSha: string, proposalFiles: {
         const merged = execFileSync("git", ["merge-file", "-p", "--diff3", oursPath, basePath, theirsPath], { encoding: "utf8" });
         files.push({ path: f.path, content: merged });
       } catch (err) {
-        const e = err as { status?: number; stdout?: string };
-        if (e.status === 1 && typeof e.stdout === "string") {
+        // git merge-file's exit code is the NUMBER of conflicting
+        // hunks it found, not a fixed 0/1 -- confirmed directly (two
+        // separate conflicting regions in one file exits 2, not 1).
+        // Only a negative status is a real error (git itself failing
+        // to run, not a merge outcome); anything positive with real
+        // stdout is conflict markers to hand back, however many hunks.
+        const e = err as { status?: number; stdout?: string; stderr?: string; message?: string };
+        if (typeof e.status === "number" && e.status > 0 && typeof e.stdout === "string") {
           conflicts.push({ path: f.path, markedContent: e.stdout });
         } else {
-          throw err;
+          throw new Error(`git merge-file failed on "${f.path}" (status ${e.status}): ${e.stderr || e.message || String(err)}`);
         }
       }
     }
