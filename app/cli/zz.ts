@@ -26,6 +26,9 @@ import { agentCreate, agentToken, agentList } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
 import { askClaim } from "./commands/ask-claim.js";
+import { askAnswer } from "./commands/ask-answer.js";
+import { voteTally } from "./commands/vote-tally.js";
+import { whistleblowResolve } from "./commands/whistleblow.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
 import { ladderPush } from "./commands/ladder-push.js";
 import { ladderSync } from "./commands/ladder-sync.js";
@@ -153,6 +156,37 @@ askCmd
   .option("--as <name>", "claim as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await askClaim(repo, askId, opts);
+  });
+
+askCmd
+  .command("answer <repo> <ask-id> <action>")
+  .description('answer an Ask by hand -- action is "complete", "deny", "veto" (a changeset_review only, sets the Lane "vetoed"), or "vote" (a vote_request only, payload { ballot: "+1"|"+0"|"-0"|"-1" })')
+  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--as <name>", "answer as a managed agent instead of yourself")
+  .option("--payload <json>", "raw JSON payload -- a veto's reason, a vote's ballot, a complete's result, etc.")
+  .action(async (repo: string, askId: string, action: string, opts: { lane?: string; as?: string; payload?: string }) => {
+    await askAnswer(repo, askId, action, opts);
+  });
+
+askCmd
+  .command("vote-tally <repo> <ask-id>")
+  .description("count ballots on a vote_request and close it once every maintainer has voted (and, if approved and it was a Policy change, apply it)")
+  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--as <name>", "act as a managed agent instead of yourself")
+  .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
+    await voteTally(repo, askId, opts);
+  });
+
+askCmd
+  .command("whistleblow <repo> <ask-id>")
+  .description("close a whistleblow Ask and run the incident runbook: STOP this Lane, DROP the reported Agent's other pending Asks in it, and ROLL back --target-commit if given")
+  .requiredOption("--target-agent <id>", "the Agent the report is about")
+  .requiredOption("--reason <text>", "why")
+  .option("--target-commit <sha>", "an already-merged commit to revert, if any")
+  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--as <name>", "act as a managed agent instead of yourself (must be this Lane's coordinator)")
+  .action(async (repo: string, askId: string, opts: { lane?: string; as?: string; targetAgent: string; targetCommit?: string; reason: string }) => {
+    await whistleblowResolve(repo, askId, opts);
   });
 
 program
