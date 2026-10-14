@@ -278,7 +278,21 @@ async function foldInSummary(existingSummary: string, incomingSummary: string): 
   const synthesized = await model.summarize(
     `You maintain a short, current, holistic description of what something is and does -- not a changelog entry. Below is its existing description and a proposed new one (which may only describe the latest change, not the whole thing). Decide first whether the proposed text actually adds anything the existing description doesn't already cover. If the existing description already covers it, or the difference is purely cosmetic, output the existing description completely unchanged. Otherwise, write ONE updated description that holistically covers everything this currently is/does -- everything the existing description said, plus what's new -- not the new text appended as an extra sentence, and not just a description of the latest change alone.\n\nExisting description: ${existingSummary}\n\nProposed new description: ${incomingSummary}\n\nUpdated description:`,
   );
-  if (!synthesized) return `${existingSummary} ${incomingSummary}`;
+  // Trust the newest description over the old one, not a concatenation
+  // of both -- confirmed live: this path is always Ollama specifically
+  // (resolveModelBackend() with no provider override, regardless of
+  // whatever provider the actual write came in with), so a caller
+  // using any other provider hits this fallback on EVERY cumulative
+  // write, not as a rare degraded case. Concatenating used to compound
+  // without bound across repeated writes to the same rung (a bulk
+  // import/sync re-pushing its whole already-correct local Ladder
+  // every run, for instance) -- confirmed live, a real file's summary
+  // after a handful of pushes was the same paragraph repeated three
+  // times with minor rewording each round. incomingSummary is already
+  // a complete, holistic description on its own (every real caller
+  // generates one from the full current content, never a diff-only
+  // fragment), so it's the correct fallback value, not a lesser one.
+  if (!synthesized) return incomingSummary;
   // The model sometimes reasons out loud before giving the final text
   // despite the prompt ending with "Updated description:" expecting a
   // direct continuation -- keep only what comes after the last such

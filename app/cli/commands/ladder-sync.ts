@@ -78,7 +78,7 @@ export async function ladderSync(sourceSlug: string, targetSlug: string, options
           .filter(Boolean)
           .map((p): [string, string] => ["A", p]);
 
-    const changed = diffLines.filter(([status]) => status === "A" || status === "M").map(([, path]) => path);
+    const changed = diffLines.filter(([status]) => status === "A" || status === "M");
     const deleted = diffLines.filter(([status]) => status === "D").map(([, path]) => path);
     if (deleted.length > 0) {
       console.error(`${deleted.length} file(s) deleted since the last sync -- NOT removed from the Ladder (no delete primitive exists for a rung yet): ${deleted.slice(0, 10).join(", ")}${deleted.length > 10 ? ", ..." : ""}`);
@@ -86,11 +86,35 @@ export async function ladderSync(sourceSlug: string, targetSlug: string, options
 
     console.error(`${changed.length} file(s) added or changed -- re-summarizing...`);
     let done = 0;
-    for (const path of changed) {
+    for (const [status, path] of changed) {
+      // A brand-new file (or the first sync ever, with no baseline to
+      // diff against at all) has nothing existing to fold a change
+      // into -- describing what it holistically does is the right
+      // (and only sensible) summary there, same as a fresh `zz ladder
+      // build` would write. A genuinely MODIFIED file is different:
+      // describeOneFile's own default prompt re-describes the WHOLE
+      // file from scratch, independent of whatever's already stored
+      // remotely -- fold-in (ladder_write_rung's own, unconditional,
+      // unchanged here) then has to reconcile two independently-
+      // generated full descriptions of the same file with no "this is
+      // what's new" framing to work from. Confirmed live: across a
+      // handful of repeated builds+pushes, that produced the same
+      // paragraph restated three times with minor rewording each
+      // round, not a clean merge. Describing just the diff instead --
+      // what a changeset's own filechange rung already does for the
+      // live agent protocol's commits -- gives fold-in an actual
+      // change to incorporate into the existing holistic summary,
+      // which is the whole reason it exists.
+      const isModified = status === "M" && state;
       await runItemLane(repo.repoDir, repo.stateDir, { id: `resync-${path}`, repo: repo.slug, name: `re-sync ${path}`, objective: path, scope: [path], origin }, () =>
         describeOneFile(repo.repoDir, path, async (p, content, mechanical) => {
           if (!content.trim()) return mechanical;
-          const described = await model.summarize(`Describe in 1-3 sentences what this file does, based on its content below. Name exported functions/classes by name.\n\nFile: ${p}\n---\n${content.slice(0, 6000)}\n---\nSummary:`);
+          if (!isModified) {
+            const described = await model.summarize(`Describe in 1-3 sentences what this file does, based on its content below. Name exported functions/classes by name.\n\nFile: ${p}\n---\n${content.slice(0, 6000)}\n---\nSummary:`);
+            return described ?? mechanical;
+          }
+          const diffText = execFileSync("git", ["-C", repo.repoDir, "diff", "--unified=2", state!.lastSyncedCommit, head, "--", p], { encoding: "utf8" });
+          const described = await model.summarize(`Describe in 1-2 sentences what changed in this diff -- the change itself, not what the whole file does now. Name any function/export added, removed, or modified.\n\nFile: ${p}\n---\n${diffText.slice(0, 4000)}\n---\nWhat changed:`);
           return described ?? mechanical;
         }),
       );
