@@ -141,19 +141,15 @@ function laneTagHtml(laneId: string, repoSlug?: string): string {
   return `<a href="${href}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
 }
 
-/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracketed agent name -- the part that actually distinguishes this actor in a scenario with several -- at full, slightly tinted contrast. A bare human login (no bracket) renders plain, unsplit. */
+/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracket characters themselves plain (inheriting .agent-id's own color), and just the substring INSIDE the brackets -- the part that actually distinguishes this actor in a scenario with several -- in .agent-name. A bare human login (no bracket at all) gets only .agent-id, never .agent-name too: there's no inner distinguishing name to set apart from the rest here, it IS the whole identifying part. */
 function formatAgentId(username: string): string {
   const i = username.indexOf("[");
-  // Always one wrapping span -- a flex row's own `gap` (`.row`) applies
-  // between every direct child, so without this, the login part and
-  // the bracketed name rendered as two siblings picked up an extra gap
-  // between them that no other two-word pairing on the row gets. A
-  // bare human login (no bracket at all) gets the same highlight the
-  // bracketed name would -- it IS the whole identifying part here, not
-  // secondary provenance the way a managed agent's login prefix is.
-  if (i === -1) return `<a href="/${esc(username)}" class="agent-id agent-name">${esc(username)}</a>`;
+  // One wrapping <a> (not two sibling elements) so a flex row's own
+  // `gap` (`.row`) only ever applies around the whole id, not inside it.
+  if (i === -1) return `<a href="/${esc(username)}" class="agent-id">${esc(username)}</a>`;
   const login = username.slice(0, i);
-  return `<a href="/${esc(username)}" class="agent-id"><span class="muted">${esc(login)}</span><span class="agent-name">${esc(username.slice(i))}</span></a>`;
+  const inner = username.slice(i + 1, -1);
+  return `<a href="/${esc(username)}" class="agent-id"><span class="muted">${esc(login)}</span>[<span class="agent-name">${esc(inner)}</span>]</a>`;
 }
 
 /** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
@@ -435,18 +431,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
 .kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.8em}
-/* An agent id's own distinctive frame -- corner brackets, not a pill,
-   since the login/bracketed-name split inside (login muted, name at
-   full pink) is already doing the "two parts" visual work; the
-   brackets just mark the whole thing as one identifier. This used to
-   be the Ladder rung kind's own look (.rung-bracket); rungs now get
-   the hexagonal .rung shape below instead, and this moved here. */
-.agent-id{display:inline-block;vertical-align:middle;position:relative;text-decoration:none;font-family:var(--mono);padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
-.agent-id::before,.agent-id::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:rgba(255,46,146,.55);border-style:solid}
-.agent-id::before{left:0;border-width:2px 0 2px 2px}
-.agent-id::after{right:0;border-width:2px 2px 2px 0}
-.agent-id:hover .agent-name{text-decoration:underline}
-.agent-name{color:var(--pink)}
+.agent-id{color:var(--pink);text-decoration:none}
+.agent-id:hover{text-decoration:underline}
+.agent-name{color:darkslategray}
 .ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
 .ask-id-link:hover{text-decoration:none;border-bottom-style:solid}
 .ask-answer-row{margin:.6rem 0 0 1.25rem;padding-left:.6rem;border-left:2px solid rgba(255,255,255,.12)}
@@ -502,7 +489,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    corner crosshairs instead of a solid pill border -- the role name's
    own color (its existing badge-variant semantics) carries the
    meaning; the crosshairs just mark it as a distinct kind of token. */
-.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.85rem;padding:.2em .6em;margin:0 .2em}
+.scope{display:inline-block;vertical-align:middle;position:relative;font-family:var(--mono);font-size:.85rem;padding:.2em .6em;margin:0 .2em;background:rgba(92,141,255,.15);border-radius:4px}
 .scope::before,.scope::after{content:"";position:absolute;width:4px;height:6px;border-color:var(--muted);border-style:solid}
 .scope::before{top:0;left:0;border-width:1px 0 0 1px}
 .scope::after{bottom:0;right:0;border-width:0 1px 1px 0}
@@ -870,7 +857,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       return layout(
         "Logged in",
         agent,
-        `<div class="card"><p>Logged in as <b class="mono">${esc(agent.username)}</b>. You can close this tab and return to your terminal.</p></div>`,
+        `<div class="card"><p>Logged in as ${formatAgentId(agent.username)}. You can close this tab and return to your terminal.</p></div>`,
       );
     }
   }
@@ -891,7 +878,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       "Welcome",
       agent,
       `<div class="card stack">
-         <p>Logged in as <b class="mono">${esc(agent.username)}</b>. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
+         <p>Logged in as ${formatAgentId(agent.username)}. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
          <div class="clone-row"><pre>${esc(plaintext)}</pre><button class="secondary icon-btn" data-copy="${esc(plaintext)}" title="Copy">⧉</button></div>
          <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
        </div>`,
@@ -1755,7 +1742,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
     .flatMap((a, i) => tokenLists[i].filter((t) => !t.revoked_at).map((t) => ({ agent: a, token: t })))
     .map(
       ({ agent, token }) =>
-        `<li class="row"><b class="mono">${esc(agent.username)}</b> <span class="mono">${esc(token.id)}</span> <span class="muted">${token.last_used_at ? `last used ${esc(token.last_used_at)}` : "never used"}</span>
+        `<li class="row">${formatAgentId(agent.username)} <span class="mono">${esc(token.id)}</span> <span class="muted">${token.last_used_at ? `last used ${esc(token.last_used_at)}` : "never used"}</span>
           <form method="post" action="/profile/tokens/${token.id}/revoke" class="inline"><button type="submit" class="danger">Revoke</button></form></li>`,
     )
     .join("");
@@ -1835,7 +1822,7 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
       "New token",
       me,
       `<div class="card stack">
-         <p>Token for <b class="mono">${esc(agent.username)}</b> -- copy it now, it won't be shown again:</p>
+         <p>Token for ${formatAgentId(agent.username)} -- copy it now, it won't be shown again:</p>
          <div class="clone-row"><pre>${esc(token)}</pre><button class="secondary icon-btn" data-copy="${esc(token)}" title="Copy">⧉</button></div>
          <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
        </div>
@@ -2364,7 +2351,7 @@ async function listShardTreeFlat(env: WebEnv, rootSlug: string): Promise<RepoRow
 }
 
 function agentResultHtml(a: Agent): string {
-  return `<li class="row"><span class="badge badge-cyan">USER</span> <a href="/${esc(a.username)}" class="mono">${esc(a.username)}</a>${a.display_name && a.display_name !== a.username ? ` <span class="desc muted">${esc(a.display_name)}</span>` : ""}</li>`;
+  return `<li class="row"><span class="badge badge-cyan">USER</span> ${formatAgentId(a.username)}${a.display_name && a.display_name !== a.username ? ` <span class="desc muted">${esc(a.display_name)}</span>` : ""}</li>`;
 }
 
 // A Ladder hit is a fundamentally different shape than a repo/user
@@ -2644,7 +2631,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const fileListHtml = fileListRowsHtml(slug, info.defaultBranch, "", tree);
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row"><a href="/${esc(g.principal)}" class="mono">${esc(g.principal)}</a>${roleBadge(g.role)}</li>`).join("");
+  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row">${formatAgentId(g.principal)}${roleBadge(g.role)}</li>`).join("");
   const visibility = meta?.policy.visibility ?? "public";
   const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
   const tracking = !isOwner && (await trackingCheck);
@@ -2831,7 +2818,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   const roleRows = (roles?.grants ?? [])
     .map(
       (g) => `<li class="row">
-        <span class="mono">${esc(g.principal)}</span>
+        ${formatAgentId(g.principal)}
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
