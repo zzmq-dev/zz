@@ -31,8 +31,10 @@ export interface ReviewOptions {
   repos?: string[];
   pollMs?: number;
   local?: boolean;
-  /** --ask <id>: review this one changeset_review and exit, instead of the default wait loop. For a one-off command-line step (a demo's own script, a CI-adjacent gate) where there's exactly one known ask to act on -- the loop mode is for a human sitting at a terminal, continuously reviewing whatever shows up next. */
+  /** --ask <id>: review this one changeset_review and exit, instead of the default wait loop. For a one-off command-line step (a demo's own script, a CI-adjacent gate) where there's exactly one known ask to act on -- the loop mode is for a human sitting at a terminal, continuously reviewing whatever shows up next. Takes precedence over --no-wait if both are somehow given. */
   askId?: string;
+  /** --no-wait: review everything currently claimable, one at a time same as the loop, then exit once the queue is empty -- instead of idling and rechecking forever. For draining a batch in one sitting (a demo's own script working through several asks) without knowing every ask's id up front the way --ask requires. */
+  noWait?: boolean;
 }
 
 interface ChangesetReviewPayload {
@@ -137,18 +139,20 @@ export async function review(options: ReviewOptions): Promise<void> {
     return "denied";
   };
 
-  // --ask <id>: do that one review and exit, instead of the wait loop
-  // below -- the one-off command-line step this option exists for
-  // (e.g. a demo's own script) has exactly one known ask to act on and
-  // nothing to wait for afterward.
-  const oneOff = async (): Promise<void> => {
-    const claimable = (
+  const claimableChangesetReviews = async () =>
+    (
       await claimableAcrossRepos(
         resolvedRepos.map((r) => ({ repo: r.slug })),
         config.agent,
       )
     ).filter((c) => c.ask.kind === "changeset_review");
-    const next = claimable.find((c) => c.ask.id === options.askId);
+
+  // --ask <id>: do that one review and exit, instead of the wait loop
+  // below -- the one-off command-line step this option exists for
+  // (e.g. a demo's own script) has exactly one known ask to act on and
+  // nothing to wait for afterward.
+  const oneOff = async (): Promise<void> => {
+    const next = (await claimableChangesetReviews()).find((c) => c.ask.id === options.askId);
     if (!next) {
       console.error(`no open changeset_review ask "${options.askId}" found across ${config.repos.join(", ")} -- already answered, claimed by someone else, or not a changeset_review?`);
       process.exitCode = 1;
@@ -157,27 +161,35 @@ export async function review(options: ReviewOptions): Promise<void> {
     await reviewOne(next);
   };
 
-  const mainLoop = async (): Promise<void> => {
-    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
+  // --no-wait: work through everything currently claimable, same one-
+  // at-a-time prompt as the wait loop below, then exit on the first
+  // empty poll instead of idling and rechecking forever -- for draining
+  // a whole batch in one sitting without knowing every ask's id the
+  // way --ask requires.
+  const drainLoop = async (): Promise<void> => {
     for (;;) {
-      const claimable = (
-        await claimableAcrossRepos(
-          resolvedRepos.map((r) => ({ repo: r.slug })),
-          config.agent,
-        )
-      ).filter((c) => c.ask.kind === "changeset_review");
-
-      if (claimable.length === 0) {
-        await sleep(pollMs);
-        continue;
-      }
-
+      const claimable = await claimableChangesetReviews();
+      if (claimable.length === 0) return;
       await reviewOne(claimable[0]);
     }
   };
 
+  const mainLoop = async (): Promise<void> => {
+    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
+    for (;;) {
+      const claimable = await claimableChangesetReviews();
+      if (claimable.length === 0) {
+        await sleep(pollMs);
+        continue;
+      }
+      await reviewOne(claimable[0]);
+    }
+  };
+
+  const loop = options.askId ? oneOff : options.noWait ? drainLoop : mainLoop;
+
   try {
-    await mode.run(options.askId ? oneOff : mainLoop);
+    await mode.run(loop);
   } finally {
     rl.close();
     unregisterRunningProcess();

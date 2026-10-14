@@ -11,12 +11,14 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - A copy button on every code block in the docs, same style/positioning as the web app's own (a small circular button pinned to the block's top-right corner) -- `copy-code.js`, injected site-wide via the docs layout, needs no markup of its own on any individual page.
 - A new "Deleting a repo, or making it private" section on the [Governance](https://zzmq.dev/docs/governance/) page: deleting or privatizing a repo never blocks on or cascades onto its shards -- one is promoted to take over as the new root instead, picked by fewest commits behind the old origin, then most recent protocol activity. Cross-linked from the [Shard](https://zzmq.dev/docs/nouns/#shard) entry on Core Concepts.
 - `zz review`'s new `--ask <id>` flag, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-review) page. The [By hand](https://zzmq.dev/docs/demos/by-hand/) demo's Correction 1 now uses it instead of relying on the wait loop having exactly one thing to review.
+- `zz review`/`zz work`'s new `--no-wait`, and `zz work`'s new `--ask <id>`, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work) page.
 
 ### Fixed
 - The Demos index still said "there's no `zz agent delete` yet" -- it's existed since the CLI's own `v1.0.0`.
 - The install page's quickstart created an agent named `claude` and then ran it with `--provider groq` -- renamed the agent to `groq` throughout so the example doesn't name one model while running another.
 - A highlighted code block's own line numbers rendered with zero horizontal space before the code -- turned off entirely (`.chroma .ln { display: none }`) rather than patched with padding.
 - Two more stale `require_changeset_review` mentions, on the Data format and Core Concepts (nouns) pages -- missed in the earlier pass since they weren't inside the Governance/CLI/Agent-tools/demo pages that pass specifically audited.
+- The CLI reference's `zz top` tab table still named the old **activity**/**protocol** tabs and said the activity feed reads newest-at-the-bottom -- stale since this session's own TUI rename/reorder (now **live feed**/**activity**, newest-at-top), caught only now while adding `--no-wait`/`--ask` nearby.
 
 ## [0.2.0] - 2026-10-14
 

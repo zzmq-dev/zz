@@ -279,6 +279,10 @@ export interface WorkOptions {
   provider?: Provider;
   /** Forces the original local/demo backend (a real local clone, state in .zz/) instead of the default: a deployed Worker's real protocol state, driven entirely over callRemoteTool. Default is remote because that's the real coordination layer this project is about; local stays fully supported for the demo/cascade-case-study path, which has no reason to involve the network at all. */
   local?: boolean;
+  /** Exits once nothing is claimable, instead of idling and rechecking forever -- for a one-off/scripted run (a demo, a CI-adjacent batch job) where "work whatever's there right now, then stop" is the actual intent, not a long-lived worker. Checked only where the loop would otherwise start idling, so a batch of several claimable asks is still worked through in full before exiting on the first truly empty poll. Ignored if askId is given. */
+  noWait?: boolean;
+  /** Works this one specific ask (any kind/scope -- not just changeset_review the way `zz review`'s own --ask is) and exits, regardless of what else is claimable afterward. Takes precedence over --no-wait if both are somehow given. */
+  askId?: string;
 }
 
 export async function work(options: WorkOptions): Promise<void> {
@@ -375,12 +379,43 @@ export async function work(options: WorkOptions): Promise<void> {
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
   const maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
 
+  // Shared by both the loop and --ask below: fast-forward a remote
+  // clone against another agent's since-landed commit (once per
+  // claimed ask, not every idle poll), log, and actually work it.
+  const workClaimed = async (resolved: ResolvedRepo, next: Awaited<ReturnType<typeof claimableAcrossRepos>>[number]): Promise<void> => {
+    if (useRemote) syncClone(resolved);
+    statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
+    onLog(statusRef.current);
+    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+  };
+
+  // --ask <id>: work this one specific ask and exit, regardless of
+  // scope/kind or what else is claimable afterward -- for a one-off
+  // command-line step (e.g. a demo script) where there's exactly one
+  // known ask to act on, the same reasoning as `zz review`'s own --ask.
+  const oneOffAsk = async (): Promise<void> => {
+    const watched = watch.get();
+    const claimable = await claimableAcrossRepos(watched.map((r) => ({ repo: r.slug })), config.agent, scope);
+    const next = claimable.find((c) => c.ask.id === options.askId);
+    if (!next) {
+      console.error(`no claimable ask "${options.askId}" found across ${config.repos.join(", ")} (scope=${scope}) -- already answered, claimed by someone else, or not permitted for this identity?`);
+      process.exitCode = 1;
+      return;
+    }
+    const resolved = watched.find((r) => r.slug === next.repo)!;
+    await workClaimed(resolved, next);
+  };
+
   const mainLoop = async (): Promise<void> => {
     let lastIdleLogged: string | null = null;
     for (;;) {
       const watched = watch.get();
       const claimable = await claimableAcrossRepos(watched.map((r) => ({ repo: r.slug })), config.agent, scope);
       if (claimable.length === 0) {
+        if (options.noWait) {
+          onLog(`queue drained as "${config.agent}" (scope=${scope}) -- exiting (--no-wait)`);
+          return;
+        }
         const msg = `idling as "${config.agent}" (scope=${scope}) -- nothing claimable, rechecking every ${Math.round(pollMs / 1000)}s`;
         statusRef.current = msg;
         if (msg !== lastIdleLogged) {
@@ -393,24 +428,24 @@ export async function work(options: WorkOptions): Promise<void> {
       lastIdleLogged = null;
       const next = claimable[0];
       const resolved = watched.find((r) => r.slug === next.repo)!;
-      if (useRemote) {
-        // Another agent's commit landed on the real remote, not in
-        // this local working copy, since the last time it was read --
-        // fast-forward before starting real work on it. Once per
-        // claimed ask, not every idle poll: cheap enough, and avoids
-        // hammering the git proxy on every ~1s recheck.
-        syncClone(resolved);
-      }
-      statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
-      onLog(statusRef.current);
-      await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+      await workClaimed(resolved, next);
     }
   };
 
+  const loop = options.askId ? oneOffAsk : mainLoop;
+
   try {
-    await mode.run(mainLoop);
+    await mode.run(loop);
   } finally {
     unregisterRunningProcess();
     await mode.cleanup();
   }
+  // mainLoop only ever returns via --no-wait's drained-queue exit above
+  // (otherwise its `for (;;)` runs until SIGINT/SIGTERM/the TUI's own
+  // quit key, all of which already process.exit() themselves); oneOffAsk
+  // always returns, by design. Either way, in the TUI case ink's raw-
+  // mode stdin would otherwise keep the event loop alive forever even
+  // with the loop itself done, so this has to force it down explicitly
+  // rather than just letting work() return.
+  if (options.noWait || options.askId) process.exit(0);
 }

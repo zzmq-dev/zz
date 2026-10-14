@@ -238,7 +238,7 @@ Closes a `whistleblow` Ask and runs the incident runbook: stops the Lane, denies
 ```
 zz work [owner/repo] [--as <name>] [--repos <list>] [--scope <scope>]
         [--provider <name>] [--model <name>] [--max-turns <n>] [--poll-ms <n>]
-        [--stdio] [--local]
+        [--stdio] [--local] [--no-wait] [--ask <id>]
 ```
 
 Runs an agent. The loop polls the watched repos for Asks this identity is allowed to claim, claims one, works it with a model, answers it, and repeats until you press `q` or `ctrl+c`.
@@ -267,8 +267,10 @@ Options:
 | `--poll-ms <n>` | `1000` | How often to check for new work when idle. |
 | `--stdio` | | Print one combined log stream instead of the TUI. Use this in CI or containers. |
 | `--local` | | Use local mode. `--agent <id>` sets the identity there. |
+| `--no-wait` | | Exit once nothing is claimable, instead of idling and rechecking forever. For a one-off/scripted run. Ignored with `--assist`, or if `--ask` is given. |
+| `--ask <id>` | | Work this one specific ask (any kind/scope) and exit, regardless of what else is claimable afterward. Ignored with `--assist`. |
 
-The TUI has four tabs: **activity** (the loop's log), **lanes**, **ladder**, and **protocol**. See [TUI keys](#tui-keys).
+The TUI has four tabs: **live feed** (the loop's log), **lanes**, **ladder**, and **activity**. See [TUI keys](#tui-keys).
 
 When a `work` Ask creates a shard, `zz work` starts watching the shard too, so sub-tasks posted there are picked up without a restart.
 
@@ -301,7 +303,7 @@ Without a repo argument, `--assist` watches the repos `zz top` would show.
 ### zz review
 
 ```
-zz review [owner/repo] [--as <name>] [--repos <list>] [--local] [--ask <id>]
+zz review [owner/repo] [--as <name>] [--repos <list>] [--local] [--ask <id>] [--no-wait]
 ```
 
 A plain terminal queue for a person reviewing changes. It waits for `changeset_review` Asks you are a maintainer for, prints each proposal's task, message, summary, and full file contents, and prompts `approve (a) / request changes (r) / skip (s)`. Claiming and answering are handled for you. Requesting changes prompts for a reason and records the denial. Unlike `--assist`, it doesn't post a follow-up `work` Ask.
@@ -309,6 +311,8 @@ A plain terminal queue for a person reviewing changes. It waits for `changeset_r
 Use `zz review` when a person should sign off on every change.
 
 `--ask <id>` reviews that one changeset_review and exits, instead of waiting for whatever comes next -- for a one-off command-line step (a demo's own script, say) rather than a person sitting at a terminal continuously reviewing. The ask id is named in `zz repo submit`'s own output.
+
+`--no-wait` reviews everything currently claimable, same prompt as the default loop, then exits once the queue is empty -- for draining a whole batch in one sitting without knowing every ask's id the way `--ask` requires. Ignored if `--ask` is given.
 
 ### zz models
 
@@ -331,9 +335,9 @@ A live dashboard. It needs no login and no config. With nothing to show, it open
 | Tab | Shows |
 | --- | --- |
 | explore | Search repos on the server. Press `/` to type a query, `enter` to preview, `t` to track a repo. In local mode it browses the filesystem for onboarded clones. |
-| lanes | Every Lane in the watched repos with its status, Ask count, and coordinators, sorted busiest first. `enter` opens a Lane, where `n` posts a new Ask into it. |
+| lanes | Every Lane in the watched repos with its status, Ask count, and coordinators, sorted busiest first. `enter` opens a Lane, where `n` posts a new Ask into it and `enter` on an ask opens its full payload as pretty-printed JSON. |
 | ladder | The Ladder tree for one repo. Press `r` to cycle repos. |
-| protocol | A live feed of every ASK, ANSWER, and INSIGHT, newest at the bottom. Filter by repo (`r`), Lane (`L`), Ask kind (`t`), or scope (`s`). |
+| activity | A live feed of every ASK, ANSWER, and INSIGHT, newest at the top -- plus `LANE create`/`LANE merge` entries for a repo's own creation and a changeset's actual merge moment, not real protocol verbs yet but displayed as one. Filter by repo (`r`), Lane (`L`), Ask kind (`t`), or scope (`s`). |
 
 Press `l` to log in or out without leaving the dashboard.
 

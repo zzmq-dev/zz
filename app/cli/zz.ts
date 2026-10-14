@@ -224,6 +224,8 @@ program
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
+  .option("--no-wait", "exit once nothing is claimable, instead of idling and rechecking forever -- for a one-off/scripted run rather than a long-lived worker. Ignored with --assist, or if --ask is given.")
+  .option("--ask <id>", "work this one specific ask (any kind/scope) and exit, regardless of what else is claimable afterward -- for a one-off command-line step where there's exactly one known ask to act on. Ignored with --assist.")
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare (remote, each needs its own API key -- see app/.env)")
   .option("--model <name>", 'model name for whichever provider -- default is "qwen2.5:14b-instruct" (ollama), "gemini-3.8-flash" (gemini), "openai/gpt-oss-120b" (groq), or "@cf/meta/llama-3.3-70b-instruct-fp8-fast" (cloudflare). Run `zz models` to see what\'s available locally for ollama.')
   .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your resolved identity's real protocol state on the deployed Worker")
@@ -231,7 +233,11 @@ program
     "--assist",
     "a human-in-the-loop TUI instead of the headless loop: pick a claimable work/changeset_review ask from the repos you're watching (same resolution as `zz top`), chat with the model about its draft/recommendation, then explicitly submit it back as a real ANSWER. Never clones anything until you've picked an ask. Ignores --stdio/--poll-ms/--max-turns.",
   )
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean }) => {
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean; wait: boolean; ask?: string }) => {
+    // Commander's --no-<x> convention: this option surfaces as `wait`,
+    // defaulting true, false only when --no-wait was actually passed --
+    // never a `noWait` field despite the flag's own spelling.
+    const noWait = opts.wait === false;
     if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
       console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
       process.exitCode = 1;
@@ -265,6 +271,8 @@ program
       model: opts.model,
       provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
       local: opts.local,
+      noWait,
+      askId: opts.ask,
     });
   });
 
@@ -305,8 +313,10 @@ program
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
   .option("--ask <id>", "review this one changeset_review and exit, instead of waiting for new ones -- for a one-off command-line step (e.g. a demo script) rather than a human sitting at a terminal watching for whatever comes next")
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean; ask?: string }) => {
-    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local, askId: opts.ask });
+  .option("--no-wait", "review everything currently claimable, same prompt as the default loop, then exit once the queue is empty -- for draining a whole batch in one sitting without knowing every ask's id the way --ask requires. Ignored if --ask is given.")
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean; ask?: string; wait: boolean }) => {
+    // Commander's --no-<x> convention: surfaces as `wait` (default true), not `noWait`.
+    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local, askId: opts.ask, noWait: opts.wait === false });
   });
 
 program
