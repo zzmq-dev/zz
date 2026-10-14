@@ -135,9 +135,10 @@ function kindCode(kind: string): string {
   return `<code class="kind-code" style="color:hsl(${stringToHue(kind)},70%,68%)">${esc(kind)}</code>`;
 }
 
-/** A Lane id, in its own skewed tag (see .lane-tag) instead of the same plain badge-muted pill every other secondary detail gets -- a Lane is a distinct noun here, not just a label. */
-function laneTagHtml(laneId: string): string {
-  return `<code class="lane-tag"><span class="text">${esc(laneId)}</span></code>`;
+/** A Lane id, in its own skewed tag (see .lane-tag) instead of the same plain badge-muted pill every other secondary detail gets -- a Lane is a distinct noun here, not just a label. Links to that Lane's own row in the Lanes tab (cross-repo, with repoSlug, when rendered somewhere other than that Lane's own repo page -- same convention as askIdLink). */
+function laneTagHtml(laneId: string, repoSlug?: string): string {
+  const href = repoSlug ? `/${esc(repoSlug)}#lane-${esc(laneId)}` : `#lane-${esc(laneId)}`;
+  return `<a href="${href}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
 }
 
 /** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) dimmed, the bracketed agent name -- the part that actually distinguishes this actor in a scenario with several -- at full, slightly tinted contrast. A bare human login (no bracket) renders plain, unsplit. */
@@ -304,7 +305,7 @@ h1{font-size:1.5rem;margin:0 0 1.25rem}
 .card h2{margin:0 0 .6rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
 .stack>*+*{margin-top:.75rem}
 .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;line-height:1.5}
-.badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:999px;font-size:.78rem;font-weight:600;border:1px solid;white-space:nowrap}
+.badge{display:inline-flex;align-items:center;padding:.15rem .6rem;border-radius:8px;font-size:.78rem;font-weight:600;border:1px solid;white-space:nowrap}
 .badge-pink{color:var(--pink);background:rgba(255,46,146,.12);border-color:rgba(255,46,146,.4)}
 .badge-yellow{color:var(--yellow);background:rgba(232,255,61,.1);border-color:rgba(232,255,61,.35)}
 .badge-cyan{color:var(--cyan);background:rgba(46,230,255,.1);border-color:rgba(46,230,255,.35)}
@@ -423,7 +424,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-date{opacity:.85}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
-.kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:4px;font-size:.92em}
+.kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:0;border:1px solid darkslategrey;font-size:.92em}
 .agent-id{text-decoration:none}
 .agent-id:hover .agent-name{text-decoration:underline}
 .agent-name{color:var(--pink)}
@@ -467,7 +468,9 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    outer element's own tag doesn't matter (a <code>, a <span>, same
    transform either way), only that it's display:inline-block, which
    this sets explicitly regardless of the tag's own default. */
+.lane-tag-link{text-decoration:none}
 .lane-tag{display:inline-block;vertical-align:middle;background:rgba(92,141,255,.15);border:1px solid rgba(92,141,255,.4);border-radius:4px;padding:0 .6em;margin:0 .2em;font-family:var(--mono);font-size:.85em;color:var(--blue);transform:skewX(-15deg)}
+.lane-tag-link:hover .lane-tag{background:rgba(92,141,255,.28)}
 .lane-tag .text{display:inline-block;transform:skewX(15deg)}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
@@ -1683,7 +1686,7 @@ async function agentActivityHtml(agent: Agent, repos: RepoRow[], env: WebEnv): P
           : e.type === "ANSWER"
             ? `${kindCode(e.action ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug)}`
             : `${kindCode(e.kind)}: ${esc(e.text)}`;
-      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;${laneTagHtml(laneId)}&nbsp;&nbsp;${rest}</div>`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;${laneTagHtml(laneId, repoSlug)}&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
   return `<div class="log-feed">${html || '<div class="empty">No activity yet.</div>'}</div>`;
@@ -2638,7 +2641,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row">${laneTagHtml(l.id)} <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
+    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} <span class="badge badge-${LANE_STATUS_BADGE_VARIANT[l.status] ?? "muted"}">${esc(l.status)}</span> <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
