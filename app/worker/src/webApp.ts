@@ -207,6 +207,13 @@ th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:.75rem;
 ul.list{list-style:none;padding:0;margin:0}
 ul.list>li{padding:.65rem 0;border-bottom:1px solid var(--border)}
 ul.list>li:last-child{border-bottom:none}
+/* The Ladder tab can be arbitrarily deep (one row per file/directory/
+   ask/...) -- a fixed height with its own scrollbar keeps the repo
+   page itself a bounded height regardless, the same tradeoff the
+   Commits tab makes the opposite way (paged, not scrolled) since that
+   one's naturally ordered by recency instead of a tree you'd want to
+   keep open while scrolling past. */
+ul.list.list-scroll{max-height:32rem;overflow-y:auto}
 .repo-item{display:flex;flex-direction:column;gap:.15rem}
 .repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
 .repo-item .desc{color:var(--muted);font-size:.9rem}
@@ -324,6 +331,7 @@ function agentAutocompleteField(name: string, placeholder: string, idSuffix: str
 const WEB_JS = `
 function zzInitTabs(container) {
   var btns = container.querySelectorAll('.tab-btn');
+  var hash = location.hash.slice(1);
   btns.forEach(function (btn) {
     btn.addEventListener('click', function () {
       btns.forEach(function (b) { b.classList.remove('active'); });
@@ -331,6 +339,13 @@ function zzInitTabs(container) {
       container.querySelectorAll('.tab-panel').forEach(function (p) { p.hidden = true; });
       document.getElementById(btn.dataset.target).hidden = false;
     });
+    // dataset.target is "<groupId>-<tabId>" -- match on the tabId
+    // suffix so a reload from a Commits pager link (or any other
+    // cross-tab link ending in #<tabId>) reopens on that tab instead
+    // of always landing back on whichever one renders first.
+    if (hash && btn.dataset.target.endsWith('-' + hash)) {
+      btn.click();
+    }
   });
 }
 document.querySelectorAll('[data-tabs]').forEach(zzInitTabs);
@@ -2095,13 +2110,23 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const info = await repo.info();
-  // One log() call, not two -- commits[0] is already HEAD, so a
-  // separate limit:1 call just to get `head` was a second full
-  // round-trip for a fact the limit:30 call already carries.
-  const commits = await repo.log({ ref: info.defaultBranch, limit: 30 });
-  const head = commits[0] ?? null;
+  // Separate from the Commits tab's own paginated fetch below -- once
+  // that can be any page, not just the first, commits[0] (this used to
+  // reuse that single call's own first result) is no longer
+  // necessarily HEAD.
+  const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
   const tree: TreeEntry[] = head ? ((await repo.readTree(head.treeHash)) ?? []) : [];
   const readme = head ? await findReadme(repo, tree) : null;
+
+  // Commits tab pagination: ?commitsPage=<1-based>. Fetches one extra
+  // past the page size to know whether a "next" link is warranted
+  // without a second round trip just to count -- confirmed live this
+  // was previously a silent, fixed 30-commit cutoff with no way past it.
+  const COMMITS_PAGE_SIZE = 30;
+  const commitsPage = Math.max(1, Number(new URL(request.url).searchParams.get("commitsPage")) || 1);
+  const commitsFetched = await repo.log({ ref: info.defaultBranch, limit: COMMITS_PAGE_SIZE + 1, offset: (commitsPage - 1) * COMMITS_PAGE_SIZE });
+  const hasMoreCommits = commitsFetched.length > COMMITS_PAGE_SIZE;
+  const commits = hasMoreCommits ? commitsFetched.slice(0, COMMITS_PAGE_SIZE) : commitsFetched;
 
   const fileListHtml = fileListRowsHtml(slug, "", tree);
 
@@ -2147,11 +2172,22 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .map((c) => `<li class="row"><a href="/${esc(slug)}/commit/${esc(c.hash)}" class="mono">${esc(c.hash.slice(0, 8))}</a> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
     .join("");
 
+  // #commits (restored on load by zzInitTabs below) keeps the Commits
+  // tab open across a prev/next reload -- without it, a page link
+  // would land back on whichever tab renders first (readme/ladder),
+  // losing your place every single click.
+  const commitsPagerHtml = commitsPage > 1 || hasMoreCommits
+    ? `<div class="commit-nav">
+        ${commitsPage > 1 ? `<a href="/${esc(slug)}?commitsPage=${commitsPage - 1}#commits" class="mono">&larr; newer</a>` : "<span></span>"}
+        ${hasMoreCommits ? `<a href="/${esc(slug)}?commitsPage=${commitsPage + 1}#commits" class="mono">older &rarr;</a>` : "<span></span>"}
+      </div>`
+    : "";
+
   const fileTabs = [
     readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme)}</div>` } : null,
-    { id: "ladder", label: "Ladder", html: `<ul class="list">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>` },
+    { id: "ladder", label: "Ladder", html: `<ul class="list list-scroll">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>` },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
-    { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>` },
+    { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
   ].filter((t): t is { id: string; label: string; html: string } => t !== null);
 
   const activityTabs = [
