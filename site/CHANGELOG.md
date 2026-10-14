@@ -6,6 +6,8 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-14
+
 ### Added
 - A new "Policy" section on the [Governance](https://zzmq.dev/docs/governance/) page: the five approval modes (`direct`/`self_review`/`other_approver`/`vote_quorum`/`vote_expiring`), the `_repo`/`policies` document shape, and the Owner-unilateral-override escape hatch -- Policy previously had no dedicated section at all, just passing mentions.
 - `zz repo policy show`/`set` on the [CLI](https://zzmq.dev/docs/cli/) reference page; `policy_show`/`policy_set` on the [Agent tools](https://zzmq.dev/docs/agent-tools/) page, plus a note on the merge backstop as a real enforcement layer beyond Ask-kind scope checks.
