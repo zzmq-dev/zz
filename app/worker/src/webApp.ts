@@ -1321,17 +1321,33 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
     if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
     await env.ARTIFACTS.delete(repo.artifacts_name);
   } catch (e) {
-    // The Artifacts-side repo being gone already (confirmed live:
-    // "ArtifactsError: Repository not found") means this D1 row is an
-    // orphan -- left over from some earlier delete that removed the
-    // Artifacts repo but failed before clearing this row. There's
-    // nothing left to check roles against via Artifacts in that case,
-    // so fall back to the D1 row's own recorded owner rather than
-    // leaving the orphan permanently stuck. Any other failure
-    // (a real role check, a real network error) surfaces as before.
     if (e instanceof ApiError) throw e;
-    if (!(e instanceof Error) || !/not found/i.test(e.message)) throw e;
+    if (!(e instanceof Error)) throw e;
+    // Any failure reading live Role state via Artifacts -- the repo
+    // gone already (confirmed live: "ArtifactsError: Repository not
+    // found", an orphaned D1 row from some earlier delete that
+    // cleared the Artifacts repo but failed before this row), or its
+    // content/history too corrupted for info()/readRepoRoles to even
+    // parse (confirmed live on a long-lived shard repo: some
+    // unidentified exception neither "not found" nor a clean ApiError,
+    // crashing both this and the repo page itself) -- falls back to
+    // the D1 row's own recorded owner rather than leaving a repo stuck
+    // forever undeletable by anyone, including its own real owner.
+    // Same authorization bar either way, not a bypass: this still
+    // requires `actor` to match `repo.owner_username` exactly.
     if (actor.username !== repo.owner_username) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+    // Best-effort: if the repo is corrupted rather than already gone,
+    // its Artifacts-side data is still sitting there taking up real
+    // storage even once this clears the D1 row below. Worth one try,
+    // never worth failing the whole delete over -- the D1 row (what
+    // actually makes this slug reachable from anywhere) still clears
+    // either way.
+    try {
+      await env.ARTIFACTS.delete(repo.artifacts_name);
+    } catch {
+      // already gone, or too corrupted to delete cleanly either --
+      // either way, nothing more to do here.
+    }
   }
 
   await deleteRepoRow(env.DB, repo.slug, repo.artifacts_name);
