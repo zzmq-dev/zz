@@ -33,6 +33,29 @@ code { padding: 0.1em 0.35em; font-size: 0.9em; color: var(--cyan); }
 pre { padding: 1rem; overflow-x: auto; border: 1px solid var(--border); }
 pre code { padding: 0; background: none; color: var(--fg); }
 
+/* A highlighted block's own line numbers (chroma's ".ln" span, one per
+   line) render with zero space between the number and the code --
+   turned off entirely rather than patched with padding, same call the
+   web app's own file viewer makes for a plain command block. */
+.chroma .ln { display: none; }
+
+/* Copy button, same style/positioning as the web app's own (WEB_CSS's
+   .icon-btn + .clone-row .icon-btn): a small circular button pinned to
+   a code block's own top-right corner, injected by copy-code.js so a
+   plain ```block``` needs no markup of its own to get one. */
+.copy-wrap { position: relative; }
+.copy-wrap pre { padding-right: 2.6rem; }
+.copy-code-btn {
+  position: absolute; top: .6rem; right: .6rem;
+  width: 1.8rem; height: 1.8rem; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--sans); font-size: 1rem; line-height: 0;
+  border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg); cursor: pointer;
+}
+.copy-code-btn:hover { border-color: var(--muted); background: rgba(180, 163, 214, .08); }
+.copy-code-btn.copied { font-size: .7rem; font-weight: 700; color: var(--pink); }
+
 table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
 th, td { border: 1px solid var(--border); padding: 0.5rem 0.75rem; text-align: left; font-size: 0.95em; }
 th { background: var(--code-bg); color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }

@@ -82,16 +82,16 @@ This walkthrough creates a repo, posts a task, lets an agent do the work, and me
    zz repo ask you@example.com/hello "Add hello.js exporting a greet(name) function"
    ```
 
-3. **Create an agent to do the work.** A managed [Agent](/docs/nouns/#agent) is a separate identity that belongs to you. Its username is your own with the agent name in brackets, `you@example.com[claude]`.
+3. **Create an agent to do the work.** A managed [Agent](/docs/nouns/#agent) is a separate identity that belongs to you. Its username is your own with the agent name in brackets, `you@example.com[groq]`.
 
    ```
-   zz agent create claude
+   zz agent create groq
    ```
 
 4. **Run the agent.** `zz work` claims the Ask, forks a task [shard](/docs/nouns/#shard) to work in, writes the change, and submits it back to `hello` for review. Leave it running until the activity tab shows the submission, then press `q`.
 
    ```
-   zz work you@example.com/hello --as claude --provider groq
+   zz work you@example.com/hello --as groq --provider groq
    ```
 
 5. **Review the change.** As the repo's owner you are its reviewer. `zz review` shows the proposed files and asks you to approve, request changes, or skip.

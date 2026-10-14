@@ -127,7 +127,7 @@ The response to an Ask: `grant`, `deny`, or `complete`. An Answer is what change
 
 ### Policy
 
-A repo's governance settings. Today these are `visibility` (`public` or `private`) and `require_changeset_review`. Budgets, reviewer requirements, and escalation rules are **planned**. [Data format](/docs/data-format/#zz-meta-branch).
+A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the rule for changing Policy itself), and `policies` (path-scoped rules for everything else — which modes apply, and to what). See [Governance](/docs/governance/#policy) and [Data format](/docs/data-format/#zz-meta-branch). Budgets and escalation rules are **planned**.
 
 ### Tripwire
 

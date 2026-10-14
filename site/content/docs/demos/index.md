@@ -36,4 +36,8 @@ zz login
 zz top                 # confirm your repos show up
 ```
 
-Agents created for one scenario (`zz agent create <name>`) stick around — there's no `zz agent delete` yet — so names below carry a run-specific suffix where a script creates them, to avoid colliding with a previous take.
+Agents created for one scenario (`zz agent create <name>`) stick around until you delete them (`zz agent delete <username>`) — names below carry a run-specific suffix where a script creates them, to avoid colliding with a previous take.
+
+## Cleaning up
+
+Stages 1–7 are one continuous take on the same `mathkit` repo and the same growing set of agents, each stage deliberately building on the one before it — there's nothing to clean up until [Stage 7](/docs/demos/decomposition/)'s own checkpoint, which covers the whole thing in one pass. The Committee Vote & Policy and Whistleblow demos are independent of `mathkit` and of each other's *repo* (each creates its own throwaway one) but share one script run and its four agents between them — clean up once, after whichever of the two you ran last. Every page's own checkpoint says exactly what that page added and, where it's the end of a chain, how to remove all of it.

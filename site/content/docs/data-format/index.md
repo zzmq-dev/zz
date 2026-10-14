@@ -58,14 +58,14 @@ Repo settings live on an orphan branch named `zz-meta`, separate from the code's
 ```json
 {
   "description": "A place to try zz",
-  "policy": { "require_changeset_review": true, "visibility": "public" },
+  "policy": { "visibility": "public", "_repo": { "mode": "vote_quorum" }, "policies": [{ "path": "**", "mode": "self_review" }] },
   "owner": "you@example.com",
   "shard_of": "you@example.com/hello",
   "created_at": "2026-10-13T18:00:00Z"
 }
 ```
 
-`shard_of` appears only on a [shard](/docs/nouns/#shard) and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Maintainers and above.
+`shard_of` appears only on a [shard](/docs/nouns/#shard) and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Maintainers and above. `policy._repo`/`policies` are [Policy](/docs/governance/#policy)'s own approval rules — `_repo` governs changing Policy itself, `policies` is path-scoped rules for everything else, shown here at a new repo's own defaults.
 
 ### `roles.json`
 

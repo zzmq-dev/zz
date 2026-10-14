@@ -40,3 +40,10 @@ Watch one agent claim the parent Ask and propose thirty sibling Lanes, each with
 ## Checkpoint
 
 Forty-five functions merged in total (ten from Stage 6, thirty here, plus the five from Stages 1–5). One root Lane with thirty related Lanes, all merged.
+
+Clean up when done — this is the end of the chain Stages 1–7 all share, so one pass clears everything:
+
+```
+zz repo delete <me>/mathkit
+zz agent delete <me>[maint] && zz agent delete <me>[dev1] && zz agent delete <me>[dev2] && zz agent delete <me>[dev3]
+```

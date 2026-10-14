@@ -29,3 +29,5 @@ Inside `--assist`: pick the Lane, pick the `isOdd` work Ask, read the model's dr
 ## Checkpoint
 
 `isOdd` merged, with Ladder rungs written by the assistant and approved by you — not auto-applied.
+
+No cleanup here — [Stage 3](/docs/demos/local-agent/) continues directly on this same `mathkit` repo. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.

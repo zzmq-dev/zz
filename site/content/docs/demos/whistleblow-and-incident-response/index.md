@@ -80,4 +80,4 @@ zz ask whistleblow <owner/repo> <wb-ask-id> --target-agent <mallory-username> \
 
 The root Lane's status is `"stopped"`. Mallory's other pending Ask is denied with a reason pointing at the incident. `README.md` is back to its pre-taint content, via a real new revert commit (not a history rewrite) — confirm with `zz ladder dump <owner/repo>` or by diffing the file directly. The Lane's history ends with a `trap`-kind Insight, the first one any real repo has ever had.
 
-Clean up when done: `zz repo delete <owner/repo>`.
+Clean up when done: `zz repo delete <owner/repo>`, `zz agent delete` each of `alice`/`bob`/`mallory`/`dan` — same repo and agents as the [Vote & Policy](/docs/demos/committee-vote-and-policy/) demo, so one cleanup pass covers both if you ran them back to back in the same session.

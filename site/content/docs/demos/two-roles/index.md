@@ -43,3 +43,5 @@ Narrate as it happens: claim → fork into a shard → open a Lane in the shard 
 ## Checkpoint
 
 `min` merged through a real fork; the shard shows up as its own repo under `<dev1-identity>/mathkit[...]`.
+
+No cleanup here — [Stage 6](/docs/demos/bulk-asks/) continues directly on this same `mathkit` repo and the `maint`/`dev1` workers. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain (deleting `dev1` there also removes its shard).

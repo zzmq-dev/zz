@@ -50,3 +50,5 @@ isPerfectSquare(n)
 ## Checkpoint
 
 All ten functions merged, claims spread across `dev1`–`dev3` with no two workers claiming the same Ask — `zz lane log <me>/mathkit` shows which worker claimed which.
+
+No cleanup here — [Stage 7](/docs/demos/decomposition/) continues directly on this same `mathkit` repo and fleet, and its own checkpoint is where the whole chain gets cleaned up.

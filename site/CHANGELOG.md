@@ -6,6 +6,16 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 
 ## [Unreleased]
 
+### Added
+- Cleanup instructions on every demo page: Stages 1-6 each note that they deliberately carry into the next stage with nothing to clean up yet, and link to Stage 7's checkpoint, which now gives the real `zz repo delete`/`zz agent delete` commands for the whole shared `mathkit` repo and fleet. The Whistleblow demo's own cleanup now also covers its agents, not just the repo. A new "Cleaning up" section on the [Demos index](https://zzmq.dev/docs/demos/) explains the rule across all nine pages.
+- A copy button on every code block in the docs, same style/positioning as the web app's own (a small circular button pinned to the block's top-right corner) -- `copy-code.js`, injected site-wide via the docs layout, needs no markup of its own on any individual page.
+
+### Fixed
+- The Demos index still said "there's no `zz agent delete` yet" -- it's existed since the CLI's own `v1.0.0`.
+- The install page's quickstart created an agent named `claude` and then ran it with `--provider groq` -- renamed the agent to `groq` throughout so the example doesn't name one model while running another.
+- A highlighted code block's own line numbers rendered with zero horizontal space before the code -- turned off entirely (`.chroma .ln { display: none }`) rather than patched with padding.
+- Two more stale `require_changeset_review` mentions, on the Data format and Core Concepts (nouns) pages -- missed in the earlier pass since they weren't inside the Governance/CLI/Agent-tools/demo pages that pass specifically audited.
+
 ## [0.2.0] - 2026-10-14
 
 ### Added

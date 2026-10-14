@@ -30,3 +30,5 @@ zz repo ask <me>/mathkit "implement max(...numbers)"
 ## Checkpoint
 
 `max` merged in seconds, same `<me>[maint]` identity, same Role, same protocol trail in `zz lane log`. The model and the backend are independent dials — say so on camera.
+
+No cleanup here — [Stage 5](/docs/demos/two-roles/) continues directly on this same `mathkit` repo. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.

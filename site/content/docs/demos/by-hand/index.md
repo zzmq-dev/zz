@@ -69,3 +69,5 @@ zz lane log <me>/mathkit
 ## Checkpoint
 
 `mathkit` has `sum`, one merged Lane with a real commit, and repo/file Ladder rungs. `zz lane log` shows the full trail: the work Ask, its claim, the changeset_review and submit_changeset pair, the grant, and the final commit.
+
+No cleanup here — [Stage 2](/docs/demos/assisted/) continues directly on this same `mathkit` repo. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.
