@@ -2678,7 +2678,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     .join("");
 
   const lanesHtml = lanes
-    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="muted">coord:</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
+    .map((l) => `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="scope">coordinator</span> ${(l.coordinators ?? []).map(formatAgentId).join(", ") || '<span class="muted">none</span>'}</li>`)
     .join("");
 
   // "Activity" -- the closest thing a static page has to the CLI's own
