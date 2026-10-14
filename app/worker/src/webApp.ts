@@ -145,13 +145,16 @@ function formatAgentId(username: string): string {
   // bare human login (no bracket at all) gets the same highlight the
   // bracketed name would -- it IS the whole identifying part here, not
   // secondary provenance the way a managed agent's login prefix is.
-  if (i === -1) return `<span class="agent-id agent-name">${esc(username)}</span>`;
-  return `<span class="agent-id"><span class="muted">${esc(username.slice(0, i))}</span><span class="agent-name">${esc(username.slice(i))}</span></span>`;
+  if (i === -1) return `<a href="/${esc(username)}" class="agent-id agent-name">${esc(username)}</a>`;
+  const login = username.slice(0, i);
+  return `<a href="/${esc(username)}" class="agent-id"><span class="muted">${esc(login)}</span><span class="agent-name">${esc(username.slice(i))}</span></a>`;
 }
 
 /** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
-function askIdLink(askId: string): string {
-  return `<a href="#${esc(askId)}" class="ask-id-link">${esc(askId)}</a>`;
+/** `repoSlug` is needed anywhere this doesn't already sit on that Ask's own repo page -- a profile's cross-repo Activity feed (agentActivityHtml), unlike a repo page's own Activity/Asks tabs, since a bare "#ask-id" hash only scrolls within the CURRENT page, it doesn't know which repo to go to first. */
+function askIdLink(askId: string, repoSlug?: string): string {
+  const href = repoSlug ? `/${esc(repoSlug)}#${esc(askId)}` : `#${esc(askId)}`;
+  return `<a href="${href}" class="ask-id-link">${esc(askId)}</a>`;
 }
 
 // http(s) URL detection, plain and deliberately conservative -- a
@@ -179,6 +182,11 @@ function autolinkText(s: string): string {
 /** An Ask/Answer payload, pretty-printed instead of dumped as one unreadable JSON.stringify() line -- a scrollable box so a large field (e.g. a proposal's full file contents) doesn't blow out the rest of the page's layout. */
 function jsonBlock(value: unknown): string {
   return `<pre class="json-blob">${esc(JSON.stringify(value ?? {}, null, 2))}</pre>`;
+}
+
+/** Same box jsonBlock renders, for an Insight's own free-text body instead of a payload -- one visual language for "here's the real content of this entry," whether that content is JSON or prose. */
+function textBlock(text: string): string {
+  return `<pre class="json-blob">${esc(text)}</pre>`;
 }
 
 // A deliberately small markdown-to-HTML renderer for README display --
@@ -382,6 +390,8 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .ts-stack .ts-time{opacity:.55}
 .ts-stack .ts-ms{opacity:.3}
 .kind-code{font-family:var(--mono);background:rgba(255,255,255,.06);padding:.05rem .35rem;border-radius:4px;font-size:.92em}
+.agent-id{text-decoration:none}
+.agent-id:hover .agent-name{text-decoration:underline}
 .agent-name{color:var(--pink)}
 .ask-id-link{font-family:var(--mono);font-size:.92em;color:var(--cyan);text-decoration:none;border-bottom:1px dotted currentColor}
 .ask-id-link:hover{text-decoration:none;border-bottom-style:solid}
@@ -1324,19 +1334,39 @@ const LADDER_KIND_ORDER: Record<string, number> = {
   function: 9, lines: 10, linechange: 11, ask: 12, answer: 13,
 };
 
-function renderLadderNode(node: ResolvedRung, depth = 0): string {
+// A changeset rung's path IS "changesets/<sha>" and a filechange
+// rung's is "changesets/<sha>/<path, which may itself contain '/'>"
+// (see readLadderRung's own header comment) -- real places to go, not
+// just an id to read: the commit itself, or that one file's content
+// and inline diff at that exact commit. Every other kind's path isn't
+// a commit-scoped locator the same way (a file/directory rung's path
+// is its CURRENT-state location, not pinned to any one commit), so
+// this is deliberately narrow rather than guessing a link for every kind.
+function ladderPathLink(slug: string, node: ResolvedRung): string | null {
+  if (node.kind !== "changeset" && node.kind !== "filechange") return null;
+  const rest = node.path.startsWith("changesets/") ? node.path.slice("changesets/".length) : null;
+  if (rest === null) return null;
+  if (node.kind === "changeset") return `/${esc(slug)}/commit/${esc(rest)}`;
+  const slashIdx = rest.indexOf("/");
+  if (slashIdx === -1) return null;
+  return `/${esc(slug)}/blob/${esc(rest.slice(0, slashIdx))}/${esc(rest.slice(slashIdx + 1))}`;
+}
+
+function renderLadderNode(slug: string, node: ResolvedRung, depth = 0): string {
   const indent = "&nbsp;&nbsp;".repeat(depth);
   // data-search: lowercased path+summary+kind, read by the ladder
   // search box's own JS (zzInitLadderSearch) to decide whether to hide
   // this row -- a plain client-side filter over what's already
   // rendered, not a second query against anything.
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
-  const self = `<li class="row" data-search="${searchable}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> <span class="mono">${esc(node.path)}</span> <span class="muted">${esc(node.summary)}</span></li>`;
+  const href = ladderPathLink(slug, node);
+  const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
+  const self = `<li class="row" data-search="${searchable}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
   const children = node.kind === "ask" ? node.children : [...node.children].sort((a, b) => (LADDER_KIND_ORDER[a.kind] ?? 99) - (LADDER_KIND_ORDER[b.kind] ?? 99));
-  return [self, ...children.map((c) => renderLadderNode(c, depth + 1))].join("");
+  return [self, ...children.map((c) => renderLadderNode(slug, c, depth + 1))].join("");
 }
 
 // One rung read directly by its own path -- the commit/file view's
@@ -1526,13 +1556,19 @@ async function handleAgentPage(username: string, request: Request, env: WebEnv):
 }
 
 async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
-  const owned = await listReposOwnedBy(env.DB, agent.username);
+  // Owned AND role-granted -- a repo this agent only ever holds a
+  // Maintainer/Contributor Role on (never owns) is exactly the kind of
+  // repo its real work tends to live in, and it was missing entirely
+  // from this page before (only ownership was ever checked here).
+  const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, agent.username), listRepoRolesForAgent(env.DB, agent.username)]);
+  const connected = new Map<string, RepoRow>();
+  for (const r of [...owned, ...roled]) connected.set(r.slug, r);
   const visible: RepoRow[] = [];
   // Always a different viewer than `agent` here (handleAgentPage
   // routes you to renderOwnProfile for your own page instead), so an
   // ingesting repo never belongs on this list -- same reasoning
   // accountsDb.ts's INGEST_VISIBLE_CLAUSE gates search/listing with.
-  for (const r of owned) {
+  for (const r of connected.values()) {
     if (r.ingest_status === "ingesting") continue;
     const ctx = await getRepoAccessContext(r.slug, env);
     if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.roles))) visible.push(r);
@@ -1544,14 +1580,60 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
        "Repos",
        `<ul class="list">${
          shardGroupedListHtml(
-           visible,
+           owned.filter((r) => visible.some((v) => v.slug === r.slug)),
            (r) => r.slug,
            (r) => r.shard_of_slug,
            (r) => `<a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${autolinkText(r.description)}</div>` : ""}`,
          ) || '<li class="empty">No public repos.</li>'
        }</ul>`,
-     )}`,
+     )}
+
+     ${card("Activity", await agentActivityHtml(agent, visible, env))}`,
   );
+}
+
+/**
+ * This agent's own actions (`entry.from === agent.username`) across
+ * every repo in `repos`, flattened and rendered the same way one
+ * repo's own Activity tab is -- the caller has already decided which
+ * repos are visible here (a different rule for your own profile,
+ * which sees every repo you're connected to, than for someone looking
+ * at your public one, which only sees what it can actually read).
+ *
+ * Bounded by what's actually trackable: `repos` only ever comes from
+ * ownership or an explicit Role grant (see both call sites) -- a repo
+ * this agent only ever posted open-scope work into, with neither,
+ * isn't findable here. There's no index of "every repo an agent has
+ * ever touched" to walk instead; building one is a real, separate
+ * feature, not attempted here.
+ */
+async function agentActivityHtml(agent: Agent, repos: RepoRow[], env: WebEnv): Promise<string> {
+  const perRepo = await Promise.all(
+    repos.map(async (r) => {
+      const stub = doStub(env, r.artifacts_name);
+      await stub.configure(r.artifacts_name);
+      const lanes = (await stub.callTool("lane_list", {})) as Lane[];
+      return flattenProtocol(lanes).map((e) => ({ ...e, repoSlug: r.slug }));
+    }),
+  );
+  const mine = perRepo
+    .flat()
+    .filter(({ entry }) => entry.from === agent.username)
+    .sort((a, b) => (a.entry.at < b.entry.at ? 1 : -1))
+    .slice(0, 150);
+  const html = mine
+    .map(({ laneId, entry: e, repoSlug }) => {
+      const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
+      const rest =
+        e.type === "ASK"
+          ? `${kindCode(e.kind ?? "?")} ${askIdLink(e.id, repoSlug)}`
+          : e.type === "ANSWER"
+            ? `${kindCode(e.action ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug)}`
+            : `${kindCode(e.kind)}: ${esc(e.text)}`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;<span class="muted">${esc(laneId)}</span>&nbsp;&nbsp;${rest}</div>`;
+    })
+    .join("");
+  return `<div class="log-feed">${html || '<div class="empty">No activity yet.</div>'}</div>`;
 }
 
 async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
@@ -1600,6 +1682,8 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
        }</ul>`,
        { addModal: "modal-create-repo" },
      )}
+
+     ${card("Activity", await agentActivityHtml(me, repoRows.map((r) => r.repo), env))}
 
      <dialog id="modal-add-token" class="modal"><div class="modal-body">
        <h3>Add a token</h3>
@@ -2478,16 +2562,26 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
     answersByAsk.set(entry.ask, list);
   }
   const asksHtml = flatProtocol
-    .filter((e): e is { laneId: string; entry: AskEntry | InsightEntry } => e.entry.type === "ASK" || e.entry.type === "INSIGHT")
+    .filter((e): e is { laneId: string; entry: AskEntry } => e.entry.type === "ASK")
     .map(({ laneId, entry: e }) => {
-      if (e.type === "INSIGHT") {
-        return `<li class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)} <span class="badge badge-muted">${esc(laneId)}</span></li>`;
-      }
       const answersHtml = (answersByAsk.get(e.id) ?? [])
         .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}<span class="badge badge-green">ANSWER</span> ${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
         .join("");
-      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} <span class="mono">${esc(e.id)}</span> <span class="badge badge-muted">${esc(laneId)}</span></div>${jsonBlock(e.payload)}${answersHtml}</li>`;
+      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)} <span class="badge badge-muted">${esc(laneId)}</span></div>${jsonBlock(e.payload)}${answersHtml}</li>`;
     })
+    .join("");
+
+  // A separate tab, not folded into Asks -- an Insight doesn't answer
+  // anything, it's a standalone observation (a norm worth recording, a
+  // trap worth warning the next reader about), so grouping it under an
+  // Ask the way an Answer groups under its own Ask would be forcing a
+  // relationship that doesn't exist. Still in Activity too (that tab's
+  // whole point is the complete, flat, chronological trail -- this one
+  // exists so Insights are findable without scrolling past everything
+  // else).
+  const insightsHtml = flatProtocol
+    .filter((e): e is { laneId: string; entry: InsightEntry } => e.entry.type === "INSIGHT")
+    .map(({ laneId, entry: e }) => `<li class="stack"><div class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)} <span class="badge badge-muted">${esc(laneId)}</span></div>${textBlock(e.text)}</li>`)
     .join("");
 
   const lanesHtml = lanes
@@ -2507,7 +2601,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
       const rest =
         e.type === "ASK"
-          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} <span class="mono">${esc(e.id)}</span>`
+          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)}`
           : e.type === "ANSWER"
             ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?")}`
             : `${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)}`;
@@ -2536,7 +2630,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       id: "ladder",
       label: "Ladder",
       html: `<input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this)">
-             <ul class="list list-scroll">${ladder ? renderLadderNode(ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
+             <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
     },
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
     { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
@@ -2545,6 +2639,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const activityTabs = [
     { id: "activity", label: "Activity", html: `<div class="log-feed">${logFeedHtml || '<div class="empty">No activity yet.</div>'}</div>` },
     { id: "asks", label: "Asks", html: `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>` },
+    { id: "insights", label: "Insights", html: `<ul class="list">${insightsHtml || '<li class="empty">No Insights posted yet.</li>'}</ul>` },
     { id: "lanes", label: "Lanes", html: `<ul class="list">${lanesHtml || '<li class="empty">No Lanes yet.</li>'}</ul>` },
   ];
 
