@@ -102,6 +102,21 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   const url = authedCloneUrl(creds.apiBase, creds.token, slug);
   const args = dir ? ["clone", url, dir] : ["clone", url];
   execFileSync("git", args, { stdio: "inherit" });
+
+  // `zz repo submit` never pushes your local commit -- the coordinator
+  // re-commits its exact file content server-side (commit_changeset),
+  // as a new commit (a different sha, even for an identical diff) on
+  // top of whatever the branch's current tip is. A later plain
+  // `git pull` would then see your own local commit and the server's
+  // as genuinely diverged (neither an ancestor of the other) and
+  // either refuse (--ff-only) or stitch them together with a
+  // pointless merge commit (the default). Rebase is the one mode that
+  // comes out clean: git recognizes your local commit's patch is
+  // already upstream (confirmed live: "skipped previously applied
+  // commit") and drops it, leaving you fast-forwarded onto the real
+  // merged commit with no extra history.
+  const cloneDir = dir ?? splitSlug(slug)[1];
+  execFileSync("git", ["-C", cloneDir, "config", "pull.rebase", "true"], { stdio: "inherit" });
 }
 
 function splitSlug(slug: string): [string, string] {

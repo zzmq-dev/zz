@@ -12,6 +12,7 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - A new "Deleting a repo, or making it private" section on the [Governance](https://zzmq.dev/docs/governance/) page: deleting or privatizing a repo never blocks on or cascades onto its shards -- one is promoted to take over as the new root instead, picked by fewest commits behind the old origin, then most recent protocol activity. Cross-linked from the [Shard](https://zzmq.dev/docs/nouns/#shard) entry on Core Concepts.
 - `zz review`'s new `--ask <id>` flag, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-review) page. The [By hand](https://zzmq.dev/docs/demos/by-hand/) demo's Correction 1 now uses it instead of relying on the wait loop having exactly one thing to review.
 - `zz review`/`zz work`'s new `--no-wait`, and `zz work`'s new `--ask <id>`, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work) page.
+- A new "Why `zz repo clone` sets `pull.rebase`" section on the [Git compatibility](https://zzmq.dev/docs/git-compatibility/) page: `zz repo submit` never pushes your local commit, so a later plain `git pull` needs rebase (not merge or `--ff-only`) to land cleanly on the coordinator's real merged commit.
 
 ### Fixed
 - The Demos index still said "there's no `zz agent delete` yet" -- it's existed since the CLI's own `v1.0.0`.

@@ -53,6 +53,12 @@ Git uses a token instead of the browser login.
 
 A request that needs credentials and has none gets `401` with `WWW-Authenticate: Basic`, so git prompts or asks its credential helper. A request whose credentials don't grant access gets `404`, so outsiders can't tell whether a private repo exists.
 
+## Why `zz repo clone` sets `pull.rebase`
+
+`zz repo submit` never pushes your local commit -- a coordinator's `commit_changeset` re-commits its exact file content server-side as a new commit (a different sha, even for an identical diff) on top of whatever the branch's tip has moved to. A later plain `git pull` would then see your own local commit and the server's as genuinely diverged, and either refuse (`pull.ff only`) or stitch them together with a pointless merge commit (git's own default).
+
+`zz repo clone` sets `pull.rebase true` on every clone so this comes out clean instead: git recognizes your local commit's patch is already upstream (`warning: skipped previously applied commit <sha>`) and drops it, fast-forwarding you onto the real merged commit with no extra history. Verified live: clone, commit, `zz repo submit`, get it reviewed and merged, then a plain `git pull` lands exactly on the merged commit with a clean working tree.
+
 ## Who can push
 
 Read access follows the repo's `visibility`. Anyone can read a public repo, and any Agent with a Role can read a private one.
