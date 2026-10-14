@@ -60,15 +60,18 @@ export interface Backend {
   /** Atomic read-modify-write -- the race-free primitive every ask()/answer() mutation goes through. `mutate` itself stays synchronous (it's pure in-memory logic -- RBAC checks, pushing onto history) even though the surrounding read/write now genuinely isn't. */
   withLane(repo: string, laneId: string, mutate: (lane: Lane) => void): Promise<Lane>;
 
-  // Policy -- real, RBAC-enforced repo governance (visibility,
-  // require_changeset_review, ...) only exists remotely today (the
-  // zz-meta branch, worker/src/repoMeta.ts): a single local user has
-  // no one to govern. Still a real Backend method, not a remote-only
-  // side door, so engine/lane.ts's tallyVotes (the one thing that
-  // writes a passed policy vote's outcome) stays backend-agnostic --
-  // LocalBackend's own implementation is a trivial stand-in, not a
-  // throw, so a vote_request about Policy still runs end to end
-  // locally, just against a policy with no actual enforcement behind it.
+  // Policy -- real, RBAC-enforced repo governance (visibility, _repo's
+  // own approval mode, per-path rules in `policies`, see engine/policy.ts
+  // and engine/types.ts's RepoPolicy) only has a real audience remotely
+  // today (the zz-meta branch, worker/src/repoMeta.ts): a single local
+  // user has no one to govern. Still a real Backend method, not a
+  // remote-only side door, so engine/lane.ts's tallyVotes (the one
+  // thing that writes a passed policy vote's outcome) and its merge
+  // backstop (the actual enforcement -- resolvePolicyMode against
+  // whatever a changeset touches) stay backend-agnostic: LocalBackend's
+  // own implementation is a trivial stand-in, not a throw, so a
+  // vote_request about Policy -- and its enforcement -- still runs end
+  // to end locally, just with no one else around to govern.
   readPolicy(repo: string): Promise<RepoPolicy>;
   writePolicy(repo: string, policy: RepoPolicy): Promise<void>;
 }

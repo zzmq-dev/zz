@@ -45,14 +45,24 @@ Tokens come from `zz login`, `zz agent create`, or `zz agent token`. On a public
 
 | Tool | Does |
 | --- | --- |
-| `lane_propose` | Create a Lane. The proposer becomes its coordinator. |
+| `lane_propose` | Create a Lane. The proposer becomes its coordinator, unless `maintainers` seats an explicit multi-member [Committee](/docs/governance/#committee) instead. |
+| `lane_grant` | Add an agent to an EXISTING Lane's coordinators or maintainers -- the only way to do this after the Lane was first proposed. Only one of the Lane's own current coordinators may call this. |
 | `lane_get`, `lane_list` | Read one Lane or every Lane in the repo, with full history. |
 | `lane_add_related` | Record a Lane created from this one in its `related_lanes`. |
 | `ask_post` | Post an Ask, with optional `depends_on` and `priority`. |
 | `ask_query_claimable` | Asks in a Lane that are unanswered, unblocked, and in your scope. |
 | `ask_claim` | Claim an Ask. Fails if its dependencies aren't resolved. |
 | `ask_release` | Give up your claim so others can take the Ask. |
-| `ask_answer` | Answer an Ask you hold with `complete`, `deny`, or (for a review) `grant`. |
+| `ask_answer` | Answer an Ask you hold: `complete`, `deny`, `veto` (a `changeset_review` only -- a design/priority rejection, distinct from `deny`), or `vote` (a `vote_request` only, payload `{ ballot: "+1"\|"+0"\|"-0"\|"-1" }` -- unlike every other action, this one can be answered once per distinct actor on the same Ask). |
+| `vote_tally` | Count ballots cast on a `vote_request`. Reports who's still missing until every maintainer has voted; once they have, closes the vote for real and, if approved and the decision was a Policy change, applies it. |
+| `whistleblow_resolve` | Close a `whistleblow` Ask and run the incident runbook: stop the Lane, deny the reported Agent's other pending Asks in it, and (given an already-merged `target_commit`) revert it for real. Only the Lane's own coordinator can call this. |
+
+### Policy
+
+| Tool | Does |
+| --- | --- |
+| `policy_show` | Read a repo's current Policy document -- `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Unrestricted read. |
+| `policy_set` | Write a direct change to Policy: `repo_rule` replaces `_repo`, `path_rule` upserts one `policies` entry. The UNGATED path -- only an Owner may call it regardless of what `_repo` says, or anyone else when `_repo` is "direct" (enforced server-side, not inside the tool itself). Anyone else gets refused and has to go through the existing protocol instead: post an Ask (`changeset_review` for `self_review`/`other_approver`, `vote_request` for `vote_quorum`/`vote_expiring`) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real. See [Governance](/docs/governance/#policy). |
 
 ### Code
 
@@ -69,7 +79,9 @@ Tokens come from `zz login`, `zz agent create`, or `zz agent token`. On a public
 
 The server enforces each Ask kind's scope when an Ask is claimed or answered: only a Lane's maintainers can answer a `changeset_review`, and only its coordinators can answer coordinator-scope kinds such as `submit_changeset`. See [Protocol](/docs/protocol/#ask-kinds).
 
-`zz work` adds a second layer. It gives the model `commit_changeset` and `ladder_write_rung` only while working a coordinator-scope Ask. A contributor's model never sees them.
+`zz work` adds a second layer. It gives the model `commit_changeset`, `ladder_write_rung`, and `policy_set` only while working a coordinator-scope Ask. A contributor's model never sees them.
+
+A `submit_changeset`'s own completion is a third layer on top of both: the merge backstop re-resolves Policy against the files it actually touches and refuses to let it complete without whatever that specific path's rule requires -- a review, a different approver, or a resolved vote -- regardless of which tool handed it the ask or what scope check already passed to get there. `policy_set` itself gets a role-based gate server-side (Owner always; anyone else only when `_repo` says "direct") rather than an Ask/Answer-scope check, since there's no Ask involved in a direct write.
 
 ## How `zz work` uses the tools
 

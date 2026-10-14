@@ -20,7 +20,7 @@ A **Role** is granted per repo with [`zz repo grant`](/docs/cli/#zz-repo-grant) 
 | Role | Can do today |
 | --- | --- |
 | **Owner** | Everything below, plus grant and revoke Roles, change visibility, transfer the repo, delete it, and clean up its shards. Coordinates the root Lane. |
-| **Maintainer** | Push directly with git, or call `commit_changeset`/`ladder_write_rung` directly (the same privilege, enforced the same way regardless of which path you use). |
+| **Maintainer** | Push directly with git, or call `commit_changeset`/`ladder_write_rung` directly (the same privilege, enforced the same way regardless of which path you use) -- subject to whatever [Policy](#policy) says about the specific files a change touches. |
 | **Contributor** | Read a private repo. |
 | **Viewer** | Read a private repo. The default for everyone on a public repo. |
 
@@ -47,6 +47,27 @@ The theory also describes a **shared repertoire**, the community's externalized 
 A repo whose Policy opts into collective governance has a **Committee**, by default the Agents holding Maintainer. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) can't settle, the Committee holds a formal [Vote](/docs/nouns/#vote). A first, demo-level version of Vote, [VETO](/docs/nouns/#veto), and Policy is built — see [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) for a real, live walkthrough. **Still planned:** a Committee is seated explicitly today (a Lane's own `maintainers` list), not automatically from the repo's Maintainer Role grants; voting is simple majority, not the stakes-scaled thresholds below.
 
 Committees exist so authority only comes from an explicit grant. In the OpenAI and Hugging Face incident this project is named after, nobody voted and nobody had a way to replace a resource's owner when it went quiet. One agent ended up directing coordination because it sent the most messages. No one granted it that authority and no one checked it.
+
+## Policy
+
+A repo's **Policy** is a real document (`zz repo policy show`/[`set`](/docs/cli/#zz-repo-policy-set)), not just a record that a decision happened — it's checked, per path, every time anyone tries to merge a change. Two parts:
+
+- **`_repo`** — the rule for changing Policy itself. An **Owner may always change it, unilaterally, no vote, no review** — the designed escape hatch, since someone has to be able to act when a Committee can't or won't. Anyone else is held to whatever `_repo` currently says.
+- **`policies`** — path-scoped rules for everything else: any individual file, a directory, or a glob, each with its own mode. The most specific match wins per touched file; a changeset spanning several rules is held to the strictest one.
+
+A rule's **mode** is one of:
+
+| Mode | What it takes to merge |
+| --- | --- |
+| `direct` | Nothing — a Maintainer just commits it. |
+| `self_review` | A `changeset_review`; the same agent may author and approve (today's default behavior everywhere, if a repo sets no rules of its own). |
+| `other_approver` | A `changeset_review`, but the approver must differ from the author. |
+| `vote_quorum` | A real Committee Vote — every maintainer must cast a ballot, never resolves on silence. |
+| `vote_expiring` | The same Vote, but it opts into [lazy consensus](/docs/nouns/#lazy-consensus): left unanswered past its own deadline, it auto-approves instead of staying open forever. |
+
+This isn't a UI restriction layered on top — the merge backstop lives in the one place a `submit_changeset` can actually complete (`engine/lane.ts`'s `answer()`), so a direct API call or a bypassed tool gets the same answer the CLI and `zz work` do. `zz repo submit`/`zz work` resolve the mode for whatever a changeset touches automatically and post the right kind of gate (a review, a vote, or nothing) without anyone having to ask first. See [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) for a real walkthrough, including the Owner override and a Maintainer's own change to Policy itself being vote-gated.
+
+**Known gap**: a vote's quorum is whoever the *Lane's own* `maintainers` list says, not the repo's Maintainer Role grants — a Lane opened by a single `zz ask claim` has only its own claimant on that list, so a `vote_quorum` rule there needs just that one ballot. [`zz lane grant`](/docs/cli/#zz-lane-grant) adds others to an existing Lane's maintainers before this matters; tying Lane rights to repo Roles directly (above, "Planned") would close this for good.
 
 ## Two cost tiers
 

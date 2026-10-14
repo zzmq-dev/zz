@@ -15,14 +15,40 @@ export interface AgentRoles {
   grants: RoleGrant[];
 }
 
+// What it takes to get a change past the gate: "direct" (just commit,
+// no gate at all), "self_review" (needs a changeset_review, same agent
+// may author and approve it -- today's only behavior, still the
+// default), "other_approver" (same, but the approver must differ from
+// the author), "vote_quorum" (a real Committee vote, every maintainer
+// must cast a ballot, never resolves on silence), "vote_expiring" (the
+// same vote, but opts into lazy consensus -- unanswered past its
+// deadline auto-approves instead of staying open forever). Ordered
+// loosest-to-strictest; engine/policy.ts's resolvePolicyMode relies on
+// that order when more than one rule matches a changeset.
+export type PolicyMode = "direct" | "self_review" | "other_approver" | "vote_quorum" | "vote_expiring";
+
+export interface PolicyRule {
+  mode: PolicyMode;
+  /** vote_expiring only -- how long the vote stays open before lazy consensus can close it. */
+  expiry_hours?: number;
+}
+
+export interface PathPolicyRule extends PolicyRule {
+  /** A glob matched against a changeset's touched files -- "**" is the repo-wide fallback every new repo gets. */
+  path: string;
+}
+
 // The canonical shape -- worker/src/repoMeta.ts's own RepoPolicy
 // imports this instead of redeclaring it, so the governance layer
 // (engine/lane.ts's tallyVotes, which writes a passed policy vote's
 // outcome through Backend.writePolicy) and the Worker's own zz-meta
 // storage never drift apart on what a Policy actually contains.
 export interface RepoPolicy {
-  require_changeset_review: boolean;
   visibility: "public" | "private";
+  /** Governs changing this document itself -- deliberately a dedicated key, not a fake file path, so editing Policy is still subject to Policy without pretending it's a git-tracked file. An Owner always bypasses this; see engine/lane.ts's writePolicy gate. */
+  _repo: PolicyRule;
+  /** Path-scoped rules for everything else; most-specific glob wins per touched path, strictest resulting mode wins across a whole changeset. */
+  policies: PathPolicyRule[];
 }
 
 export type LaneStatus =
@@ -96,11 +122,15 @@ export type AskKind =
   // payload.decisionKind names what's being decided ("policy" |
   // "role_grant" | "owner_succession" | "other"); payload.proposal
   // carries the kind-specific detail (e.g. a RepoPolicy diff for
-  // "policy"). Never carries a `deadline` -- a vote_request is
-  // structurally exempt from lazy consensus (tallyVotes/engine/lane.ts
-  // is the only thing that ever closes one), which is the actual
-  // enforcement of "Policy needs a real Vote, not just nobody
-  // objecting in time."
+  // "policy"). Structurally exempt from lazy consensus (tallyVotes is
+  // the only thing that ever closes one) UNLESS payload.lazyEligible
+  // is explicitly true, which is the one case that also carries a
+  // `deadline` -- a "vote_expiring" Policy rule's own offer, which
+  // falls back to approved if nobody engages. Every other vote_request
+  // (a Committee Vote on Policy itself under a stricter rule, a Role
+  // grant above Contributor, Owner succession) carries no deadline at
+  // all, which is the actual enforcement of "needs a real Vote, not
+  // just nobody objecting in time."
   | "vote_request"
   // A report that some already-posted work is tainted (bad
   // provenance: leaked info, a reverted commit, a low-trust source) or
@@ -135,10 +165,14 @@ export interface AskEntry {
    * Lazy consensus (site/content/docs/protocol -- "An Ask can carry a
    * deadline. If no one vetoes it before the deadline passes, it is
    * treated as approved"). ISO timestamp; checkLazyConsensus
-   * (engine/lane.ts) auto-grants an ask past its deadline with no
-   * veto/deny posted. Never set on a vote_request -- that kind is
-   * structurally exempt (tallyVotes is the only thing that ever closes
-   * one), which is what actually enforces "Policy/Role grants above
+   * (engine/lane.ts) auto-grants an ordinary ask past its deadline
+   * with no veto/deny posted. Only ever set on a vote_request when
+   * payload.lazyEligible is also true (a "vote_expiring" Policy rule's
+   * own vote offer) -- tallyVotes itself is what closes that one past
+   * its deadline, not checkLazyConsensus, since the completion needs a
+   * real tally's shape (action "complete", payload.approved), not a
+   * generic "grant". Every other vote_request carries no deadline at
+   * all, which is what actually enforces "Policy/Role grants above
    * Contributor/Owner succession need a real Vote, not just nobody
    * objecting in time" rather than leaving it a convention someone
    * could forget.

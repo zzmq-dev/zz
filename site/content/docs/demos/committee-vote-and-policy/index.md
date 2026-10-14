@@ -96,6 +96,29 @@ zz ask answer <owner/repo> <review-ask-id> veto --lane <lane-id> --as alice \
 
 ## Checkpoint
 
-The vote closes exactly once, both ballots recorded, `RepoPolicy.require_changeset_review` now `true` on the repo's `zz-meta` branch. A non-Committee vote and a second vote on an already-closed ask both fail with a real, structural error, not a UI restriction. The vetoed Lane's status is `"vetoed"`.
+The vote closes exactly once, both ballots recorded, and the proposal (every changeset now needs a different approver than its own author, repo-wide) is live in the repo's Policy document. A non-Committee vote and a second vote on an already-closed ask both fail with a real, structural error, not a UI restriction. The vetoed Lane's status is `"vetoed"`.
 
-Clean up when done: `zz repo delete <owner/repo>` — the agents (`alice`, `bob`, `mallory`, `dan`) persist; there's no delete for them yet.
+## Policy has teeth: path-scoped rules, and who may change them
+
+A Committee Vote is one way Policy changes — the other is the repo's **Owner**, directly, no vote needed, the designed escape hatch. Either way, Policy isn't just a record of a decision: it's enforced, per path, the next time anyone tries to merge a change (see [Governance](/docs/governance/#policy)).
+
+```
+# the Owner tightens one specific path directly -- no vote, no review:
+zz repo policy set <owner/repo> --path README.md --mode vote_quorum
+
+# a Maintainer (not Owner) tries the same thing -- rejected, since changing
+# Policy itself ("_repo") defaults to requiring a vote:
+zz repo policy set <owner/repo> --path README.md --mode direct --as mallory
+# -> "...isn't Owner, and .../Policy itself requires "vote_quorum" to change..."
+
+# a changeset touching README.md now needs a real Vote, not a Maintainer's
+# own review -- zz repo submit notices automatically and posts the right
+# kind of gate:
+zz repo submit <owner/repo> <lane-id> <ask-id>
+# -> "Submitted 1 file(s) for a vote (vote_request ask-...) -- this repo's
+#     Policy requires "vote_quorum" for these files..."
+```
+
+**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`_repo`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Maintainer or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
+
+Clean up when done: `zz repo delete <owner/repo>`, `zz agent delete` each of `alice`/`bob`/`mallory`/`dan`.

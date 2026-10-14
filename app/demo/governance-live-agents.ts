@@ -97,7 +97,7 @@ async function main() {
     lane_id: govLane.id,
     kind: "vote_request",
     from: alice,
-    payload: { decisionKind: "policy", proposal: { require_changeset_review: true }, description: "Require changeset review before merge, repo-wide. This is a reasonable, low-risk tightening of process -- it only adds a review step, no one loses access." },
+    payload: { decisionKind: "policy", proposal: { policies: [{ path: "**", mode: "other_approver" }] }, description: "Require a different approver than the author for every changeset, repo-wide. This is a reasonable, low-risk tightening of process -- it only adds a real second set of eyes, no one loses access." },
   })) as AskEntry;
   console.log(`   Ask ${voteAsk.id}: ${JSON.stringify(voteAsk.payload)}`);
 

@@ -14,6 +14,7 @@ import * as git from "isomorphic-git";
 import http from "isomorphic-git/http/web";
 import { createMemFs } from "./memFs.js";
 import type { RepoPolicy } from "../../engine/types.js";
+import { DEFAULT_REPO_POLICY } from "../../engine/policy.js";
 
 export type { RepoPolicy };
 
@@ -134,7 +135,7 @@ export async function ensureMeta(remote: string, token: { plaintext: string } | 
 
   const meta: RepoMeta = {
     description: defaults.description,
-    policy: { require_changeset_review: false, visibility: "public" },
+    policy: DEFAULT_REPO_POLICY,
     owner: defaults.owner,
     ...(defaults.shardOf ? { shard_of: defaults.shardOf } : {}),
     created_at: new Date().toISOString(),

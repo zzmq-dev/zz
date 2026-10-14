@@ -4,6 +4,9 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ## [Unreleased]
 
+### Added
+- **Policy has teeth**: a repo's Policy document now actually gates merges instead of just recording a decision. `_repo` (an Owner may always change it unilaterally, no vote, no review -- the designed escape hatch) and `policies` (path-glob rules for everything else, most-specific match wins, strictest mode wins across a changeset) replace the old, never-enforced `require_changeset_review` flag. Five modes: `direct` (no gate), `self_review` (today's existing behavior, unchanged default), `other_approver` (a changeset_review, but the approver must differ from the author), `vote_quorum` (a real Committee Vote), and `vote_expiring` (the same Vote, opted into lazy consensus -- unanswered past its deadline auto-approves instead of staying open forever). New commands: `zz repo policy show`/`set`. Enforced in the one place a `submit_changeset` can actually complete (`engine/lane.ts`'s merge backstop), not just the CLI or the UI -- `zz repo submit`/`zz work` resolve the right gate automatically and post it without being asked. See [Governance](https://zzmq.dev/docs/governance/#policy) and the extended [Committee Vote & Policy demo](https://zzmq.dev/docs/demos/committee-vote-and-policy/).
+
 ## [1.0.0] - 2026-10-14
 
 ### Added

@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import type { Backend, LadderSearchHit } from "./backend.js";
 import type { Lane, RepoPolicy } from "./types.js";
+import { DEFAULT_REPO_POLICY, normalizePolicy } from "./policy.js";
 import type { Rung, RungKind } from "./ladder.js";
 import type { EmbeddedRung } from "./ladderNotes.js";
 import { writeLadder, appendRepoChildren as appendRepoChildrenImpl, readAnchor as readAnchorImpl } from "./ladderNotes.js";
@@ -51,7 +52,7 @@ function stateDirOf(slug: string): string {
 // returned on every read): a vote_request about Policy, run entirely
 // locally, has somewhere real to land, matching what the demo looks
 // like once it's pushed/synced to a real remote repo.
-const DEFAULT_LOCAL_POLICY: RepoPolicy = { require_changeset_review: false, visibility: "public" };
+const DEFAULT_LOCAL_POLICY: RepoPolicy = DEFAULT_REPO_POLICY;
 
 function policyPath(stateDir: string): string {
   return join(stateDir, ".zz", "policy.json");
@@ -60,7 +61,7 @@ function policyPath(stateDir: string): string {
 function readPolicyFile(stateDir: string): RepoPolicy {
   const path = policyPath(stateDir);
   if (!existsSync(path)) return DEFAULT_LOCAL_POLICY;
-  return JSON.parse(readFileSync(path, "utf8")) as RepoPolicy;
+  return normalizePolicy(JSON.parse(readFileSync(path, "utf8")));
 }
 
 /** Every "owner/repo" slug with a real clone under ~/.zz/repos/ -- the local counterpart to searchLadder's own cross-repo scan, now that a repo's real location is a two-level owner/name tree (cli/lib/repo.ts's own convention) rather than one flat demo-repos/<name> directory. */

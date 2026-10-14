@@ -25,6 +25,7 @@ import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
+import { repoPolicyShow, repoPolicySet } from "./commands/repo-policy.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { askAnswer } from "./commands/ask-answer.js";
 import { voteTally } from "./commands/vote-tally.js";
@@ -406,6 +407,29 @@ repoCmd
   .option("-y, --yes", "skip the type-the-slug-to-confirm prompt")
   .action(async (slug: string, opts: { yes?: boolean }) => {
     await repoDelete(slug, { yes: opts.yes });
+  });
+
+const repoPolicyCmd = repoCmd.command("policy").description("read or change a repo's Policy -- what it takes to merge a change, and to change Policy itself");
+
+repoPolicyCmd
+  .command("show <owner/repo>")
+  .description("print the repo's current Policy document (\"_repo\"'s own rule, plus every path-scoped rule under \"policies\")")
+  .action(async (slug: string) => {
+    await repoPolicyShow(slug);
+  });
+
+repoPolicyCmd
+  .command("set <owner/repo>")
+  .description(
+    'change Policy directly -- only works for an Owner, or for anyone Maintainer+ when whatever\'s being changed is itself under a "direct" rule; anything stricter refuses and tells you to post a changeset_review/vote_request instead',
+  )
+  .option("--repo-rule <mode>", 'sets "_repo" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
+  .option("--path <glob>", "with --mode: upserts one \"policies\" entry for this path glob")
+  .option("--mode <mode>", "the mode for --path -- direct, self_review, other_approver, vote_quorum, or vote_expiring")
+  .option("--expiry-hours <n>", "vote_expiring only -- how long the vote stays open before lazy consensus can close it (default: 72)")
+  .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
+  .action(async (slug: string, opts: { repoRule?: string; path?: string; mode?: string; expiryHours?: string; as?: string }) => {
+    await repoPolicySet(slug, opts);
   });
 
 repoCmd

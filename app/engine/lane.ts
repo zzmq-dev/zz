@@ -13,6 +13,7 @@ import type { AnswerEntry, AskEntry, AskKind, InsightEntry, Lane, LaneRef, LaneS
 import type { Rung, RungKind } from "./ladder.js";
 import { REPO_RUNG_PATH } from "./ladder.js";
 import type { ChangesetFile } from "./changeset.js";
+import { resolvePolicyMode } from "./policy.js";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -81,7 +82,7 @@ export async function grantLaneRole(repo: string, laneId: string, input: { princ
   });
 }
 
-export async function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): Promise<AskEntry> {
+export async function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number; deadline?: string }): Promise<AskEntry> {
   const entry: AskEntry = {
     id: randomId("ask"),
     type: "ASK",
@@ -90,6 +91,7 @@ export async function ask(repo: string, laneId: string, input: { kind: AskKind; 
     payload: input.payload,
     depends_on: input.depends_on,
     priority: input.priority,
+    deadline: input.deadline,
     at: nowIso(),
   };
   // Atomic: two processes posting into the same Lane at once must not
@@ -130,6 +132,14 @@ function payloadEmbedsFiles(payload: unknown): boolean {
 
 export async function answer(repo: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): Promise<AnswerEntry> {
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
+  // Read outside withLane -- its own mutate callback stays synchronous
+  // on purpose (see its own doc comment), and this is only needed for
+  // the submit_changeset backstop below, a plain read with no
+  // atomicity requirement of its own (a policy changing in the tiny
+  // window between this read and the Lane write is an acceptable race,
+  // same caliber as every other non-transactional read this protocol
+  // already accepts elsewhere).
+  const policy = theAsk.kind === "submit_changeset" && input.action === "complete" ? await resolveBackend().readPolicy(repo) : null;
   // Atomic: the duplicate-answer check, the RBAC check, and the write
   // all happen inside one transaction (Backend.withLane), so two
   // processes racing to answer the same Ask can't both pass the
@@ -209,17 +219,42 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       throw new Error(`"vote" only applies to a "vote_request" ask -- ask ${theAsk.id} is "${theAsk.kind}". Use "grant"/"deny"/"complete" instead.`);
     }
     // The mechanical merge backstop: a submit_changeset may not be
-    // completed without a changeset_review it depends_on actually
-    // having been granted. depends_on is already enforced at claim
-    // time (agent/tools.ts's ask_claim); this covers a direct
-    // ask_answer call that skipped claiming entirely.
-    if (theAsk.kind === "submit_changeset" && input.action === "complete") {
-      const reviewId = (theAsk.depends_on ?? []).find((id) => lane.history.some((e) => e.type === "ASK" && e.id === id && e.kind === "changeset_review"));
-      const approved = reviewId !== undefined && lane.history.some((e) => e.type === "ANSWER" && e.ask === reviewId && e.action === "grant");
-      if (!approved) {
-        throw new Error(
-          `ask ${theAsk.id} ("submit_changeset") can't be completed without an approved changeset_review in its depends_on -- post one (ask_post, kind "changeset_review") and get it granted by one of this lane's maintainers first.`,
-        );
+    // completed without whatever Policy actually requires for the
+    // files it touches actually having happened. depends_on is already
+    // enforced at claim time (agent/tools.ts's ask_claim); this covers
+    // a direct ask_answer call that skipped claiming entirely.
+    if (theAsk.kind === "submit_changeset" && input.action === "complete" && policy) {
+      const files = (theAsk.payload as { files?: { path: string }[] } | undefined)?.files ?? [];
+      const rule = resolvePolicyMode(policy, files.map((f) => f.path));
+      if (rule.mode === "direct") {
+        // Nothing to check -- Policy allows this straight through.
+      } else if (rule.mode === "vote_quorum" || rule.mode === "vote_expiring") {
+        const voteId = (theAsk.depends_on ?? []).find((id) => lane.history.some((e) => e.type === "ASK" && e.id === id && e.kind === "vote_request"));
+        const resolved = voteId !== undefined && lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === voteId && e.action === "complete");
+        const approved = !!resolved && (resolved.payload as { approved?: boolean } | undefined)?.approved === true;
+        if (!approved) {
+          throw new Error(
+            `ask ${theAsk.id} ("submit_changeset") touches a path whose Policy rule is "${rule.mode}" -- it can't be completed without an approved, resolved vote_request in its depends_on. Post one (ask_post, kind "vote_request") and get vote_tally to close it first.`,
+          );
+        }
+      } else {
+        // self_review or other_approver -- both need a granted
+        // changeset_review; other_approver additionally requires the
+        // granting agent to differ from whoever proposed this Lane
+        // (the Lane's own author), so a Maintainer can't satisfy that
+        // stricter mode by approving their own work.
+        const reviewId = (theAsk.depends_on ?? []).find((id) => lane.history.some((e) => e.type === "ASK" && e.id === id && e.kind === "changeset_review"));
+        const grant = reviewId !== undefined ? lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === reviewId && e.action === "grant") : undefined;
+        if (!grant) {
+          throw new Error(
+            `ask ${theAsk.id} ("submit_changeset") can't be completed without an approved changeset_review in its depends_on -- post one (ask_post, kind "changeset_review") and get it granted by one of this lane's maintainers first.`,
+          );
+        }
+        if (rule.mode === "other_approver" && grant.from === lane.trigger.proposed_by) {
+          throw new Error(
+            `ask ${theAsk.id} ("submit_changeset") touches a path whose Policy rule is "other_approver" -- its changeset_review was granted by "${grant.from}", the same agent who proposed this Lane. Get a different maintainer to review it.`,
+          );
+        }
       }
     }
     // Observed directly (qwen3.8-27b on Groq): a contributor completing
@@ -261,6 +296,19 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       lane.status = "active";
     }
   });
+  // Auto-apply a granted Policy change -- the changeset_review
+  // counterpart to tallyVotes's own "policy" decisionKind handling
+  // below. Outside withLane on purpose, same reason the policy read
+  // at the top of this function is: writePolicy is a real Backend
+  // call, and withLane's own mutate callback stays synchronous.
+  if (input.action === "grant" && theAsk.kind === "changeset_review") {
+    const decision = (theAsk.payload ?? {}) as { decisionKind?: string; proposal?: Partial<import("./types.js").RepoPolicy> };
+    if (decision.decisionKind === "policy" && decision.proposal) {
+      const backend = resolveBackend();
+      const current = await backend.readPolicy(repo);
+      await backend.writePolicy(repo, { ...current, ...decision.proposal });
+    }
+  }
   return entry;
 }
 
@@ -331,6 +379,8 @@ export interface VoteTally {
   approved?: boolean;
   ballots: Record<string, "+1" | "+0" | "-0" | "-1">;
   missing: string[];
+  /** True when this closed via its deadline passing with votes still missing, not a real quorum -- only possible for a "vote_expiring" Policy rule's own vote_request (payload.lazyEligible); every other vote_request still needs every maintainer's ballot, same as always. */
+  lazyConsensus?: boolean;
 }
 
 /**
@@ -362,13 +412,23 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
     }
   }
   const missing = lane.maintainers.filter((m) => !(m in ballots));
-  if (missing.length > 0) return { resolved: false, ballots, missing };
+  const lazyEligible = (theAsk.payload as { lazyEligible?: boolean } | undefined)?.lazyEligible === true;
+  const pastDeadline = !!theAsk.deadline && new Date(theAsk.deadline).getTime() <= Date.now();
+  if (missing.length > 0 && !(lazyEligible && pastDeadline)) return { resolved: false, ballots, missing };
 
+  // Past its deadline with votes still missing: only reachable at all
+  // when lazyEligible gated the branch above, so this is exactly a
+  // "vote_expiring" Policy rule's own offer going unengaged --
+  // defaults to approved, the same "nobody objected" outcome lazy
+  // consensus means everywhere else in the protocol. A real quorum
+  // (missing.length === 0) still tallies for real below regardless of
+  // lazyEligible, even if it happens to finish before its deadline.
+  const lazyConsensus = missing.length > 0;
   const forVotes = Object.values(ballots).filter((b) => b === "+1").length;
   const againstVotes = Object.values(ballots).filter((b) => b === "-1").length;
-  const approved = forVotes > againstVotes;
+  const approved = lazyConsensus || forVotes > againstVotes;
 
-  await answer(repo, laneId, theAsk, { from: closedBy, action: "complete", payload: { approved, ballots } });
+  await answer(repo, laneId, theAsk, { from: closedBy, action: "complete", payload: { approved, ballots, ...(lazyConsensus ? { lazyConsensus: true } : {}) } });
 
   if (approved) {
     const decision = (theAsk.payload ?? {}) as { decisionKind?: string; proposal?: Partial<import("./types.js").RepoPolicy> };
@@ -378,7 +438,7 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
     }
   }
 
-  return { resolved: true, approved, ballots, missing: [] };
+  return { resolved: true, approved, ballots, missing, ...(lazyConsensus ? { lazyConsensus: true } : {}) };
 }
 
 /**
@@ -387,7 +447,11 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
  * treated as approved") -- auto-grants a routine ask past its
  * deadline with no answer posted yet. Structurally refuses a
  * vote_request: that kind's whole point is that nothing about it ever
- * resolves without a real, counted Vote (tallyVotes), not silence.
+ * resolves without a real, counted Vote. A "vote_expiring" Policy
+ * rule's own expiry is handled inside tallyVotes instead, not here --
+ * its completion needs the same shape (action "complete",
+ * payload.approved) a real tallied vote produces, which this
+ * function's generic action "grant" can't give it.
  */
 export async function checkLazyConsensus(repo: string, laneId: string, askId: string, closedBy: string): Promise<boolean> {
   const lane = await resolveBackend().readLane(repo, laneId);
@@ -395,7 +459,7 @@ export async function checkLazyConsensus(repo: string, laneId: string, askId: st
   const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
   if (!theAsk) throw new Error(`no such ask "${askId}" in ${repo}/${laneId}`);
   if (theAsk.kind === "vote_request") {
-    throw new Error(`"${askId}" is a "vote_request" -- lazy consensus never applies to one of these. Policy changes, Role grants above Contributor, and Owner succession need a real Vote (tallyVotes), not nobody objecting in time.`);
+    throw new Error(`"${askId}" is a "vote_request" -- lazy consensus never applies to one of these through checkLazyConsensus. A "vote_expiring" Policy rule's own expiry resolves through vote_tally instead once its deadline passes, not this function.`);
   }
   if (!theAsk.deadline || new Date(theAsk.deadline).getTime() > Date.now()) return false;
   const alreadyAnswered = lane.history.some((e) => e.type === "ANSWER" && e.ask === askId);

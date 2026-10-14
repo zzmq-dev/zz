@@ -27,8 +27,9 @@ import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../cli/lib/repo.js";
 import { apiFetch } from "../cli/lib/api.js";
-import type { AskEntry } from "../engine/types.js";
+import type { AskEntry, RepoPolicy } from "../engine/types.js";
 import { resolveBackend } from "../engine/backend.js";
+import { resolvePolicyMode } from "../engine/policy.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
 import { threeWayMerge } from "./threeWayMerge.js";
 import { diffFileSets } from "../cli/lib/fileDiff.js";
@@ -139,12 +140,16 @@ async function verifyProposal(resolved: ResolvedRepo, files: { path: string; con
   })) as { exitCode: number; stdout: string; stderr: string };
 }
 
-// Posts the changeset_review first, then a submit_changeset that
-// depends_on it -- submit_changeset literally cannot be claimed until
-// a Maintainer grants the review (enforced in both agent/tools.ts's
-// ask_claim and engine/lane.ts's answer()), so "mechanically merge
-// it" and "is this actually what was asked for" are two separate,
-// separately-gated steps, not one agent's unilateral judgment call.
+// Posts whatever Policy actually requires for the touched files, then
+// a submit_changeset that depends_on it -- submit_changeset literally
+// cannot be claimed until that dependency grants/resolves (enforced in
+// both agent/tools.ts's ask_claim and engine/lane.ts's answer()'s own
+// merge backstop), so "mechanically merge it" and "is this actually
+// allowed" are two separate, separately-gated steps, not one agent's
+// unilateral judgment call. A repo with no policies set behaves
+// exactly as before this existed (resolvePolicyMode's own default):
+// self_review, i.e. always a changeset_review, any maintainer may
+// grant their own.
 async function postForReview(opts: {
   resolved: ResolvedRepo;
   laneId: string;
@@ -160,21 +165,45 @@ async function postForReview(opts: {
   source?: { repo: string; lane: string; commitOid: string };
 }): Promise<void> {
   const { resolved, laneId, agent, taskAskId, taskDescription, files, message, summary, baseCommit, callTool, source } = opts;
-  const review = (await callTool("ask_post", {
-    repo: resolved.slug,
-    lane_id: laneId,
-    kind: "changeset_review",
-    from: agent,
-    payload: { taskDescription, files, message, summary, baseCommit, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
-    depends_on: [],
-  })) as AskEntry;
+  const sourceFields = source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {};
+  const policy = (await callTool("policy_show", { repo: resolved.slug })) as RepoPolicy;
+  const rule = resolvePolicyMode(policy, files.map((f) => f.path));
+
+  const dependsOn = [taskAskId];
+  if (rule.mode === "vote_quorum" || rule.mode === "vote_expiring") {
+    const lazyEligible = rule.mode === "vote_expiring";
+    const vote = (await callTool("ask_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "vote_request",
+      from: agent,
+      payload: { decisionKind: "other", taskDescription, files, message, summary, baseCommit, lazyEligible, ...sourceFields },
+      depends_on: [],
+      ...(lazyEligible ? { deadline: new Date(Date.now() + (rule.expiry_hours ?? 72) * 3_600_000).toISOString() } : {}),
+    })) as AskEntry;
+    dependsOn.push(vote.id);
+  } else if (rule.mode !== "direct") {
+    // self_review or other_approver -- both need a changeset_review;
+    // other_approver's own extra bar (approver != author) is checked
+    // at completion time (engine/lane.ts's merge backstop), not here.
+    const review = (await callTool("ask_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "changeset_review",
+      from: agent,
+      payload: { taskDescription, files, message, summary, baseCommit, ...sourceFields },
+      depends_on: [],
+    })) as AskEntry;
+    dependsOn.push(review.id);
+  }
+
   await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
     kind: "submit_changeset",
     from: agent,
-    payload: { files, message, summary, baseCommit, ...(source ? { source_repo: source.repo, source_lane: source.lane, commit_sha: source.commitOid } : {}) },
-    depends_on: [taskAskId, review.id],
+    payload: { files, message, summary, baseCommit, ...sourceFields },
+    depends_on: dependsOn,
   });
 }
 

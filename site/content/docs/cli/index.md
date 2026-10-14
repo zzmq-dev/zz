@@ -12,7 +12,7 @@ See [Install](/docs/install/) to set it up. Every command accepts `--help`.
 ```
 zz login | logout
 zz agent create | token | list | delete
-zz repo create | list | grant | clone | ask | asks | submit | delete
+zz repo create | list | grant | clone | ask | asks | submit | delete | policy show | policy set
 zz ask claim | post | answer | vote-tally | whistleblow
 zz work [--assist]
 zz review
@@ -169,6 +169,25 @@ zz repo delete <owner/repo> [-y | --yes]
 ```
 
 Permanently deletes a repo: its real git history, Ladder, Lanes, all of it. Needs Owner on the repo. Asks you to type the slug back to confirm unless `-y`/`--yes` is given.
+
+### zz repo policy show
+
+```
+zz repo policy show <owner/repo>
+```
+
+Prints the repo's current Policy document: `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else, most-specific match wins, strictest mode wins across a whole changeset). Unrestricted read — Policy is meant to be visible, not just enforced. See [Governance](/docs/governance/#policy).
+
+### zz repo policy set
+
+```
+zz repo policy set <owner/repo> --repo-rule <mode> [--expiry-hours <n>] [--as <name>]
+zz repo policy set <owner/repo> --path <glob> --mode <mode> [--expiry-hours <n>] [--as <name>]
+```
+
+Changes Policy directly. `--repo-rule` replaces `_repo`; `--path`/`--mode` upserts one `policies` entry (matched by its exact path). `<mode>` is one of `direct` (no gate), `self_review` (a `changeset_review`, same agent may author and approve), `other_approver` (same, but the approver must differ from the author), `vote_quorum` (a real Committee vote, every maintainer must cast a ballot), or `vote_expiring` (the same vote, but unanswered past `--expiry-hours`, default 72, auto-approves instead of staying open forever).
+
+This is the UNGATED write path: an Owner may always use it, no vote, no review — the designed escape hatch. Anyone else may only when whatever's being changed is itself under a `direct` rule (enforced server-side). Anything stricter refuses here and tells you to post an Ask instead — a `changeset_review` for `self_review`/`other_approver`, a `vote_request` for `vote_quorum`/`vote_expiring` — with payload `{"decisionKind": "policy", "proposal": {...}}`; granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses. See the [Committee Vote & Policy demo](/docs/demos/committee-vote-and-policy/).
 
 ## Asks
 
@@ -350,10 +369,10 @@ Writes one [rung](/docs/nouns/#rung) to a repo's Ladder by hand, for example aft
 ### zz lane log
 
 ```
-zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--local]
+zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--full] [--local]
 ```
 
-Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` limits it to one Lane.
+Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` limits it to one Lane. In `--format text` (the default), a payload longer than 80 chars is truncated; `--full` shows it in full instead. `--format json` always shows everything regardless.
 
 ### zz lane propose
 

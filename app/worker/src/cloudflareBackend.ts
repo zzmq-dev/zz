@@ -19,6 +19,7 @@ import { writeRungsBatch, readRung, appendRepoChildren as appendRepoChildrenImpl
 import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
 import { readRepoMetaAndRoles, writeRepoMeta } from "./repoMeta.js";
 import type { RepoPolicy } from "../../engine/types.js";
+import { normalizePolicy } from "../../engine/policy.js";
 
 interface RepoInfo {
   remote: string;
@@ -416,7 +417,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
         const token = await repo.createToken("read", 3600);
         const { meta } = await readRepoMetaAndRoles(remote, token);
         if (!meta) throw new Error(`${artifactsName}: repo has no metadata yet`);
-        return meta.policy;
+        return normalizePolicy(meta.policy);
       });
     },
 

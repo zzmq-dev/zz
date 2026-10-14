@@ -12,7 +12,7 @@ import { resolveIdentity, releaseIdentity, type ResolvedIdentity } from "../cli/
 import { setActiveToken } from "../cli/lib/api.js";
 import { callRemoteTool } from "../cli/lib/remoteTools.js";
 import { requireCredentials } from "../cli/lib/credentials.js";
-import type { AskEntry, Lane } from "../engine/types.js";
+import type { AskEntry, Lane, RepoPolicy } from "../engine/types.js";
 import type { VoteTally, IncidentResult } from "../engine/lane.js";
 
 function section(title: string): void {
@@ -92,13 +92,13 @@ async function main() {
   })) as Lane;
   console.log(`   Lane ${govLane.id} -- maintainers: ${govLane.maintainers.join(", ")}`);
 
-  step('Posting a vote_request: "require every changeset to go through review before merge" (a Policy change -- never lazy consensus, only a real Vote)');
+  step('Posting a vote_request: "require a different approver than the author, repo-wide" (a Policy change -- never lazy consensus, only a real Vote)');
   const voteAsk = (await callRemoteTool(slug, "ask_post", {
     repo: slug,
     lane_id: govLane.id,
     kind: "vote_request",
     from: alice,
-    payload: { decisionKind: "policy", proposal: { require_changeset_review: true }, description: "Require changeset review before merge, repo-wide" },
+    payload: { decisionKind: "policy", proposal: { policies: [{ path: "**", mode: "other_approver" }] }, description: "Require a different approver than the author for every changeset, repo-wide" },
   })) as AskEntry;
   console.log(`   Ask ${voteAsk.id}`);
 
@@ -122,6 +122,48 @@ async function main() {
     console.log("   UNEXPECTED: that should have failed");
   } catch (e) {
     console.log(`   Rejected as expected: ${(e as Error).message.slice(0, 100)}`);
+  }
+
+  // ---------------------------------------------------------------
+  section("Scenario A continued: Policy's own teeth -- path-scoped rules, and who may change them");
+  // ---------------------------------------------------------------
+  step(`${human} (the repo's Owner) tightens README.md directly to "vote_quorum" -- the unilateral override, no vote needed`);
+  setActiveToken(requireCredentials().token);
+  const policy = (await callRemoteTool(slug, "policy_set", { repo: slug, actor: human, path_rule: { path: "README.md", mode: "vote_quorum" } })) as RepoPolicy;
+  console.log(`   README.md's own rule is now "${policy.policies.find((r) => r.path === "README.md")?.mode}"`);
+
+  step(`For contrast: mallory (Maintainer, not Owner) tries the same thing herself -- rejected, since "_repo" itself defaults to "vote_quorum"`);
+  try {
+    setActiveToken(malloryId.token);
+    await callRemoteTool(slug, "policy_set", { repo: slug, actor: mallory, path_rule: { path: "README.md", mode: "direct" } });
+    console.log("   UNEXPECTED: that should have failed");
+  } catch (e) {
+    console.log(`   Rejected as expected: ${(e as Error).message.slice(0, 160)}`);
+  }
+
+  step("A changeset touching README.md now needs a real Vote, not just a Maintainer's own review -- mallory submits one and it's blocked on exactly that");
+  setActiveToken(malloryId.token);
+  const policyLane = (await callRemoteTool(slug, "lane_propose", { repo: slug, name: "README update", objective: "Tweak the README", scope: ["README.md"], actor: mallory })) as Lane;
+  const gatedVote = (await callRemoteTool(slug, "ask_post", {
+    repo: slug,
+    lane_id: policyLane.id,
+    kind: "vote_request",
+    from: mallory,
+    payload: { decisionKind: "other", files: [{ path: "README.md", content: "# updated\n" }], message: "Tweak the README" },
+  })) as AskEntry;
+  const gatedSubmit = (await callRemoteTool(slug, "ask_post", {
+    repo: slug,
+    lane_id: policyLane.id,
+    kind: "submit_changeset",
+    from: mallory,
+    payload: { files: [{ path: "README.md", content: "# updated\n" }], message: "Tweak the README" },
+    depends_on: [gatedVote.id],
+  })) as AskEntry;
+  try {
+    await callRemoteTool(slug, "ask_answer", { repo: slug, lane_id: policyLane.id, ask_id: gatedSubmit.id, actor: mallory, action: "complete" });
+    console.log("   UNEXPECTED: that should have failed");
+  } catch (e) {
+    console.log(`   Blocked as expected -- the merge backstop itself enforces this, not just the UI: ${(e as Error).message.slice(0, 160)}`);
   }
 
   // ---------------------------------------------------------------

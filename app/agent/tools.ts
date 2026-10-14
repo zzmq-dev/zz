@@ -16,7 +16,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Rung } from "../engine/ladder.js";
-import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef } from "../engine/types.js";
+import type { AnswerEntry, AskEntry, AskKind, Lane, LaneRef, RepoPolicy } from "../engine/types.js";
 
 export interface ToolDef {
   name: string;
@@ -480,11 +480,12 @@ const askPostTool: ToolDef = {
       payload: { type: "object" },
       depends_on: { type: "array", items: { type: "string" } },
       priority: { type: "number" },
+      deadline: { type: "string", description: 'ISO timestamp. Only meaningful on a "vote_request" with payload.lazyEligible true (a "vote_expiring" Policy rule) -- checkLazyConsensus ignores every other kind\'s deadline for a vote_request, and ordinary asks use it for normal lazy consensus.' },
     },
     required: ["repo", "lane_id", "kind", "from"],
   },
-  async execute({ repo, lane_id, kind, from, payload, depends_on, priority }) {
-    return ask(repo as string, lane_id as string, { kind: kind as AskKind, from: from as string, payload, depends_on: depends_on as string[] | undefined, priority: priority as number | undefined });
+  async execute({ repo, lane_id, kind, from, payload, depends_on, priority, deadline }) {
+    return ask(repo as string, lane_id as string, { kind: kind as AskKind, from: from as string, payload, depends_on: depends_on as string[] | undefined, priority: priority as number | undefined, deadline: deadline as string | undefined });
   },
 };
 
@@ -807,17 +808,63 @@ const runInSandbox: ToolDef = {
   },
 };
 
+const policyShow: ToolDef = {
+  name: "policy_show",
+  description: 'Reads a repo\'s current Policy document: `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
+  parameters: {
+    type: "object",
+    properties: { repo: { type: "string" } },
+    required: ["repo"],
+  },
+  async execute({ repo }) {
+    return resolveBackend().readPolicy(repo as string);
+  },
+};
+
+const policySet: ToolDef = {
+  name: "policy_set",
+  description:
+    'Writes a direct change to Policy: either `repo_rule` (replaces `_repo`) or `path_rule` (upserts one entry of `policies`, matched by its exact `path`). This is the UNGATED path -- only an Owner may call it regardless of what `_repo` currently says, or anyone else when `_repo` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      actor: { type: "string" },
+      repo_rule: { type: "object", properties: { mode: { type: "string" }, expiry_hours: { type: "number" } }, required: ["mode"] },
+      path_rule: { type: "object", properties: { path: { type: "string" }, mode: { type: "string" }, expiry_hours: { type: "number" } }, required: ["path", "mode"] },
+    },
+    required: ["repo", "actor"],
+  },
+  async execute({ repo, repo_rule, path_rule }) {
+    const backend = resolveBackend();
+    const current = await backend.readPolicy(repo as string);
+    if (repo_rule) {
+      await backend.writePolicy(repo as string, { ...current, _repo: repo_rule as RepoPolicy["_repo"] });
+    } else if (path_rule) {
+      const rule = path_rule as RepoPolicy["policies"][number];
+      const policies = [...current.policies.filter((r) => r.path !== rule.path), rule];
+      await backend.writePolicy(repo as string, { ...current, policies });
+    } else {
+      throw new Error('policy_set needs either "repo_rule" or "path_rule"');
+    }
+    return backend.readPolicy(repo as string);
+  },
+};
+
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, policyShow, policySet];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 
 // The tools that actually mutate committed state (a real commit, a
-// real Ladder write, the incident runbook's own STOP/DROP/ROLL) -- real
-// RBAC enforcement for `zz work` isn't just the system prompt telling
-// the model to behave; it's not handing these to the model at all
-// unless the ask it's currently working is one where it's confirmed to
-// be a coordinator (see ASK_SCOPE in engine/lane.ts and how
-// cli/commands/work.ts picks a tool set per ask).
-export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool, whistleblowResolve];
+// real Ladder write, the incident runbook's own STOP/DROP/ROLL, a
+// direct Policy write) -- real RBAC enforcement for `zz work` isn't
+// just the system prompt telling the model to behave; it's not
+// handing these to the model at all unless the ask it's currently
+// working is one where it's confirmed to be a coordinator (see
+// ASK_SCOPE in engine/lane.ts and how cli/commands/work.ts picks a
+// tool set per ask). policy_set additionally gets its own, stricter
+// server-side gate (Owner-or-"_repo is direct" only) -- being handed
+// the tool at all is necessary but not sufficient for it to succeed.
+export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool, whistleblowResolve, policySet];
 export const CONTRIBUTOR_TOOLS: ToolDef[] = ALL_TOOLS.filter((t) => !COORDINATOR_ONLY_TOOLS.includes(t));

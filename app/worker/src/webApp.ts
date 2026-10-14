@@ -94,7 +94,8 @@ import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
 import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { claimableAsks, claimHolder } from "../../engine/workqueue.js";
-import type { AnswerEntry, AskEntry, HistoryEntry, InsightEntry, Lane } from "../../engine/types.js";
+import type { AnswerEntry, AskEntry, HistoryEntry, InsightEntry, Lane, RepoPolicy } from "../../engine/types.js";
+import { DEFAULT_REPO_POLICY, normalizePolicy } from "../../engine/policy.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -520,6 +521,24 @@ function roleBadge(role: string, agentLinkHtml?: string): string {
   const color = BADGE_VARIANT_COLOR[ROLE_BADGE_VARIANT[role] ?? "muted"];
   const prefix = agentLinkHtml ? `${agentLinkHtml} ` : "";
   return `<span class="scope" style="color:${color}">${prefix}${esc(role)}</span>`;
+}
+
+// Loosest to strictest, same order engine/policy.ts's own
+// MODE_STRICTNESS uses -- green means "just commit", red means "needs
+// a real Vote," the two ask-gated modes in between get the same
+// yellow a changeset_review itself gets elsewhere on this page.
+const POLICY_MODE_VARIANT: Record<string, string> = { direct: "green", self_review: "yellow", other_approver: "yellow", vote_quorum: "red", vote_expiring: "cyan" };
+function policyModeCode(rule: { mode: string; expiry_hours?: number }): string {
+  const color = BADGE_VARIANT_COLOR[POLICY_MODE_VARIANT[rule.mode] ?? "muted"];
+  const expiry = rule.mode === "vote_expiring" ? ` <span class="muted">(expires ${esc(String(rule.expiry_hours ?? 72))}h)</span>` : "";
+  return `<code class="kind-code" style="color:${color}">${esc(rule.mode)}</code>${expiry}`;
+}
+
+/** The repo page's own "Policy" panel -- same collapsed-by-default <details> the Roles panel uses, since Policy is meant to be visible to a repo's Maintainers, not just enforced against them. */
+function policyPanelHtml(policy: RepoPolicy): string {
+  const repoRow = `<li class="row"><span class="rung">_repo</span> ${policyModeCode(policy._repo)}</li>`;
+  const pathRows = policy.policies.map((r) => `<li class="row"><span class="rung">${esc(r.path)}</span> ${policyModeCode(r)}</li>`).join("");
+  return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}</ul></details>`;
 }
 
 /** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */
@@ -1195,7 +1214,7 @@ async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskTe
   const now = new Date().toISOString();
   await writeRepoMeta(created.remote, token, {
     description: taskText,
-    policy: { require_changeset_review: false, visibility: "public" },
+    policy: DEFAULT_REPO_POLICY,
     owner: actor.username,
     shard_of: parentSlug,
     created_at: now,
@@ -2221,6 +2240,31 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
         throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Maintainer of ${slug} -- "${toolName}" requires at least Maintainer`);
       }
     }
+    // policy_set is the UNGATED write path -- an Owner may always call
+    // it (the designed escape hatch), and anyone Maintainer+ may when
+    // Policy's own "_repo" rule says "direct". Anything stricter
+    // (self_review/other_approver/vote_quorum/vote_expiring) refuses
+    // this tool outright: changing Policy then has to go through the
+    // same Ask/Vote protocol a real changeset already does (post a
+    // changeset_review or vote_request with payload { decisionKind:
+    // "policy", proposal }; engine/lane.ts applies it on grant/tally).
+    if (toolName === "policy_set") {
+      const role = me ? await getRepoRoleForPrincipal(env.DB, repo.slug, me.username) : null;
+      if (!role || !repoAtLeast(role as RbacRole, "maintainer")) {
+        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Maintainer of ${slug} -- "policy_set" requires at least Maintainer`);
+      }
+      if (role !== "owner") {
+        const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
+        await stub.configure(repo.artifacts_name);
+        const policy = (await stub.callTool("policy_show", { repo: repo.artifacts_name })) as RepoPolicy;
+        if (policy._repo.mode !== "direct") {
+          throw new ApiError(
+            403,
+            `${me?.username}'s Role (${role}) isn't Owner, and ${slug}'s Policy itself requires "${policy._repo.mode}" to change -- post an Ask instead (changeset_review for self_review/other_approver, vote_request for vote_quorum/vote_expiring) with payload {decisionKind:"policy", proposal:{...}}; it applies automatically once granted or tallied.`,
+          );
+        }
+      }
+    }
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     for (const field of ["actor", "from"]) {
@@ -2795,6 +2839,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
        <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
        <a href="${origin}/${esc(slug)}/archive.zip" style="display:inline-block;margin-bottom:.75rem"><button class="secondary">Download .zip</button></a>
        <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
+       ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
        ${shardsHtml}
      </div>
 

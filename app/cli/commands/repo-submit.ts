@@ -20,7 +20,8 @@ import { readFileSync } from "node:fs";
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import type { AskEntry, Lane } from "../../engine/types.js";
+import type { AskEntry, Lane, RepoPolicy } from "../../engine/types.js";
+import { resolvePolicyMode } from "../../engine/policy.js";
 
 function git(args: string[]): string {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
@@ -107,27 +108,49 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
     if (!theAsk) throw new Error(`no such ask "${askId}" in ${slug}/${laneId}${lane.origin ? ` or its origin ${lane.origin.lane}` : ""}`);
     const taskDescription = (theAsk.payload as { description?: string } | undefined)?.description ?? JSON.stringify(theAsk.payload);
 
-    const review = (await callRemoteTool(slug, "ask_post", {
-      lane_id: laneId,
-      kind: "changeset_review",
-      from: identity.username,
-      payload: { taskDescription, files, message, summary: message },
-      depends_on: [],
-    })) as AskEntry;
+    // Not askId in depends_on when it lives in a different lane
+    // (askLaneId !== laneId): depends_on resolution only ever checks
+    // within the one lane an ask's own history lives in (see
+    // agent/tools.ts's ask_claim, which checks `lane!.history`, never a
+    // cross-lane lookup) -- a cross-lane id here could never resolve.
+    // Harmless to drop: askId gets marked complete directly below
+    // regardless of this dependency list.
+    const dependsOn = askLaneId === laneId ? [askId] : [];
+    const policy = (await callRemoteTool(slug, "policy_show", {})) as RepoPolicy;
+    const rule = resolvePolicyMode(policy, changed);
+    let gateDescription: string;
+    if (rule.mode === "vote_quorum" || rule.mode === "vote_expiring") {
+      const lazyEligible = rule.mode === "vote_expiring";
+      const vote = (await callRemoteTool(slug, "ask_post", {
+        lane_id: laneId,
+        kind: "vote_request",
+        from: identity.username,
+        payload: { decisionKind: "other", taskDescription, files, message, summary: message, lazyEligible },
+        depends_on: [],
+        ...(lazyEligible ? { deadline: new Date(Date.now() + (rule.expiry_hours ?? 72) * 3_600_000).toISOString() } : {}),
+      })) as AskEntry;
+      dependsOn.push(vote.id);
+      gateDescription = `a vote (vote_request ${vote.id}) -- this repo's Policy requires "${rule.mode}" for these files`;
+    } else if (rule.mode !== "direct") {
+      const review = (await callRemoteTool(slug, "ask_post", {
+        lane_id: laneId,
+        kind: "changeset_review",
+        from: identity.username,
+        payload: { taskDescription, files, message, summary: message },
+        depends_on: [],
+      })) as AskEntry;
+      dependsOn.push(review.id);
+      gateDescription = `review (changeset_review ${review.id})`;
+    } else {
+      gateDescription = `no review at all -- this repo's Policy allows a direct merge for these files`;
+    }
 
-    // Not askId here when it lives in a different lane (askLaneId !==
-    // laneId): depends_on resolution only ever checks within the one
-    // lane an ask's own history lives in (see agent/tools.ts's
-    // ask_claim, which checks `lane!.history`, never a cross-lane
-    // lookup) -- a cross-lane id here could never resolve. Harmless to
-    // drop: askId gets marked complete directly below regardless of
-    // this dependency list.
     await callRemoteTool(slug, "ask_post", {
       lane_id: laneId,
       kind: "submit_changeset",
       from: identity.username,
       payload: { files, message, summary: message, baseCommit },
-      depends_on: askLaneId === laneId ? [askId, review.id] : [review.id],
+      depends_on: dependsOn,
     });
 
     await callRemoteTool(slug, "ask_answer", {
@@ -138,8 +161,14 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
       payload: { summary: message },
     });
 
-    console.log(`Submitted ${changed.length} file(s) for review (changeset_review ${review.id}) and marked ${askId} complete.`);
-    console.log(`Next: a Maintainer needs to \`zz review\` and approve it; once granted, a coordinator's \`zz work\` run merges it for real.`);
+    console.log(`Submitted ${changed.length} file(s) for ${gateDescription}, and marked ${askId} complete.`);
+    console.log(
+      rule.mode === "direct"
+        ? `Next: a coordinator's \`zz work\` run merges it for real.`
+        : rule.mode === "vote_quorum" || rule.mode === "vote_expiring"
+          ? `Next: every maintainer votes (\`zz ask answer ... vote\`), then \`zz ask vote-tally\` closes it; once approved, a coordinator's \`zz work\` run merges it for real.`
+          : `Next: a Maintainer needs to \`zz review\` and approve it; once granted, a coordinator's \`zz work\` run merges it for real.`,
+    );
   } finally {
     await cleanup();
   }
