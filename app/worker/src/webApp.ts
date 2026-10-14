@@ -471,16 +471,17 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
 .lane-tag-link{text-decoration:none}
 .lane-tag{display:inline-block;vertical-align:middle;background:rgba(92,141,255,.15);border:1px solid rgba(92,141,255,.4);border-radius:4px;padding:0 .6em;margin:0 .2em;font-family:var(--mono);font-size:.85em;color:var(--blue);transform:skewX(-15deg)}
 .lane-tag-link:hover .lane-tag{background:rgba(92,141,255,.28)}
-/* A Ladder rung's path, bracketed like a reference into a structure
-   rather than just colored text -- the corner marks are drawn with
+/* A Ladder rung's own kind (file/changeset/filechange/...), bracketed
+   like a reference into a structure instead of the rounded .badge
+   pill every other kind label gets -- the corner marks are drawn with
    pseudo-elements so the bracket frames the sides without a solid
-   border boxing in the whole pill the way .badge does. */
-.rung-bracket{display:inline-block;vertical-align:middle;position:relative;color:var(--pink);font-family:var(--mono);font-size:.92em;padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
-.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:3px;border-color:var(--border);border-style:solid}
-.rung-bracket::before{left:0;border-width:1px 0 1px 1px}
-.rung-bracket::after{right:0;border-width:1px 1px 1px 0}
-.rung-bracket-link{text-decoration:none}
-.rung-bracket-link:hover .rung-bracket{background:rgba(255,46,146,.22)}
+   border boxing in the whole thing. Bright, full-opacity pink and a
+   thick 4px mark so the bracket itself reads clearly, not just a
+   faint accent. */
+.rung-bracket{display:inline-block;vertical-align:middle;position:relative;color:var(--pink);font-family:var(--mono);font-weight:600;font-size:.85rem;padding:0 .6em;margin:0 .15em;background:rgba(255,46,146,.12)}
+.rung-bracket::before,.rung-bracket::after{content:"";position:absolute;top:0;bottom:0;width:4px;border-color:var(--pink);border-style:solid}
+.rung-bracket::before{left:0;border-width:2px 0 2px 2px}
+.rung-bracket::after{right:0;border-width:2px 2px 2px 0}
 .lane-tag .text{display:inline-block;transform:skewX(15deg)}
 .summary-detail{margin-top:.5rem;font-size:.82rem}
 .summary-detail summary{cursor:pointer;color:var(--muted);user-select:none}
@@ -1427,9 +1428,8 @@ function renderLadderNode(slug: string, node: ResolvedRung, defaultBranch: strin
   // rendered, not a second query against anything.
   const searchable = esc(`${node.kind} ${node.path} ${node.summary}`.toLowerCase());
   const href = ladderPathLink(slug, node, defaultBranch);
-  const bracket = `<span class="rung-bracket">${esc(node.path)}</span>`;
-  const pathHtml = href ? `<a href="${href}" class="rung-bracket-link">${bracket}</a>` : bracket;
-  const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="badge badge-pink">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
+  const pathHtml = href ? `<a href="${href}" class="mono">${esc(node.path)}</a>` : `<span class="mono">${esc(node.path)}</span>`;
+  const self = `<li class="row" data-search="${searchable}" data-kind="${esc(node.kind)}">${indent}<span class="rung-bracket">${esc(node.kind)}</span> ${pathHtml} <span class="muted">${esc(node.summary)}</span></li>`;
   // An ask's children are a conversation thread (ask/answer/ask/...)
   // in chronological order -- that sequence is the whole point, so
   // it's left alone rather than grouped by kind like everything else.
