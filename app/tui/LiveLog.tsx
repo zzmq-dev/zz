@@ -12,6 +12,19 @@ import type { FlatEvent } from "./types.js";
 import { useTerminalSize } from "./useTerminalSize.js";
 import { YELLOW, GREEN, CYAN, MUTED, PINK } from "./theme.js";
 
+// HH:MM:SS.mmm, local time -- a live feed is almost always read same-day,
+// so the date would just be dead weight, but the milliseconds stay: this
+// is meant for correlating against another timestamped source (a --stdio
+// log's own `new Date().toISOString()` prefix, a screen recording's
+// clock), and several events landing within the same second is common
+// enough (claim+grant, or a burst of automated answers) that second-level
+// precision alone would make two of them look simultaneous when they
+// weren't.
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleTimeString(undefined, { hour12: false })}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
+
 function eventParts(e: FlatEvent): { label: string; color: string; rest: string } {
   if (e.entry.type === "ASK") return { label: "ASK", color: YELLOW, rest: `${e.entry.kind} from ${e.entry.from}` };
   if (e.entry.type === "ANSWER") return { label: "ANSWER", color: GREEN, rest: `${e.entry.action} (${e.entry.ask}) from ${e.entry.from}` };
@@ -91,6 +104,9 @@ export function LiveLog({ events, watchedRepos = [], maxRows, scrollOffset }: { 
           const { label, color, rest } = eventParts(e);
           const columns = (
             <>
+              <Box width={12} marginRight={1} flexShrink={0}>
+                <Text color={MUTED}>{shortTime(e.entry.at)}</Text>
+              </Box>
               <Box width={26} marginRight={1} flexShrink={0}>
                 <Text color={MUTED} wrap="truncate-end">
                   {e.repo}
