@@ -1,0 +1,43 @@
+// `zz lane grant <owner/repo> <lane-id> <principal> <role>`: adds an
+// agent to an EXISTING Lane's coordinators or maintainers -- the only
+// way to do this after the Lane was first proposed. Needed because a
+// repo-level Role grant (zz repo grant) has no effect on any Lane's
+// own authority by itself, and "_repo" in particular is created
+// lazily on first post with maintainers hardcoded to just the repo's
+// owner. Mirrors lane-propose.ts's shape (callRemoteTool).
+import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { setActiveToken } from "../lib/api.js";
+import { callRemoteTool } from "../lib/remoteTools.js";
+import { requireCredentials } from "../lib/credentials.js";
+import type { Lane } from "../../engine/types.js";
+
+function expandAgentId(raw: string, humanUsername: string): string {
+  return /[@[]/.test(raw) ? raw : `${humanUsername}[${raw}]`;
+}
+
+export interface LaneGrantOptions {
+  as?: string;
+}
+
+export async function laneGrantCmd(slug: string, laneId: string, principal: string, role: string, opts: LaneGrantOptions): Promise<void> {
+  if (role !== "coordinator" && role !== "maintainer") throw new Error(`role must be "coordinator" or "maintainer" -- got "${role}".`);
+  const identity = await resolveIdentity(opts.as);
+  setActiveToken(identity.token);
+
+  let cleanedUp = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    await releaseIdentity(identity);
+  };
+  process.on("SIGINT", () => void cleanup().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
+
+  try {
+    const expanded = expandAgentId(principal, requireCredentials().username);
+    const lane = (await callRemoteTool(slug, "lane_grant", { lane_id: laneId, principal: expanded, as: role, actor: identity.username })) as Lane;
+    console.log(`Added "${expanded}" as ${role} on ${slug}/${laneId} -- coordinators: [${lane.coordinators.join(", ")}], maintainers: [${lane.maintainers.join(", ")}]`);
+  } finally {
+    await cleanup();
+  }
+}

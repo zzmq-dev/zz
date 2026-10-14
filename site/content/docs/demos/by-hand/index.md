@@ -9,7 +9,7 @@ One function, `sum`, implemented with no agent at all — every step of the prot
 
 ## Voice-over
 
-> Here's everything zz asks of a contributor, done by hand. I create a repo, mathkit. I post an ASK: implement sum. An ASK is a request anyone can answer, human or agent. I claim it, which opens a Lane, my workstream. I clone, write sum, commit, and package that as a Changeset. Submitting it is another ASK, this time for review. Now I switch hats to maintainer: I claim the review, read the diff, approve, merge. Last, I write the Ladder: summaries of what changed and why, at every level from the repo down to the function. That's the knowledge an agent climbs later instead of digging through old threads.
+> Here's everything zz asks of a contributor, done by hand. I create a repo, mathkit. I post an ASK: implement sum. An ASK is a request anyone can answer, human or agent. I claim it, which opens a Lane, my workstream. I clone, write sum, commit, and package that as a Changeset. Submitting it is another ASK, this time for review. A maintainer approves it — that's a real decision, recorded — and then a coordinator actually merges it: a separate, mechanical step, today still run through `zz work` rather than a bare CLI command. Last, I write the Ladder: summaries of what changed and why. That's the knowledge an agent climbs later instead of digging through old threads.
 >
 > That's a lot of work for one function. OK, let's go faster.
 
@@ -19,9 +19,12 @@ One terminal full screen, `zz top` small in a corner. Sped up 4–8x with a capt
 
 ## Run sheet
 
+Verified live against `zzmq.dev`, 2026-10-14. Two corrections from the original script, both real, both worth narrating rather than hiding:
+
 ```
 zz repo create mathkit --description "Small, dependency-free math utilities"
 zz repo ask <me>/mathkit "implement sum(...numbers)"
+zz repo asks <me>/mathkit                             # find the ask id
 zz ask claim <me>/mathkit <ask-id>
 zz repo clone <me>/mathkit && cd mathkit
 ```
@@ -37,18 +40,32 @@ export function sum(...numbers) {
 ```
 git add -A && git commit -m "Add sum"
 zz repo submit <me>/mathkit <lane-id> <ask-id> --message "Add sum"
-zz review <me>/mathkit
 ```
 
-Read the diff, approve, merge. Then write the Ladder by hand — one rung per level, repo down to function:
+**Correction 1 — `zz review` approves; it does not merge.** It's interactive (reads from stdin), so this is one real answer, not a batch:
+
+```
+zz review <me>/mathkit
+# approve (a) / request changes (r) / skip (s)? a
+```
+
+The changeset_review is now granted — but nothing is committed yet. The actual merge needs a coordinator's `zz work` process to pick up the resulting `submit_changeset` Ask and call `commit_changeset` for real (mechanical here — no real judgment call for the model to make, but it is a model turn):
+
+```
+zz work <me>/mathkit --scope coordinator --provider groq --stdio
+# ... claims the submit_changeset, commits, ctrl+c once it logs "complete" ...
+```
+
+Confirmed merged: `git log` in a fresh clone shows the real commit.
+
+**Correction 2 — a function-level rung can't be written with `zz ladder edit`.** Only `repo`, `directory`, `file`, `release`, `changeset`, `ask`, `contributor`, and `dependencies` have a git object of their own to anchor to; `function` (and `lines`/`filechange`/`linechange`) only exist nested inside one of those rungs' `children`, which this command always writes as `[]`. Narrate the file and repo rungs; skip the function-level claim, or show it being written by an agent's own `ladder_write_rung` tool call in a later stage instead:
 
 ```
 zz ladder edit <me>/mathkit index.js --kind file --summary "Numeric utility functions."
-zz ladder edit <me>/mathkit index.js --kind function --summary "sum(...numbers): adds every argument together, 0 for no arguments."
 zz ladder edit <me>/mathkit _repo --kind repo --summary "mathkit: small, dependency-free math utilities."
 zz lane log <me>/mathkit
 ```
 
 ## Checkpoint
 
-`mathkit` has `sum`, one merged Lane, and repo/file/function Ladder rungs. The Ladder tab in `zz top` shows all three.
+`mathkit` has `sum`, one merged Lane with a real commit, and repo/file Ladder rungs. `zz lane log` shows the full trail: the work Ask, its claim, the changeset_review and submit_changeset pair, the grant, and the final commit.

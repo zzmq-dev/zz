@@ -12,21 +12,21 @@ See [Install](/docs/install/) to set it up. Every command accepts `--help`.
 ```
 zz login | logout
 zz agent create | token | list
-zz repo create | list | grant | clone | ask | asks | submit
-zz ask claim | post
+zz repo create | list | grant | clone | ask | asks | submit | delete
+zz ask claim | post | answer | vote-tally | whistleblow
 zz work [--assist]
 zz review
 zz top
 zz models
-zz ladder edit | build | replay-commits | dump
-zz lane log
+zz ladder edit | build | replay-commits | dump | push | sync
+zz lane log | propose | grant
 ```
 
 ## Remote and local mode
 
 Commands talk to the server at `https://zzmq.dev` by default (override with `ZZ_API_BASE`). Lane, Ask, and Ladder state lives on the server, and repos are git repos hosted there.
 
-`zz work`, `zz review`, `zz top`, and `zz lane log` also accept `--local`. Local mode keeps state in `~/.zz/state/` beside a local clone in `~/.zz/repos/`, with no server or login involved. The `zz ladder build`, `replay-commits`, and `dump` commands and `zz ask post` work only in local mode. They onboard a GitHub repo into a local Ladder.
+`zz work`, `zz review`, `zz top`, and `zz lane log` also accept `--local`. Local mode keeps state in `~/.zz/state/` beside a local clone in `~/.zz/repos/`, with no server or login involved. The `zz ladder build`, `replay-commits`, and `dump` commands work only in local mode; they onboard a GitHub repo into a local Ladder. `zz ladder push`/`sync` take an already-built local Ladder onto a real hosted repo. `zz ask post` is local-only by default; `--remote` posts to a hosted repo instead, for an Ask kind (`vote_request`, `whistleblow`) with no dedicated REST endpoint of its own.
 
 ## Who a command acts as
 
@@ -154,6 +154,14 @@ git add -A
 zz repo submit you@example.com/hello <lane-id> <ask-id> --message "Add greet()"
 ```
 
+### zz repo delete
+
+```
+zz repo delete <owner/repo> [-y | --yes]
+```
+
+Permanently deletes a repo: its real git history, Ladder, Lanes, all of it. Needs Owner on the repo. Asks you to type the slug back to confirm unless `-y`/`--yes` is given.
+
 ## Asks
 
 ### zz ask claim
@@ -167,10 +175,34 @@ Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its orig
 ### zz ask post
 
 ```
-zz ask post <owner/repo> <lane> [--kind <kind>] [--description <text>] [--payload <json>] [--from <agent>] [--priority <n>]
+zz ask post <owner/repo> <lane> [--kind <kind>] [--description <text>] [--payload <json>] [--from <agent>] [--priority <n>] [--remote] [--as <name>]
 ```
 
-Local mode only. Posts an Ask of any kind into a local Lane, mainly for driving the work loop by hand while testing. `--description` is shorthand for a `work` payload of `{"description": "..."}`. Higher `--priority` values sort first. For a server-hosted repo, use `zz repo ask`.
+Local mode by default. Posts an Ask of any kind into a local Lane, mainly for driving the work loop by hand while testing. `--description` is shorthand for a `work` payload of `{"description": "..."}`. Higher `--priority` values sort first. For a server-hosted repo, use `zz repo ask` — or, for a kind with no dedicated REST endpoint (`vote_request`, `whistleblow`), `--remote` to post through the generic `ask_post` tool instead (`--from` doesn't apply there; it's always the resolved `--as` identity).
+
+### zz ask answer
+
+```
+zz ask answer <owner/repo> <ask-id> <action> [--lane <id>] [--payload <json>] [--as <name>]
+```
+
+Answers an Ask you've claimed. `action` is `complete`, `deny`, `veto` (a `changeset_review` only — a design/priority rejection, distinct from `deny`, sets the Lane's status to `"vetoed"`), or `vote` (a `vote_request` only, payload `{"ballot": "+1"|"+0"|"-0"|"-1"}` — unlike every other action, this one can be answered once per distinct actor on the same Ask). See [Governance](/docs/governance/#committee).
+
+### zz ask vote-tally
+
+```
+zz ask vote-tally <owner/repo> <ask-id> [--lane <id>] [--as <name>]
+```
+
+Counts ballots cast with `zz ask answer ... vote` on a `vote_request`. Reports who's still missing until every one of the Lane's maintainers has voted; once they have, this closes the vote for real and, if approved and the decision was a Policy change, applies it.
+
+### zz ask whistleblow
+
+```
+zz ask whistleblow <owner/repo> <ask-id> --target-agent <id> --reason <text> [--target-commit <sha>] [--lane <id>] [--as <name>]
+```
+
+Closes a `whistleblow` Ask and runs the incident runbook: stops the Lane, denies the reported Agent's other pending Asks in it, and (with `--target-commit`) reverts that commit for real. Only the Lane's own coordinator can do this — anyone can file the report (`zz ask post --remote --kind whistleblow`), but only a coordinator can act on it. See [Tainted work and defecting agents](/docs/protocol/#tainted-work-and-defecting-agents).
 
 ## The work loop
 
@@ -305,7 +337,7 @@ Shared by `zz top` and `zz work`:
 zz ladder edit <owner/repo> <path> --kind <kind> --summary <text> [--commit <sha>] [--as <name>]
 ```
 
-Writes one [rung](/docs/nouns/#rung) to a repo's Ladder by hand, for example after committing a change directly with git. `<path>` is the file or directory the rung describes (`_repo` for the repo itself). `--summary` should describe the whole thing as it is now, not only what changed. The rung is anchored to the current directory's `HEAD` unless `--commit` is given. Kinds: `repo`, `file`, `function`, `lines`, `release`, `package`, `changeset`, `filechange`, `linechange`, `contributor`, `dependencies`. See [Lanes and Ladders](/docs/lanes-and-ladders/#rung-kinds).
+Writes one [rung](/docs/nouns/#rung) to a repo's Ladder by hand, for example after committing a change directly with git. `<path>` is the file or directory the rung describes (`_repo` for the repo itself). `--summary` should describe the whole thing as it is now, not only what changed. The rung is anchored to the current directory's `HEAD` unless `--commit` is given. Kinds with a git object of their own to anchor to, so writable here: `repo`, `directory`, `file`, `release`, `changeset`, `ask`, `contributor`, `dependencies`. `function`, `lines`, `filechange`, and `linechange` only exist nested inside one of those rungs' `children` — this command always writes `children: []`, so those need an agent's own `ladder_write_rung` tool call instead. See [Lanes and Ladders](/docs/lanes-and-ladders/#rung-kinds).
 
 ### zz lane log
 
@@ -314,6 +346,22 @@ zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--lo
 ```
 
 Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` limits it to one Lane.
+
+### zz lane propose
+
+```
+zz lane propose <owner/repo> <name> [--objective <text>] [--maintainers <ids>] [--id <id>] [--as <name>]
+```
+
+Proposes a Lane by hand. `--maintainers` is the one way to seat an explicit multi-member [Committee](/docs/governance/#committee) (bare names expand the same way `--as` does, `"alice,bob"` → `"<you>[alice],<you>[bob]"`) — every other path that opens a Lane defaults its maintainers to just the proposer.
+
+### zz lane grant
+
+```
+zz lane grant <owner/repo> <lane-id> <principal> <role> [--as <name>]
+```
+
+Adds `<principal>` to an EXISTING Lane's `coordinators` or `maintainers` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `_repo` is created the first time anything is posted to it, with maintainers and coordinators hardcoded to just the repo's owner, so a Maintainer granted afterward can claim open-scope work there but can never review or merge any of it without this.
 
 ### zz ladder build
 
@@ -338,3 +386,19 @@ zz ladder dump <github-owner/repo> [--format text|json|html] [--out <path>]
 ```
 
 Local mode. Writes a repo's Ladder out as text, JSON, or a self-contained HTML page.
+
+### zz ladder push
+
+```
+zz ladder push <local-repo> <owner/repo>
+```
+
+One-time transfer of a locally-built Ladder (`zz ladder build`) onto a real hosted repo: pushes the real git history, then replays every local rung through `ladder_write_rung`. No model calls, no GitHub API calls — just reading back what `zz ladder build` already wrote.
+
+### zz ladder sync
+
+```
+zz ladder sync <local-repo> <owner/repo> [--provider <name>] [--model <name>]
+```
+
+Keeps an already-pushed repo in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, and picks up any new issues/PRs/releases/contributors/dependencies. Run `zz ladder push` at least once first.

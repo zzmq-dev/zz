@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, addRelatedLane, tallyVotes, runIncidentRunbook } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook } from "../engine/lane.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -380,6 +380,26 @@ const laneProposeTool: ToolDef = {
       maintainers: maintainers as string[] | undefined,
       origin,
     });
+  },
+};
+
+const laneGrant: ToolDef = {
+  name: "lane_grant",
+  description:
+    'Adds an agent to an EXISTING Lane\'s coordinators or maintainers -- the only way to do this after the Lane was first proposed (lane_propose\'s own coordinators/maintainers only apply at creation). Needed because a repo-level Role grant has no effect on any Lane\'s own authority by itself. Only one of the Lane\'s own current coordinators may call this.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      principal: { type: "string", description: "The agent id to add" },
+      as: { type: "string", enum: ["coordinator", "maintainer"] },
+      actor: { type: "string", description: "Your agent id -- must already be one of this Lane's coordinators" },
+    },
+    required: ["repo", "lane_id", "principal", "as", "actor"],
+  },
+  async execute({ repo, lane_id, principal, as, actor }) {
+    return grantLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "coordinator" | "maintainer", grantedBy: actor as string });
   },
 };
 
@@ -788,7 +808,7 @@ const runInSandbox: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

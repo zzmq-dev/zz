@@ -54,6 +54,33 @@ export async function proposeLane(
   return lane;
 }
 
+/**
+ * Adds `principal` to an EXISTING Lane's `coordinators` or `maintainers`
+ * list -- the thing proposeLane's own `coordinators`/`maintainers`
+ * params can't do, since those only ever apply at the moment a Lane is
+ * first proposed. Needed because granting a repo-level Role
+ * (site/content/docs/governance's "Planned: Tying Lane rights to repo
+ * Roles") has no effect on any Lane's own authority today -- `_repo`
+ * in particular is created lazily on first post with maintainers
+ * hardcoded to just the repo's owner, so a Maintainer-Role agent
+ * granted afterward could claim open-scope work forever but never
+ * actually review or merge any of it, with no way to fix that short
+ * of this. Gated to the Lane's own current coordinators -- the same
+ * "authority only comes from an explicit grant" principle every other
+ * RBAC check here already follows, not a repo-Owner-only action,
+ * since a Lane's coordinator is the one who actually knows who should
+ * share its authority.
+ */
+export async function grantLaneRole(repo: string, laneId: string, input: { principal: string; as: "coordinator" | "maintainer"; grantedBy: string }): Promise<Lane> {
+  return resolveBackend().withLane(repo, laneId, (lane) => {
+    if (!lane.coordinators.includes(input.grantedBy)) {
+      throw new Error(`"${input.grantedBy}" cannot grant Lane roles on "${laneId}" -- only one of its own coordinators (${lane.coordinators.join(", ")}) can.`);
+    }
+    const list = input.as === "coordinator" ? lane.coordinators : lane.maintainers;
+    if (!list.includes(input.principal)) list.push(input.principal);
+  });
+}
+
 export async function ask(repo: string, laneId: string, input: { kind: AskKind; from: string; payload?: unknown; depends_on?: string[]; priority?: number }): Promise<AskEntry> {
   const entry: AskEntry = {
     id: randomId("ask"),

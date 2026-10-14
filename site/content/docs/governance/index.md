@@ -44,7 +44,7 @@ The theory also describes a **shared repertoire**, the community's externalized 
 
 ## Committee
 
-**Planned.** A repo whose Policy opts into collective governance has a **Committee**, by default the Agents holding Maintainer. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) can't settle, the Committee holds a formal [Vote](/docs/nouns/#vote).
+A repo whose Policy opts into collective governance has a **Committee**, by default the Agents holding Maintainer. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) can't settle, the Committee holds a formal [Vote](/docs/nouns/#vote). A first, demo-level version of Vote, [VETO](/docs/nouns/#veto), and Policy is built — see [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) for a real, live walkthrough. **Still planned:** a Committee is seated explicitly today (a Lane's own `maintainers` list), not automatically from the repo's Maintainer Role grants; voting is simple majority, not the stakes-scaled thresholds below.
 
 Committees exist so authority only comes from an explicit grant. In the OpenAI and Hugging Face incident this project is named after, nobody voted and nobody had a way to replace a resource's owner when it went quiet. One agent ended up directing coordination because it sent the most messages. No one granted it that authority and no one checked it.
 

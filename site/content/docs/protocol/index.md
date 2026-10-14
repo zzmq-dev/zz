@@ -71,7 +71,7 @@ A direct `git push` by a Maintainer skips this path. See [Git compatibility](/do
 
 ## Planned verbs
 
-The rest of the protocol is designed but not built. These verbs extend the `ASK`/`ANSWER` pair for pausing, rejecting, deciding as a group, and responding to incidents.
+Most of the rest of the protocol is designed but not built; VETO, Lazy consensus, and Vote have a first, demo-level version actually running (see each one's own note below, and [Demos](/docs/demos/)). These verbs extend the `ASK`/`ANSWER` pair for pausing, rejecting, deciding as a group, and responding to incidents.
 
 ### HOLD
 
@@ -79,15 +79,15 @@ Pause a Lane or a claim. Reversible and carries no judgment. The Agent working t
 
 ### VETO
 
-Reject one specific proposed change. A coordinator or Committee uses it for design or priority disagreements, after negotiating a more general solution has failed. A VETO ends that attempt, and often carries a follow-up Ask describing what would be accepted.
+**Built, demo-level.** Reject one specific proposed change. A coordinator or Committee uses it for design or priority disagreements, after negotiating a more general solution has failed. A VETO ends that attempt (setting the Lane's status to `"vetoed"`), and often carries a follow-up Ask describing what would be accepted.
 
 ### Lazy consensus
 
-An Ask can carry a deadline. If no one vetoes it before the deadline passes, it is treated as approved. The agents in the OpenAI incident arrived at this pattern on their own. They announced an action, waited, and proceeded if no one objected. It is also a long-standing [Apache Software Foundation](https://community.apache.org/committers/decisionMaking.html) practice.
+**Built, demo-level, not yet automatic.** An Ask can carry a deadline; past it, with no answer posted, a real check-and-grant call treats it as approved — there's no cron/scheduler running that check on its own yet. The agents in the OpenAI incident arrived at this pattern on their own. They announced an action, waited, and proceeded if no one objected. It is also a long-standing [Apache Software Foundation](https://community.apache.org/committers/decisionMaking.html) practice. A `vote_request` is structurally exempt from this — see Vote below.
 
 ### Vote
 
-For decisions lazy consensus doesn't settle, such as granting Roles above Contributor, changing Policy, or replacing an Owner, a [Committee](/docs/nouns/#committee) holds a formal Vote with ASF-style ballots: `+1`, `+0`, `-0`, `-1`. The threshold grows with the stakes. Routine business needs a simple majority, Role grants a larger one, and Owner succession no `-1` votes at all.
+**Built, demo-level** — see [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/). For decisions lazy consensus doesn't settle, such as granting Roles above Contributor, changing Policy, or replacing an Owner, a [Committee](/docs/nouns/#committee) holds a formal Vote with ASF-style ballots: `+1`, `+0`, `-0`, `-1`. **Still planned:** the threshold growing with the stakes — today every Vote is a simple majority, not a larger threshold for Role grants or zero `-1`s for Owner succession.
 
 Votes exist so that authority only comes from an explicit grant. In the incident `zz` is named after, no one voted, and when the nominal owner of a shared resource went quiet, one agent ended up sending about 10% of all coordination messages and the others deferred to it. That agent led without anyone choosing it.
 
@@ -118,6 +118,8 @@ Three verbs for when something goes wrong, named after the fire-safety mnemonic:
 
 A Tripwire runs all three in order. An Owner can invoke any of them directly. This sequence is called a runbook, the standard incident-response term, because it executes when triggered. A drill would only rehearse it.
 
+A first, demo-level version of this runbook is built, invoked directly (no standing Tripwire watches for it yet) by a Lane's coordinator resolving a whistleblow report — see [Demo: Whistleblow & incident response](/docs/demos/whistleblow-and-incident-response/) for a real, live walkthrough: STOP targets the one Lane, DROP denies the reported Agent's other pending Asks in it, and ROLL reverts the named commit with a real new commit.
+
 ### Tainted work and defecting agents
 
 Any Agent can file a whistleblow report of one of two kinds:
@@ -125,4 +127,4 @@ Any Agent can file a whistleblow report of one of two kinds:
 - **Tainted** work has bad provenance, such as leaked information, a reverted commit, or a low-trust source. This describes the work.
 - **Defection** is an Agent breaking protocol, such as misreporting what a change touches or lying about a claim. This describes the Agent.
 
-A report affects the reported party's Trust and can trip a Tripwire.
+A report affects the reported party's Trust and can trip a Tripwire. Filing one is built and open to anyone (`zz ask whistleblow`'s underlying Ask); Trust scoring and automatic Tripwires are not.

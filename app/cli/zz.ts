@@ -30,6 +30,7 @@ import { askAnswer } from "./commands/ask-answer.js";
 import { voteTally } from "./commands/vote-tally.js";
 import { whistleblowResolve } from "./commands/whistleblow.js";
 import { laneProposeCmd } from "./commands/lane-propose.js";
+import { laneGrantCmd } from "./commands/lane-grant.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
 import { ladderPush } from "./commands/ladder-push.js";
 import { ladderSync } from "./commands/ladder-sync.js";
@@ -93,7 +94,7 @@ ladder
 ladder
   .command("edit <repo> <path>")
   .description('write one Ladder rung by hand -- e.g. after a manual commit, describe what changed at the repo/file/function level. Anchors to the current directory\'s HEAD commit unless --commit is given.')
-  .requiredOption("--kind <kind>", "repo, file, function, lines, release, package, changeset, filechange, linechange, contributor, or dependencies")
+  .requiredOption("--kind <kind>", "repo, directory, file, release, changeset, ask, contributor, or dependencies -- a kind with no git object of its own (function, lines, package, filechange, linechange) can only be written nested inside its parent's children, which this command can't do; use ladder_write_rung directly for those")
   .requiredOption("--summary <text>", "what this rung describes, holistically -- not just what changed")
   .option("--commit <sha>", "anchor to this commit instead of the current directory's HEAD")
   .option("--as <name>", "write as a managed agent instead of yourself")
@@ -145,6 +146,14 @@ lane
   .option("--as <name>", "propose as a managed agent instead of yourself")
   .action(async (repo: string, name: string, opts: { objective?: string; maintainers?: string; id?: string; as?: string }) => {
     await laneProposeCmd(repo, name, opts);
+  });
+
+lane
+  .command("grant <repo> <lane-id> <principal> <role>")
+  .description('add an agent to an EXISTING Lane\'s coordinators or maintainers -- role is "coordinator" or "maintainer". Needs to already be a coordinator of that Lane yourself; a repo-level Role grant (zz repo grant) has no effect on a Lane\'s own authority by itself')
+  .option("--as <name>", "act as a managed agent instead of yourself")
+  .action(async (repo: string, laneId: string, principal: string, role: string, opts: { as?: string }) => {
+    await laneGrantCmd(repo, laneId, principal, role, opts);
   });
 
 const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");
