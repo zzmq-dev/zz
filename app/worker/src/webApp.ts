@@ -239,6 +239,14 @@ ul.list>li:last-child{border-bottom:none}
    keep open while scrolling past. */
 ul.list.list-scroll{max-height:32rem;overflow-y:auto}
 .ladder-search{width:100%;margin-bottom:.6rem}
+/* .row's own display:flex (same specificity as the browser's default
+   [hidden]{display:none} UA rule, but an author style always beats a
+   UA style regardless of specificity or source order) was silently
+   winning -- zzFilterLadder's li.hidden=true was setting the real
+   attribute correctly the whole time, just with zero visible effect.
+   Confirmed live. One extra class in the selector is enough to outrank
+   .row's own single-class rule within this same author stylesheet. */
+li.row[hidden]{display:none}
 .repo-item{display:flex;flex-direction:column;gap:.15rem}
 .repo-item .name{font-family:var(--mono);color:var(--pink);font-weight:600}
 .repo-item .desc{color:var(--muted);font-size:.9rem}
