@@ -42,10 +42,10 @@ git add -A && git commit -m "Add sum"
 zz repo submit <me>/mathkit <lane-id> <ask-id> --message "Add sum"
 ```
 
-**Correction 1 — `zz review` approves; it does not merge.** It's interactive (reads from stdin), so this is one real answer, not a batch:
+**Correction 1 — `zz review` approves; it does not merge.** `zz repo submit`'s own output names the changeset_review's ask id -- `--ask <id>` reviews just that one and exits, instead of the default wait loop meant for a Maintainer sitting at a terminal watching for whatever comes next:
 
 ```
-zz review <me>/mathkit
+zz review <me>/mathkit --ask <changeset-review-ask-id>
 # approve (a) / request changes (r) / skip (s)? a
 ```
 

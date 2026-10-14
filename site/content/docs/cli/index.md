@@ -301,12 +301,14 @@ Without a repo argument, `--assist` watches the repos `zz top` would show.
 ### zz review
 
 ```
-zz review [owner/repo] [--as <name>] [--repos <list>] [--local]
+zz review [owner/repo] [--as <name>] [--repos <list>] [--local] [--ask <id>]
 ```
 
 A plain terminal queue for a person reviewing changes. It waits for `changeset_review` Asks you are a maintainer for, prints each proposal's task, message, summary, and full file contents, and prompts `approve (a) / request changes (r) / skip (s)`. Claiming and answering are handled for you. Requesting changes prompts for a reason and records the denial. Unlike `--assist`, it doesn't post a follow-up `work` Ask.
 
 Use `zz review` when a person should sign off on every change.
+
+`--ask <id>` reviews that one changeset_review and exits, instead of waiting for whatever comes next -- for a one-off command-line step (a demo's own script, say) rather than a person sitting at a terminal continuously reviewing. The ask id is named in `zz repo submit`'s own output.
 
 ### zz models
 

@@ -15,7 +15,7 @@
 import { createInterface } from "node:readline/promises";
 import { readConfig } from "../lib/config.js";
 import { resolveRepo, ensureCloned, type ResolvedRepo } from "../lib/repo.js";
-import { claimableAcrossRepos } from "../../engine/workqueue.js";
+import { claimableAcrossRepos, type ClaimableEntry } from "../../engine/workqueue.js";
 import { ask, answer } from "../../engine/lane.js";
 import { resolveBackend } from "../../engine/backend.js";
 import type { AskEntry } from "../../engine/types.js";
@@ -31,6 +31,8 @@ export interface ReviewOptions {
   repos?: string[];
   pollMs?: number;
   local?: boolean;
+  /** --ask <id>: review this one changeset_review and exit, instead of the default wait loop. For a one-off command-line step (a demo's own script, a CI-adjacent gate) where there's exactly one known ask to act on -- the loop mode is for a human sitting at a terminal, continuously reviewing whatever shows up next. */
+  askId?: string;
 }
 
 interface ChangesetReviewPayload {
@@ -99,9 +101,64 @@ export async function review(options: ReviewOptions): Promise<void> {
 
   const pollMs = options.pollMs ?? 1000;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
+
+  // Shared by both modes below: print one changeset_review, prompt for
+  // a verdict, claim it if needed, post the answer. "skip" means
+  // "decline to act on this one" either way -- the wait loop moves on
+  // to whatever's next, the one-off mode (which has nothing else to
+  // move on to) just exits without having answered it.
+  const reviewOne = async (next: ClaimableEntry): Promise<"approved" | "denied" | "skipped"> => {
+    const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
+    printReview(resolved, next.laneId, next.ask);
+
+    const choice = (await rl.question("approve (a) / request changes (r) / skip (s)? ")).trim().toLowerCase();
+    if (choice === "s") return "skipped";
+
+    if (!next.alreadyClaimed) {
+      if (useRemote) {
+        await callRemoteTool(resolved.slug, "ask_claim", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent });
+      } else {
+        const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
+        const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
+        await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+      }
+    }
+
+    if (choice === "a") {
+      if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+      else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
+      console.log(`approved ${next.ask.id}`);
+      return "approved";
+    }
+    const reason = await rl.question("reason: ");
+    if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "deny", payload: { reason } });
+    else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
+    console.log(`requested changes on ${next.ask.id}: ${reason}`);
+    return "denied";
+  };
+
+  // --ask <id>: do that one review and exit, instead of the wait loop
+  // below -- the one-off command-line step this option exists for
+  // (e.g. a demo's own script) has exactly one known ask to act on and
+  // nothing to wait for afterward.
+  const oneOff = async (): Promise<void> => {
+    const claimable = (
+      await claimableAcrossRepos(
+        resolvedRepos.map((r) => ({ repo: r.slug })),
+        config.agent,
+      )
+    ).filter((c) => c.ask.kind === "changeset_review");
+    const next = claimable.find((c) => c.ask.id === options.askId);
+    if (!next) {
+      console.error(`no open changeset_review ask "${options.askId}" found across ${config.repos.join(", ")} -- already answered, claimed by someone else, or not a changeset_review?`);
+      process.exitCode = 1;
+      return;
+    }
+    await reviewOne(next);
+  };
 
   const mainLoop = async (): Promise<void> => {
+    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
     for (;;) {
       const claimable = (
         await claimableAcrossRepos(
@@ -115,38 +172,12 @@ export async function review(options: ReviewOptions): Promise<void> {
         continue;
       }
 
-      const next = claimable[0];
-      const resolved = resolvedRepos.find((r) => r.slug === next.repo)!;
-      printReview(resolved, next.laneId, next.ask);
-
-      const choice = (await rl.question("approve (a) / request changes (r) / skip (s)? ")).trim().toLowerCase();
-      if (choice === "s") continue;
-
-      if (!next.alreadyClaimed) {
-        if (useRemote) {
-          await callRemoteTool(resolved.slug, "ask_claim", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent });
-        } else {
-          const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
-          const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
-          await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
-        }
-      }
-
-      if (choice === "a") {
-        if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "grant", payload: { reason: "approved by human review" } });
-        else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
-        console.log(`approved ${next.ask.id}`);
-      } else {
-        const reason = await rl.question("reason: ");
-        if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "deny", payload: { reason } });
-        else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "deny", payload: { reason } });
-        console.log(`requested changes on ${next.ask.id}: ${reason}`);
-      }
+      await reviewOne(claimable[0]);
     }
   };
 
   try {
-    await mode.run(mainLoop);
+    await mode.run(options.askId ? oneOff : mainLoop);
   } finally {
     rl.close();
     unregisterRunningProcess();

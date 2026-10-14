@@ -304,8 +304,9 @@ program
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json)")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean }) => {
-    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local });
+  .option("--ask <id>", "review this one changeset_review and exit, instead of waiting for new ones -- for a one-off command-line step (e.g. a demo script) rather than a human sitting at a terminal watching for whatever comes next")
+  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean; ask?: string }) => {
+    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local, askId: opts.ask });
   });
 
 program
