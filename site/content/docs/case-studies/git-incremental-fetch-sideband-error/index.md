@@ -56,17 +56,27 @@ Virtually every mainstream git host (GitHub, GitLab, Bitbucket, self-hosted Gite
 
 A `git clone` has zero `have` lines -- there's nothing to negotiate, so it takes a different, simpler server-side code path that correctly applies side-band framing from the first byte. Every reproduction attempt that used a fresh clone (or a clone only a commit or two behind) worked perfectly; the bug only ever showed up on a clone with a real backlog of commits to negotiate against.
 
-## Prevention: pull often, don't let a backlog build
+## The actual fix: skip negotiation entirely
 
-Tested live, same session: a `git pull` with only a handful of commits to negotiate (one, then a few more shortly after) succeeded cleanly every time, on a repo with workers actively merging in the background. The clone that actually hit the bug (`mathkit-bad`) was 15 commits behind -- a real backlog, not a quick catch-up.
+```
+git config fetch.negotiationAlgorithm noop
+```
 
-So in a session with several workers merging continuously (as in [Two roles](/docs/demos/two-roles/) onward), pulling after every merge or two -- rather than letting changes pile up and catching up all at once -- is a real, tested mitigation. Not a guaranteed fix (no exact commit-count threshold is confirmed, just that "a little behind" works and "far behind" doesn't), but it meaningfully reduces how often this actually comes up.
+This tells git to skip the "tell the server what I already have" negotiation altogether -- the same code path a fresh clone takes (zero `have` lines), confirmed above to always work. Tested live on the exact clone that was reliably failing (15 commits behind): a full `git pull` with this set succeeded cleanly, fast-forwarding through everything with no error. Unlike "pull often" below, this avoids the bug completely, regardless of how far behind a clone gets.
+
+The real tradeoff: without negotiation, the server can't compute as small a delta, so a fetch under this setting likely transfers more data than a normal incremental one would -- not a problem for a repo this size, but worth knowing on a large, long-lived one.
+
+**`zz repo clone` now sets this on every new clone by default**, alongside its existing `pull.rebase true` -- see [Git compatibility](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm). This is temporary, pending Cloudflare actually fixing the bug; once that happens, `zz repo clone` will stop setting it, and an existing clone can drop it itself at any time with `git config --unset fetch.negotiationAlgorithm`.
 
 `git -c protocol.version=0 pull` does **not** help -- tested live, still fails identically. Side-band negotiation is independent of the v0/v2 wire protocol switch, so this was never going to route around it.
 
-## Workaround, once you've already fallen behind and hit it
+## Weaker mitigation: pull often, don't let a backlog build
 
-Re-clone instead of trying to repair the existing one -- the real repo on the server is fine, nothing is lost:
+Before the fix above was found, this was the standing advice -- still true, just no longer necessary if `fetch.negotiationAlgorithm noop` is set. Tested live, same session: a `git pull` with only a handful of commits to negotiate (one, then a few more shortly after) succeeded cleanly every time, on a repo with workers actively merging in the background. The clone that actually hit the bug (`mathkit-bad`) was 15 commits behind -- a real backlog, not a quick catch-up. Not a guaranteed fix (no exact commit-count threshold is confirmed, just that "a little behind" works and "far behind" doesn't) -- the setting above is the better answer now.
+
+## If you've already fallen behind and hit it on an old clone
+
+Easiest fix: `git config fetch.negotiationAlgorithm noop` on that same clone, then pull again -- no need to re-clone. Re-cloning also still works, if you'd rather start fresh:
 
 ```
 mv ~/workspace/mathkit ~/workspace/mathkit-broken
@@ -77,8 +87,9 @@ If you're actively working off a clone that starts failing this way mid-session,
 
 ## Status
 
-Not fixed -- can't be, from this codebase. The bug is in Cloudflare Artifacts' own git-upload-pack, not in anything `zz` ships. Follow-up options, for later:
+Worked around (`fetch.negotiationAlgorithm noop`, now a `zz repo clone` default), not fixed -- can't be, from this codebase. The underlying bug is in Cloudflare Artifacts' own git-upload-pack, not in anything `zz` ships. Follow-up options, for later:
 
 - File it with Cloudflare directly, with this page's protocol trace as the repro.
-- Pin down the actual threshold (how many commits/`have` lines before it reliably triggers), rather than the rough "a little behind is fine, a lot isn't" observed so far.
+- Once Cloudflare actually fixes it: remove `fetch.negotiationAlgorithm noop` from `zz repo clone`'s defaults, and update this page and [Git compatibility](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm) to say so, with `git config --unset fetch.negotiationAlgorithm` for an existing clone that still has it set.
+- Pin down the actual threshold (how many commits/`have` lines before it reliably triggers), rather than the rough "a little behind is fine, a lot isn't" observed so far -- mostly academic now that the real fix avoids the question entirely, but still an open question about the underlying bug.
 - Watch for whether this is specific to repos that have had many shards/forks (as `mathkit` has, by this point in the demo chain), or just to fetch distance.

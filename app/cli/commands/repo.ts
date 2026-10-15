@@ -123,6 +123,22 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   // merged commit with no extra history.
   const cloneDir = dir ?? splitSlug(slug)[1];
   execFileSync("git", ["-C", cloneDir, "config", "pull.rebase", "true"], { stdio: "inherit" });
+
+  // TEMPORARY, pending a Cloudflare fix -- a real bug in Artifacts'
+  // own git-upload-pack, not anything zz ships: an incremental
+  // fetch/pull with several commits to negotiate corrupts the
+  // response ("fetch-pack: protocol error: bad band #78"), confirmed
+  // live and root-caused in detail (see the case study link below).
+  // `fetch.negotiationAlgorithm=noop` skips the "have"-line
+  // negotiation entirely, which sidesteps it completely -- confirmed
+  // live on the exact clone that was reliably failing. Real
+  // tradeoff: without negotiation, a fetch can't compute as small a
+  // delta, so this likely transfers more data than a normal
+  // incremental fetch would on a large, long-lived repo. Once
+  // Cloudflare fixes the underlying bug, remove this: delete the
+  // block below, and tell existing clones to
+  // `git config --unset fetch.negotiationAlgorithm`.
+  execFileSync("git", ["-C", cloneDir, "config", "fetch.negotiationAlgorithm", "noop"], { stdio: "inherit" });
 }
 
 function splitSlug(slug: string): [string, string] {

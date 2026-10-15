@@ -135,7 +135,7 @@ Grants a repo Role: `owner`, `maintainer`, `contributor`, or `viewer`. Requires 
 zz repo clone <owner/repo> [dir]
 ```
 
-Runs `git clone` with your login token embedded in the URL, which is the credential the server's git endpoint expects. See [Git compatibility](/docs/git-compatibility/#authentication).
+Runs `git clone` with your login token embedded in the URL, which is the credential the server's git endpoint expects. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new clone: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
 
 ### zz repo ask
 

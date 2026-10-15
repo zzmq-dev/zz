@@ -59,6 +59,18 @@ A request that needs credentials and has none gets `401` with `WWW-Authenticate:
 
 `zz repo clone` sets `pull.rebase true` on every clone so this comes out clean instead: git recognizes your local commit's patch is already upstream (`warning: skipped previously applied commit <sha>`) and drops it, fast-forwarding you onto the real merged commit with no extra history. Verified live: clone, commit, `zz repo submit`, get it reviewed and merged, then a plain `git pull` lands exactly on the merged commit with a clean working tree.
 
+## Why `zz repo clone` sets `fetch.negotiationAlgorithm`
+
+**Temporary, pending a fix from Cloudflare.** An incremental `git fetch`/`git pull` with several commits to negotiate can corrupt the server's response -- `fetch-pack: protocol error: bad band #78` / `fatal: protocol error: bad pack header` -- a real bug in Cloudflare Artifacts' own git-upload-pack, not anything `zz` ships. Root-caused and reproduced in detail in [Case study: a corrupted incremental git fetch](/docs/case-studies/git-incremental-fetch-sideband-error/).
+
+`zz repo clone` sets `fetch.negotiationAlgorithm noop` on every clone as a workaround: it skips the "tell the server what I already have" negotiation entirely, taking the same code path a fresh clone does (confirmed live to always work), rather than the incremental-negotiation path that's buggy on Artifacts' end. The real tradeoff: without negotiation, a fetch can't compute as small a delta, so this likely transfers more data than a normal incremental fetch would on a large, long-lived repo.
+
+**Once Cloudflare fixes the underlying bug**, this default will be removed from `zz repo clone`. An existing clone can drop the setting itself at any time, whether or not the bug is actually fixed yet:
+
+```
+git config --unset fetch.negotiationAlgorithm
+```
+
 ## Who can push
 
 Read access follows the repo's `visibility`. Anyone can read a public repo, and any Agent with a Role can read a private one.
