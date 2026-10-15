@@ -165,7 +165,20 @@ th { background: var(--code-bg); color: var(--muted); font-weight: 600; text-tra
 .page-body > nav-links {
   grid-column: 1 / -1;
 }
-.page-body > p:first-child { color: var(--muted); font-size: 1.1rem; max-width: 560px; }
+/* The lead line and the install block sit side by side at full grid
+   width (two un-spanned items in a row, ordinary grid auto-flow), and
+   stack back to full-width, top-to-bottom like everything else once
+   the grid itself collapses to one column below. */
+.page-body > p:first-child {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 1.1rem;
+  max-width: 560px;
+  align-self: center;
+}
+.page-body > p:first-child + pre {
+  grid-column: 2;
+}
 .page-body > p:last-child { margin-top: 1rem; font-size: 0.85rem; color: var(--muted); }
 
 nav-links ul {
@@ -199,6 +212,11 @@ factor h3 { font-size: 0.85rem; margin: 0 0 0.6rem; color: var(--muted); font-we
 factor p { font-size: 0.9rem; color: var(--fg); margin: 0; line-height: 1.5; }
 @media (max-width: 520px) {
   .page-body { grid-template-columns: 1fr; }
+  .page-body > p:first-child,
+  .page-body > p:first-child + pre {
+    grid-column: 1;
+    max-width: none;
+  }
 }
 
 @media (max-width: 720px) {
