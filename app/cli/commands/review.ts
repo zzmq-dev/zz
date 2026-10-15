@@ -154,7 +154,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   const oneOff = async (): Promise<void> => {
     const next = (await claimableChangesetReviews()).find((c) => c.ask.id === options.askId);
     if (!next) {
-      console.error(`no open changeset_review ask "${options.askId}" found across ${config.repos.join(", ")} -- already answered, claimed by someone else, or not a changeset_review?`);
+      console.error(`no open changeset_review ask "${options.askId}" found across ${resolvedRepos.map((r) => r.slug).join(", ")} -- already answered, claimed by someone else, or not a changeset_review?`);
       process.exitCode = 1;
       return;
     }
@@ -175,7 +175,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   };
 
   const mainLoop = async (): Promise<void> => {
-    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")} -- watching for changeset_review asks you can approve`);
+    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${resolvedRepos.map((r) => r.slug).join(", ")} -- watching for changeset_review asks you can approve`);
     for (;;) {
       const claimable = await claimableChangesetReviews();
       if (claimable.length === 0) {

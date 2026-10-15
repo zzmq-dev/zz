@@ -44,6 +44,15 @@ export function parseSlug(slug: string): { owner: string; name: string } {
 
 export function resolveRepo(slug: string): ResolvedRepo {
   const { owner, name } = parseSlug(slug);
+  // Rebuilt from the resolved owner/name, not the original parameter --
+  // parseSlug's own "slug = resolveMe(slug)" reassignment is local to
+  // its own call frame and never touches this function's `slug`
+  // binding. Confirmed live: this returned ResolvedRepo.slug as the
+  // raw, still-unresolved "@me/mathkit", so every caller using it
+  // directly (not owner/name separately) silently went right back to
+  // the unresolved value -- "no such repo \"@me/mathkit\"" the moment
+  // anything tried to look it up by that slug.
+  slug = `${owner}/${name}`;
   // Nested by a sanitized owner segment, not just `name` -- a bare
   // "demo-repos/<name>" would collide if two different owners (now
   // genuinely possible with remote repos, e.g. two humans' repos both

@@ -366,7 +366,7 @@ export async function work(options: WorkOptions): Promise<void> {
     // and there's no established narrow-log-header convention to fall
     // back to here the way there is for a help screen.
     console.error(WIDE_BANNER);
-    console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${config.repos.join(", ")}`);
+    console.error(`zz work: agent="${config.agent}" scope=${scope} backend=${backend.name} mode=${useRemote ? "remote" : "local"} repos=${resolvedRepos.map((r) => r.slug).join(", ")}`);
   } else {
     enterFullscreen();
     const onExit = async () => {
@@ -398,7 +398,7 @@ export async function work(options: WorkOptions): Promise<void> {
     const claimable = await claimableAcrossRepos(watched.map((r) => ({ repo: r.slug })), config.agent, scope);
     const next = claimable.find((c) => c.ask.id === options.askId);
     if (!next) {
-      console.error(`no claimable ask "${options.askId}" found across ${config.repos.join(", ")} (scope=${scope}) -- already answered, claimed by someone else, or not permitted for this identity?`);
+      console.error(`no claimable ask "${options.askId}" found across ${resolvedRepos.map((r) => r.slug).join(", ")} (scope=${scope}) -- already answered, claimed by someone else, or not permitted for this identity?`);
       process.exitCode = 1;
       return;
     }
