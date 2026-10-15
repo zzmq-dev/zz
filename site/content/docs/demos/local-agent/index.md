@@ -5,7 +5,7 @@ description: "Stage 3 of the zz demo video: one local-model worker with the main
 ---
 # Stage 3: Local agent, maintainer role
 
-Hands off the keyboard entirely. One worker, running a local model, holds the maintainer [Role](/docs/governance/#role) on `mathkit` — so it can review and merge its own work, which is a real property of this repo's policy, not a shortcut. `isEven` goes in without a human touching anything but the Ask.
+Hands off the keyboard entirely. One worker, running a local model, holds the maintainer [Role](/docs/governance/#role) on `mathkit` and this Lane's own maintainer/coordinator authority — so it can review and merge its own work, which is a real property of this repo's policy, not a shortcut. `isEven` goes in without a human touching anything but the Ask.
 
 ## Voice-over
 
@@ -22,8 +22,12 @@ Hands off the keyboard entirely. One worker, running a local model, holds the ma
 ```
 zz agent create maint
 zz repo grant @me/mathkit "@me[maint]" maintainer
+zz lane grant @me/mathkit _repo "@me[maint]" maintainer
+zz lane grant @me/mathkit _repo "@me[maint]" coordinator
 zz work @me/mathkit --as maint --scope all --provider ollama
 ```
+
+**Correction — a repo Role alone isn't enough; `zz work` gives no error about it either.** `zz repo grant` sets `maint`'s Role on the repo, which is what gates a direct `git push`. Claiming a `changeset_review` needs being one of *this specific Lane's* own `maintainers`; claiming the `submit_changeset` that actually merges needs being one of its `coordinators` -- two separate lists, checked by `engine/lane.ts`'s own `answer()`, not derived from the repo Role at all (tying the two together is planned, not built yet). Skip either `zz lane grant` and the worker claims and writes `isEven` fine, then just sits there forever once it posts its own `changeset_review` -- not stuck, not erroring, just correctly excluded from a Lane it was never actually added to. `_repo` starts with only the repo's owner in both lists; every other Lane in these demos starts the same way.
 
 The worker idles, polling for claimable work. In a second window (or `zz top`'s Lanes tab):
 
