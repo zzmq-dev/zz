@@ -223,6 +223,8 @@ FILE: <another path, if you're touching more than one file>
 
 List one FILE block per file you're adding or changing. Nothing else -- no prose outside these lines, no explanation, no tool calls.
 
+When adding a brand-new function (not editing an existing one), give it its own new file under \`src/\` (e.g. \`src/isPrime.js\`, exporting just that function and its own tests alongside), and wire it into the project's main entry file with a single added re-export line (e.g. \`export { isPrime } from "./src/isPrime.js";\`) -- never restate that entry file's other existing exports or function bodies just to add one more. Several of these can run at once on the same repo: keeping each new function in its own file is what keeps them from colliding when they land, and keeps every file small enough for a reviewer to check quickly.
+
 If the prompt below lists "potentially relevant existing code elsewhere in the ecosystem", check whether it actually covers what you need before writing a new implementation yourself -- if it does, depend on it (add it to this file's dependencies/imports) and reference it, rather than reimplementing the same thing from scratch.
 
 Your code is verified by actually running it in a disposable sandbox, with no network access and no package install step -- only what's already in the repo (plus Node's own built-ins) is available, so two things matter for anything you write to actually pass:
