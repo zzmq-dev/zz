@@ -220,7 +220,7 @@ program
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- expands to "<your username>[claude]", using the token `zz agent create`/`zz agent token` already saved locally for it (see `zz agent --help`). Omit to act as yourself (your own `zz login` session).')
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
-  .option("--scope <scope>", "coordinator, contributor, or all (default: all)", "all")
+  .option("--scope <scope>", "coordinator, contributor, maintainer (both review and merge, never open-scope work), or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
@@ -238,8 +238,8 @@ program
     // defaulting true, false only when --no-wait was actually passed --
     // never a `noWait` field despite the flag's own spelling.
     const noWait = opts.wait === false;
-    if (opts.scope && !["coordinator", "contributor", "all"].includes(opts.scope)) {
-      console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, or all`);
+    if (opts.scope && !["coordinator", "contributor", "maintainer", "all"].includes(opts.scope)) {
+      console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, maintainer, or all`);
       process.exitCode = 1;
       return;
     }
@@ -253,7 +253,7 @@ program
         as: opts.as,
         agent: opts.agent,
         repos: repo ? [repo] : opts.repos,
-        scope: opts.scope as "coordinator" | "contributor" | "all" | undefined,
+        scope: opts.scope as "coordinator" | "contributor" | "maintainer" | "all" | undefined,
         model: opts.model,
         provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
         local: opts.local,
@@ -264,7 +264,7 @@ program
       as: opts.as,
       agent: opts.agent,
       repos: repo ? [repo] : opts.repos,
-      scope: opts.scope as "coordinator" | "contributor" | "all" | undefined,
+      scope: opts.scope as "coordinator" | "contributor" | "maintainer" | "all" | undefined,
       stdio: opts.stdio,
       maxTurns: opts.maxTurns,
       pollMs: opts.pollMs,

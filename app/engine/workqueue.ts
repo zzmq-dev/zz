@@ -68,7 +68,7 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
 
-export type WorkScope = "coordinator" | "contributor" | "all";
+export type WorkScope = "coordinator" | "contributor" | "all" | "maintainer";
 
 export interface ClaimableEntry {
   repo: string;
@@ -105,9 +105,17 @@ export function claimableFromSnapshots(snapshots: { repo: string; lane: Lane }[]
   const out: ClaimableEntry[] = [];
   for (const { repo, lane } of snapshots) {
     for (const a of claimableAsks(lane, actor)) {
-      const isCoordScope = ASK_SCOPE[a.kind] === "coordinator";
-      if (scope === "coordinator" && !isCoordScope) continue;
-      if (scope === "contributor" && isCoordScope) continue;
+      const askScope = ASK_SCOPE[a.kind];
+      if (scope === "coordinator" && askScope !== "coordinator") continue;
+      if (scope === "contributor" && askScope === "coordinator") continue;
+      // "maintainer": review (maintainer-scope) AND merge (coordinator-
+      // scope) -- the actual job of a single identity holding both
+      // Lane roles at once, same as "maint" throughout the demos.
+      // Deliberately its own value, not a redefinition of "coordinator"
+      // (which stays narrow on purpose) -- a worker needs a way to ask
+      // for privileged work without also being handed open-scope work
+      // meant for a contributor, which plain "all" would include.
+      if (scope === "maintainer" && askScope === "open") continue;
       out.push({ repo, laneId: lane.id, ask: a, alreadyClaimed: claimHolder(lane, a.id) === actor });
     }
   }

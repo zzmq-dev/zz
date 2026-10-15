@@ -272,7 +272,7 @@ Options:
 | `owner/repo` | | One repo to watch. Shorthand for `--repos`. |
 | `--repos <list>` | `~/.zz/config.json` | Comma-separated repos to watch. |
 | `--as <name>` | your login | Act as a managed agent. See [Who a command acts as](#who-a-command-acts-as). |
-| `--scope <scope>` | `all` | `coordinator` takes only coordinator-scope Asks (merges, Ladder writes). `contributor` takes everything else. |
+| `--scope <scope>` | `all` | `coordinator` takes only coordinator-scope Asks (merges, Ladder writes). `maintainer` takes those plus maintainer-scope Asks (`changeset_review`) -- review and merge, never open-scope work. `contributor` takes everything else. |
 | `--provider <name>` | `ollama` | `ollama`, `gemini`, `groq`, or `cloudflare`. See [model providers](/docs/install/#connect-a-model-provider). |
 | `--model <name>` | per provider | Model name for the chosen provider. |
 | `--max-turns <n>` | `60` | Give up on one Ask after this many model turns. |

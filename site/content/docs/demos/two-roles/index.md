@@ -26,8 +26,10 @@ zz repo grant @me/mathkit "@me[dev1]" contributor
 
 Top-right (coordinator):
 ```
-zz work @me/mathkit --as maint --scope coordinator --provider groq
+zz work @me/mathkit --as maint --scope maintainer --provider groq
 ```
+
+**Correction -- `--scope coordinator` is too narrow for this.** It only includes Asks whose scope is literally `coordinator` (`submit_changeset`, the merge step) -- `changeset_review` is scope `maintainer`, a separate category, so a worker started with `--scope coordinator` never claims it at all, no matter what Lane authority it holds. `--scope maintainer` includes both `maintainer`- and `coordinator`-scope Asks (review and merge) while still excluding `open`-scope `work` Asks -- exactly "do everything the maintainer worker should, never the contributor's job."
 
 Bottom-left (contributor):
 ```
