@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { resolveRepo } from "../lib/repo.js";
 import { readAnchor, isRef, type EmbeddedRung, type EmbeddedRef } from "../../engine/ladderNotes.js";
 import { remoteCallTool, splitSlug } from "../lib/remoteTools.js";
-import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
+import { authedCloneUrl, requireCredentials, resolveMe } from "../lib/credentials.js";
 import { apiFetch } from "../lib/api.js";
 import { writeSyncState } from "../lib/syncState.js";
 
@@ -67,6 +67,9 @@ function embedChildren(rung: EmbeddedRung, byPath: Map<string, EmbeddedRung>): (
 
 /** markIngesting: false for ladder-sync.ts's own reuse of this function -- a routine sync of an already-ready repo shouldn't disappear from search every time it runs, only the one-time initial import should gate on it. */
 export async function ladderPush(sourceSlug: string, targetSlug: string, opts: { markIngesting?: boolean } = {}): Promise<void> {
+  // sourceSlug is a GitHub "owner/repo", not a zz account -- @me means
+  // nothing there. targetSlug is the real zz-hosted destination.
+  targetSlug = resolveMe(targetSlug);
   const markIngesting = opts.markIngesting ?? true;
   const source = resolveRepo(sourceSlug);
   const identity = requireCredentials();

@@ -4,6 +4,9 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 
 ## [Unreleased]
 
+### Fixed
+- `zz ladder push`/`zz ladder sync`'s destination `owner/repo` never resolved `@me` -- found live while bulk-importing real GitHub repos: `zz ladder push <local> @me/<repo>` built a git push URL containing the literal, unresolved string `@me`, failing with a plain "not found" against a destination that, URL-decoded, obviously can't exist. `zz ladder edit`'s slug had the same gap. The two commands' own *source* argument (a GitHub `owner/repo`, not a zz account) is correctly left alone -- `@me` has no meaning there.
+
 ## [1.2.0] - 2026-10-15
 
 ### Added

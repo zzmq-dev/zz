@@ -38,6 +38,7 @@ import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, parse
 import { resolveModelBackend } from "../../engine/model.js";
 import type { Provider } from "../lib/resolveChatBackend.js";
 import { readSyncState, writeSyncState } from "../lib/syncState.js";
+import { resolveMe } from "../lib/credentials.js";
 import { runItemLane, resolveRepoLaneOrigin, buildAskFromIssue, buildAskFromPr, buildRelease, buildContributor, buildDependency } from "./ladder-build.js";
 import { ladderPush } from "./ladder-push.js";
 
@@ -51,6 +52,9 @@ function git(repoDir: string, args: string[]): string {
 }
 
 export async function ladderSync(sourceSlug: string, targetSlug: string, options: SyncOptions): Promise<void> {
+  // sourceSlug is a GitHub "owner/repo", not a zz account -- @me means
+  // nothing there. targetSlug is the real zz-hosted destination.
+  targetSlug = resolveMe(targetSlug);
   const repo = resolveRepo(sourceSlug);
   const model = await resolveModelBackend(options.provider, options.model);
   console.error(`model backend: ${model.name}`);

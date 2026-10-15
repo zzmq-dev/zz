@@ -9,6 +9,7 @@
 // repo rung, then each file rung, as separate, visible steps.
 import { execFileSync } from "node:child_process";
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { resolveMe } from "../lib/credentials.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { RungKind, RungSource } from "../../engine/ladder.js";
@@ -29,6 +30,7 @@ function commitSource(sha?: string): RungSource {
 }
 
 export async function ladderEdit(slug: string, path: string, opts: LadderEditOptions): Promise<void> {
+  slug = resolveMe(slug);
   const identity = await resolveIdentity(opts.as);
   setActiveToken(identity.token);
 
