@@ -49,7 +49,7 @@ import {
 } from "../agent/scriptedWork.js";
 import { remoteCallTool, callRemoteTool } from "../cli/lib/remoteTools.js";
 import { diffFileSets } from "../cli/lib/fileDiff.js";
-import type { ResolvedRepo } from "../cli/lib/repo.js";
+import { ensureCloned, type ResolvedRepo } from "../cli/lib/repo.js";
 import type { RepoWatchStore } from "../cli/lib/watchedRepos.js";
 import { ask } from "../engine/lane.js";
 import { resolveBackend as resolveStorageBackend } from "../engine/backend.js";
@@ -280,7 +280,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   // Session driver -- runs once when an ask is picked: builds this
   // ask's ScriptedFlowOptions, then drafts the first proposal/decision.
-  // Never clones anything itself -- proposeContributorWork's own
+  // Never CLONES anything itself -- proposeContributorWork's own
   // shard-clone step (remote mode) handles that exactly when needed;
   // local mode's repos are already on disk by the time they're
   // watchable at all. ensureShard (worker/src/webApp.ts) is
@@ -288,10 +288,23 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // ask reuses the same shard rather than creating a new one -- this is
   // what makes "pause (leave it claimed), come back later" safe: a
   // /commit before pausing is real git history in that same shard.
+  //
+  // It DOES ensure/sync the parent repo's own clone first (remote
+  // mode), though -- found live: a submit_changeset's three-way merge
+  // reads the parent's local HEAD directly (threeWayMerge.ts), and a
+  // clone from an earlier session (Stage 1's own `zz repo clone`, say)
+  // just sits wherever it was left otherwise. `zz work`'s own
+  // autonomous loop calls ensureCloned once at startup and syncClone
+  // before every claimed ask for exactly this reason (work.ts);
+  // --assist had no equivalent at all, so a stale clone surfaced as a
+  // spurious "merge conflict" where "ours" was really just long-stale
+  // history, not a real conflict. ensureCloned (not a bare syncClone)
+  // since this repo might never have been cloned locally at all yet.
   useEffect(() => {
     if (phase !== "session" || !selected) return;
     let cancelled = false;
     const resolvedParent = watch.get().find((r) => r.slug === selected.repo) as ResolvedRepo;
+    if (useRemote && authedCloneUrlFor) ensureCloned(resolvedParent, authedCloneUrlFor(resolvedParent.slug));
     const flowOpts: ScriptedFlowOptions = {
       resolved: resolvedParent,
       laneId: selected.laneId,
