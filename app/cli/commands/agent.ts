@@ -7,6 +7,7 @@
 // bootstrap/rotation allowance, not a general override.
 import { createInterface } from "node:readline/promises";
 import { apiFetch } from "../lib/api.js";
+import { resolveMe } from "../lib/credentials.js";
 
 // A local, minimal shape matching worker/src/accountsDb.ts's Agent --
 // not imported directly: that file is typed against D1Database and
@@ -51,6 +52,7 @@ export async function agentCreate(displayName: string): Promise<void> {
 }
 
 export async function agentToken(usernameOrId: string): Promise<void> {
+  usernameOrId = resolveMe(usernameOrId);
   const { agent, token } = await apiFetch<MintTokenResponse>("POST", `/api/agents/${encodeURIComponent(usernameOrId)}/tokens`);
   console.log(`Token for ${agent.username} -- copy it now, it won't be shown again:`);
   console.log(token);
@@ -65,6 +67,7 @@ export async function agentList(): Promise<void> {
 }
 
 export async function agentDelete(username: string, opts: { yes?: boolean } = {}): Promise<void> {
+  username = resolveMe(username);
   if (!opts.yes) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const typed = await rl.question(`This permanently deletes the managed agent "${username}" -- its tokens, login identities, and sessions. Type its username to confirm: `);
