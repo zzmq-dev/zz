@@ -48,7 +48,15 @@ In other words: for an **incremental fetch with multiple `have` lines**, the Art
 
 A `git clone` has zero `have` lines -- there's nothing to negotiate, so it takes a different, simpler server-side code path that correctly applies side-band framing from the first byte. Every reproduction attempt that used a fresh clone (or a clone only a commit or two behind) worked perfectly; the bug only ever showed up on a clone with a real backlog of commits to negotiate against.
 
-## Workaround
+## Prevention: pull often, don't let a backlog build
+
+Tested live, same session: a `git pull` with only a handful of commits to negotiate (one, then a few more shortly after) succeeded cleanly every time, on a repo with workers actively merging in the background. The clone that actually hit the bug (`mathkit-bad`) was 15 commits behind -- a real backlog, not a quick catch-up.
+
+So in a session with several workers merging continuously (as in [Two roles](/docs/demos/two-roles/) onward), pulling after every merge or two -- rather than letting changes pile up and catching up all at once -- is a real, tested mitigation. Not a guaranteed fix (no exact commit-count threshold is confirmed, just that "a little behind" works and "far behind" doesn't), but it meaningfully reduces how often this actually comes up.
+
+`git -c protocol.version=0 pull` does **not** help -- tested live, still fails identically. Side-band negotiation is independent of the v0/v2 wire protocol switch, so this was never going to route around it.
+
+## Workaround, once you've already fallen behind and hit it
 
 Re-clone instead of trying to repair the existing one -- the real repo on the server is fine, nothing is lost:
 
@@ -64,5 +72,5 @@ If you're actively working off a clone that starts failing this way mid-session,
 Not fixed -- can't be, from this codebase. The bug is in Cloudflare Artifacts' own git-upload-pack, not in anything `zz` ships. Follow-up options, for later:
 
 - File it with Cloudflare directly, with this page's protocol trace as the repro.
-- Investigate whether requesting `protocol.version=0` (bypassing side-band-64k negotiation entirely) client-side avoids it, as a `zz repo clone`-side mitigation -- untested so far.
+- Pin down the actual threshold (how many commits/`have` lines before it reliably triggers), rather than the rough "a little behind is fine, a lot isn't" observed so far.
 - Watch for whether this is specific to repos that have had many shards/forks (as `mathkit` has, by this point in the demo chain), or just to fetch distance.
