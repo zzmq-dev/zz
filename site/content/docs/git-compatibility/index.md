@@ -16,7 +16,7 @@ Git's HTTP transport has two services. **`git-upload-pack`** carries every fetch
 | Command | Works | Notes |
 | --- | --- | --- |
 | `git clone <url>` | Yes | See [Authentication](#authentication). |
-| `git fetch`, `git pull` | Yes | |
+| `git fetch`, `git pull` | Yes | A known exception for an incremental fetch on a clone far behind `main` -- see [Case study](/docs/case-studies/git-incremental-fetch-sideband-error/). |
 | `git ls-remote <url>` | Yes | Lists every branch, including `zz-meta` ([Data format](/docs/data-format/#zz-meta-branch)). |
 | `git push` | Yes | Requires Maintainer or above. See [Who can push](#who-can-push). |
 | `git push origin <new-branch>` | Yes | |
