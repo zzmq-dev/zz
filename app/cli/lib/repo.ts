@@ -74,18 +74,46 @@ export function resolveRepo(slug: string): ResolvedRepo {
   };
 }
 
+// TEMPORARY, pending a Cloudflare fix -- same reasoning as
+// cli/commands/repo.ts's repoClone, see its own comment and the case
+// study it links (site/content/docs/case-studies/
+// git-incremental-fetch-sideband-error): any `have`-line negotiation
+// against a repo with real history can corrupt the response
+// ("fetch-pack: protocol error: bad band #78"), a real bug in
+// Cloudflare Artifacts' own git-upload-pack. This isn't only a risk
+// for a user's own `git pull` -- every zz-managed local clone under
+// ~/.zz/repos/ runs this same negotiation on its own, repeatedly:
+// syncClone below (called before every claimed ask, remote mode) and
+// runCoordinatorSubmitChangeset's own fetch of a shard's objects
+// (agent/scriptedWork.ts) both send that clone's own `have` list
+// regardless of which remote they're actually fetching from -- found
+// live exactly this way, a `zz work` process crashing on a fetch from
+// a task shard, not a user-run `git pull` at all. `noop` skips the
+// negotiation entirely; see repoClone's own comment for the real
+// tradeoff. Set unconditionally, every call, cheap and idempotent --
+// this is also the one thing that retroactively protects a clone
+// that was already sitting in ~/.zz/repos/ before this existed.
+function disableFetchNegotiation(repoDir: string): void {
+  execFileSync("git", ["-C", repoDir, "config", "fetch.negotiationAlgorithm", "noop"], { stdio: "inherit" });
+}
+
 /** `remoteUrl`, when given, is a real git URL with credentials already embedded (cli/lib/credentials.ts's authedCloneUrl) -- the zz Worker's own git smart-HTTP proxy, cloned exactly like any other git remote. Omit it for the original GitHub-based local/demo path, unchanged. */
 export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
   if (existsSync(repo.repoDir)) {
-    if (remoteUrl) syncClone(repo);
+    if (remoteUrl) {
+      disableFetchNegotiation(repo.repoDir);
+      syncClone(repo);
+    }
     return;
   }
   console.error(`cloning ${repo.slug}...`);
   execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, repo.repoDir], { stdio: "inherit" });
+  if (remoteUrl) disableFetchNegotiation(repo.repoDir);
 }
 
 /** Fast-forwards an existing clone to match the remote's current `main` -- needed in remote mode specifically, since other agents' commits land on the real remote, not in this local working copy, between one read and the next (local mode has no such gap: LocalBackend commits land directly in this same repoDir). */
 export function syncClone(repo: ResolvedRepo): void {
+  disableFetchNegotiation(repo.repoDir);
   execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
   execFileSync("git", ["-C", repo.repoDir, "reset", "--quiet", "--hard", "origin/main"], { stdio: "inherit" });
 }
