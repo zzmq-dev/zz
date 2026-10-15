@@ -758,7 +758,15 @@ const runInSandbox: ToolDef = {
       for (const spec of dedupedBySlug.values()) {
         const r = resolveRepo(spec.repo);
         const worktreePath = join(sandboxRoot, r.name);
-        execFileSync("git", ["-C", r.repoDir, "worktree", "add", "--detach", worktreePath, "HEAD"], { encoding: "utf8" });
+        // stdio: fully suppressed, not just the default (which still
+        // inherits stderr even with `encoding` set) -- git's own
+        // "Preparing worktree (detached HEAD ...)" is progress noise on
+        // stderr by git's own convention, and inheriting it leaks raw
+        // text straight into the terminal, briefly corrupting a TUI's
+        // alternate-screen frame (confirmed live: visible for a moment
+        // in zz work/--assist, self-heals on ink's next re-render). The
+        // return value isn't used here either way.
+        execFileSync("git", ["-C", r.repoDir, "worktree", "add", "--detach", worktreePath, "HEAD"], { encoding: "utf8", stdio: ["ignore", "ignore", "ignore"] });
         worktrees.push({ repoDir: r.repoDir, worktreePath, shortName: r.name });
         for (const f of spec.files ?? []) {
           const dest = join(worktreePath, f.path);
@@ -798,7 +806,11 @@ const runInSandbox: ToolDef = {
     } finally {
       for (const { repoDir, worktreePath } of worktrees) {
         try {
-          execFileSync("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath]);
+          // Same reasoning as the `worktree add` above -- no stdio
+          // override at all here was the actual default-inherits-stderr
+          // case (even worse than `add`'s, which at least set
+          // `encoding`), and `remove` prints its own progress line too.
+          execFileSync("git", ["-C", repoDir, "worktree", "remove", "--force", worktreePath], { stdio: ["ignore", "ignore", "ignore"] });
         } catch {
           // best-effort cleanup
         }
