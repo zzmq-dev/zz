@@ -44,6 +44,14 @@ The server's response starts with the literal text `NAK` -- the old, pre-side-ba
 
 In other words: for an **incremental fetch with multiple `have` lines**, the Artifacts backend's git-upload-pack sends a response in the *wrong protocol dialect* for what it negotiated -- plain, unwrapped text where the client expects every byte wrapped in side-band framing.
 
+## Why this happens -- and why GitHub/GitLab/etc. don't have it
+
+The trace line above is labeled `sideband< NAK` by git's own client, not by us -- meaning git's parser had *already* switched into side-band demultiplexing mode at that exact point. That's not a guess; it's what the protocol spec calls for: once `side-band-64k` is negotiated, the framing is supposed to start at the **final ACK/NAK of the negotiation phase itself** (sent as band-1 data, `\x01NAK\n`), not just at the pack bytes that follow it. Artifacts' server sent the old, unwrapped `NAK\n` at exactly the boundary where both sides are supposed to have already switched formats.
+
+That's a narrow, easy-to-miss protocol detail -- specifically the kind of thing that slips through when a git-server implementation has two separate code paths: one for "fresh clone, nothing to negotiate, stream everything wrapped from byte one" (simple, and the first thing anyone tests), and a second, more complex one for "the client already has history, do a real have/ack negotiation" -- a path that's exercised far less during initial development and easy to leave on the pre-side-band format by mistake.
+
+Virtually every mainstream git host (GitHub, GitLab, Bitbucket, self-hosted Gitea, ...) runs the real, official `git` C binary as `git upload-pack` under the hood -- decades of battle-testing on exactly this protocol nuance. Cloudflare Artifacts is a much newer, purpose-built platform, almost certainly reimplementing the smart-HTTP pack protocol from scratch to fit its own storage model rather than shelling out to real git -- exactly the kind of implementation most likely to diverge from spec on a rarely-exercised negotiation path. (Reasoned from the protocol spec and this trace, not from Cloudflare's own source, which isn't available to inspect.)
+
 ## Why a fresh clone never hits this
 
 A `git clone` has zero `have` lines -- there's nothing to negotiate, so it takes a different, simpler server-side code path that correctly applies side-band framing from the first byte. Every reproduction attempt that used a fresh clone (or a clone only a commit or two behind) worked perfectly; the bug only ever showed up on a clone with a real backlog of commits to negotiate against.
