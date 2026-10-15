@@ -1,6 +1,6 @@
 {
   "name": "zzmq",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "zz: an agentic OSS coordination layer -- CLI for creating, working, and reviewing repos against a zz coordination server.",
   "license": "BSD-2-Clause",
   "repository": {
