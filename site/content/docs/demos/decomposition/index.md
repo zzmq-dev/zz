@@ -22,7 +22,7 @@ The last stage. One Ask — add thirty functions — splits itself into thirty i
 ## Run sheet
 
 ```
-zz repo ask <me>/mathkit --decompose "Add these 30 functions, with tests: <list>"
+zz repo ask @me/mathkit --decompose "Add these 30 functions, with tests: <list>"
 ```
 
 Without `--decompose` the claiming agent decides for itself whether to split the work; the flag forces it, for a deterministic take. The function list (none overlapping Stage 6):
@@ -44,6 +44,6 @@ Forty-five functions merged in total (ten from Stage 6, thirty here, plus the fi
 Clean up when done — this is the end of the chain Stages 1–7 all share, so one pass clears everything:
 
 ```
-zz repo delete <me>/mathkit
-zz agent delete <me>[maint] && zz agent delete <me>[dev1] && zz agent delete <me>[dev2] && zz agent delete <me>[dev3]
+zz repo delete @me/mathkit
+zz agent delete "@me[maint]" && zz agent delete "@me[dev1]" && zz agent delete "@me[dev2]" && zz agent delete "@me[dev3]"
 ```

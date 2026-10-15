@@ -23,12 +23,12 @@ Same layout as Stage 3, worker restarted. Real time, no speed-up — let the spe
 
 ```
 # stop the Stage 3 worker, then:
-zz work <me>/mathkit --as maint --scope all --provider groq
-zz repo ask <me>/mathkit "implement max(...numbers)"
+zz work @me/mathkit --as maint --scope all --provider groq
+zz repo ask @me/mathkit "implement max(...numbers)"
 ```
 
 ## Checkpoint
 
-`max` merged in seconds, same `<me>[maint]` identity, same Role, same protocol trail in `zz lane log`. The model and the backend are independent dials — say so on camera.
+`max` merged in seconds, same `@me[maint]` identity, same Role, same protocol trail in `zz lane log`. The model and the backend are independent dials — say so on camera.
 
 No cleanup here — [Stage 5](/docs/demos/two-roles/) continues directly on this same `mathkit` repo. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.

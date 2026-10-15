@@ -23,10 +23,10 @@ Verified live against `zzmq.dev`, 2026-10-14. Two corrections from the original 
 
 ```
 zz repo create mathkit --description "Small, dependency-free math utilities"
-zz repo ask <me>/mathkit "implement sum(...numbers)"
-zz repo asks <me>/mathkit                             # find the ask id
-zz ask claim <me>/mathkit <ask-id>
-zz repo clone <me>/mathkit && cd mathkit
+zz repo ask @me/mathkit "implement sum(...numbers)"
+zz repo asks @me/mathkit                             # find the ask id
+zz ask claim @me/mathkit <ask-id>
+zz repo clone @me/mathkit && cd mathkit
 ```
 
 Write `index.js`:
@@ -39,20 +39,20 @@ export function sum(...numbers) {
 
 ```
 git add -A && git commit -m "Add sum"
-zz repo submit <me>/mathkit <lane-id> <ask-id> --message "Add sum"
+zz repo submit @me/mathkit <lane-id> <ask-id> --message "Add sum"
 ```
 
 **Correction 1 — `zz review` approves; it does not merge.** `zz repo submit`'s own output names the changeset_review's ask id -- `--ask <id>` reviews just that one and exits, instead of the default wait loop meant for a Maintainer sitting at a terminal watching for whatever comes next:
 
 ```
-zz review <me>/mathkit --ask <changeset-review-ask-id>
+zz review @me/mathkit --ask <changeset-review-ask-id>
 # approve (a) / request changes (r) / skip (s)? a
 ```
 
 The changeset_review is now granted — but nothing is committed yet. The actual merge needs a coordinator's `zz work` process to pick up the resulting `submit_changeset` Ask and call `commit_changeset` for real (mechanical here — no real judgment call for the model to make, but it is a model turn):
 
 ```
-zz work <me>/mathkit --scope coordinator --provider groq --stdio
+zz work @me/mathkit --scope coordinator --provider groq --stdio
 # ... claims the submit_changeset, commits, ctrl+c once it logs "complete" ...
 ```
 
@@ -61,9 +61,9 @@ Confirmed merged: `git log` in a fresh clone shows the real commit.
 **Correction 2 — a function-level rung can't be written with `zz ladder edit`.** Only `repo`, `directory`, `file`, `release`, `changeset`, `ask`, `contributor`, and `dependencies` have a git object of their own to anchor to; `function` (and `lines`/`filechange`/`linechange`) only exist nested inside one of those rungs' `children`, which this command always writes as `[]`. Narrate the file and repo rungs; skip the function-level claim, or show it being written by an agent's own `ladder_write_rung` tool call in a later stage instead:
 
 ```
-zz ladder edit <me>/mathkit index.js --kind file --summary "Numeric utility functions."
-zz ladder edit <me>/mathkit _repo --kind repo --summary "mathkit: small, dependency-free math utilities."
-zz lane log <me>/mathkit
+zz ladder edit @me/mathkit index.js --kind file --summary "Numeric utility functions."
+zz ladder edit @me/mathkit _repo --kind repo --summary "mathkit: small, dependency-free math utilities."
+zz lane log @me/mathkit
 ```
 
 ## Checkpoint

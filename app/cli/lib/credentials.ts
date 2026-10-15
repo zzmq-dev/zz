@@ -44,6 +44,29 @@ export function requireCredentials(): ZzCredentials {
   return creds;
 }
 
+/**
+ * Expands a leading "@me" to your own logged-in username, anywhere it
+ * appears as a whole argument or the start of a slug/principal string
+ * -- "@me", "@me/mathkit", "@me[claude]", "@me[claude]/mathkit" all
+ * resolve, same as the demo docs' own "<me>" placeholder used to mean
+ * by hand, minus the shell footgun: "<me>/mathkit" gets intercepted by
+ * the shell itself as input/output redirection before zz ever sees it
+ * (confirmed live: zsh reports "no such file or directory: me"), and
+ * "~/repo" silently tilde-expands to a real filesystem path instead of
+ * erroring at all. "@" has no special meaning to bash/zsh in this
+ * position, confirmed the same way. No real username can collide with
+ * this: every real username is a full email address (contains its own
+ * "@" partway through, never starts with one), and a managed agent's
+ * username is `<that>[name]`, same shape. A value with no "@me" prefix
+ * passes through unchanged -- this is always safe to call speculatively.
+ */
+export function resolveMe(value: string): string {
+  if (value !== "@me" && !value.startsWith("@me[") && !value.startsWith("@me/")) return value;
+  const creds = readCredentials();
+  if (!creds) throw new Error(`"${value}" needs to resolve to your own username, but you're not logged in -- run \`zz login\` first.`);
+  return creds.username + value.slice(3);
+}
+
 /** `zz logout`: drops the local credentials file -- no server-side token revocation (the OAuth-minted token just stops being used locally; it's not a managed-agent token like identity.ts's --as path, which does get revoked). Returns the username that was logged out, or null if nothing was there to begin with. */
 export function clearCredentials(): string | null {
   const creds = readCredentials();

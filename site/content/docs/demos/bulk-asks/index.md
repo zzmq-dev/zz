@@ -20,16 +20,16 @@ Add two more contributor windows, or collapse all three workers to small tiles a
 ## Run sheet
 
 ```
-zz repo grant <me>/mathkit <me>[dev2] contributor
-zz repo grant <me>/mathkit <me>[dev3] contributor
-zz work <me>/mathkit --as dev2 --scope contributor --provider groq
-zz work <me>/mathkit --as dev3 --scope contributor --provider groq
+zz repo grant @me/mathkit "@me[dev2]" contributor
+zz repo grant @me/mathkit "@me[dev3]" contributor
+zz work @me/mathkit --as dev2 --scope contributor --provider groq
+zz work @me/mathkit --as dev3 --scope contributor --provider groq
 ```
 
 The bulk post itself is a shell loop over `zz repo ask`, not a dedicated command — a sequence of real, visible posts reads better on camera than one opaque batch call:
 
 ```
-app/demo/bulk-ask.sh <me>/mathkit app/demo/mathkit-tasks.txt
+app/demo/bulk-ask.sh @me/mathkit app/demo/mathkit-tasks.txt
 ```
 
 `app/demo/mathkit-tasks.txt` (one task per line, `#` for comments):
@@ -49,6 +49,6 @@ isPerfectSquare(n)
 
 ## Checkpoint
 
-All ten functions merged, claims spread across `dev1`–`dev3` with no two workers claiming the same Ask — `zz lane log <me>/mathkit` shows which worker claimed which.
+All ten functions merged, claims spread across `dev1`–`dev3` with no two workers claiming the same Ask — `zz lane log @me/mathkit` shows which worker claimed which.
 
 No cleanup here — [Stage 7](/docs/demos/decomposition/) continues directly on this same `mathkit` repo and fleet, and its own checkpoint is where the whole chain gets cleaned up.

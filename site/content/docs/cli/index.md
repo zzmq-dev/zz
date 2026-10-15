@@ -28,6 +28,18 @@ Commands talk to the server at `https://zzmq.dev` by default (override with `ZZ_
 
 `zz work`, `zz review`, `zz top`, and `zz lane log` also accept `--local`. Local mode keeps state in `~/.zz/state/` beside a local clone in `~/.zz/repos/`, with no server or login involved. The `zz ladder build`, `replay-commits`, and `dump` commands work only in local mode; they onboard a GitHub repo into a local Ladder. `zz ladder push`/`sync` take an already-built local Ladder onto a real hosted repo. `zz ask post` is local-only by default; `--remote` posts to a hosted repo instead, for an Ask kind (`vote_request`, `whistleblow`) with no dedicated REST endpoint of its own.
 
+## `@me`
+
+Anywhere a command takes an `owner/repo` slug or a principal (a username for a grant), a leading `@me` expands to your own logged-in username: `@me/mathkit`, `@me[claude]` (your own managed agent), `@me[claude]/mathkit[some-task]`. Needs `zz login` first.
+
+This is what the examples throughout this reference and the [Demos](/docs/demos/) show as `@me` -- substitute your own username, or just type `@me` literally and let `zz` do it. Deliberately not `<me>` or `~`/`&` as an alternative: both get intercepted by the shell itself before `zz` ever sees them (`<me>/mathkit` is parsed as input redirection from a file named `me`; `~/repo` silently tilde-expands to a real filesystem path). `@` has no special meaning to bash/zsh in this position, and no real username can collide with it -- every real username is a full email address (which contains its own `@` partway through, never starts with one).
+
+**Quote it whenever it has a `[...]` suffix** (`@me[claude]`, a managed agent) -- zsh treats an unquoted `[...]` as a glob character class and fails the whole command with `no matches found` if nothing on disk happens to match it (confirmed live). This isn't specific to `@me`: any managed agent's real username has the same `name[agent]` shape (`you@example.com[claude]`), so it already needed quoting in zsh before this shorthand existed. bash doesn't have this problem (an unmatched glob just passes through literally by default), but quoting is the one form that's safe everywhere:
+
+```
+zz repo grant @me/mathkit "@me[claude]" maintainer
+```
+
 ## Who a command acts as
 
 Commands that write to the server resolve an identity in this order:

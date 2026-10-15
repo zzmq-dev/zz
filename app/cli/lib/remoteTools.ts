@@ -6,9 +6,11 @@
 // no separate remote reimplementation of any protocol logic to drift
 // out of sync with the local path.
 import { apiFetch } from "./api.js";
+import { resolveMe } from "./credentials.js";
 import type { ToolDef } from "../../agent/tools.js";
 
 export function splitSlug(slug: string): [string, string] {
+  slug = resolveMe(slug);
   const idx = slug.lastIndexOf("/");
   if (idx === -1) throw new Error(`expected "owner/repo-name", got "${slug}"`);
   return [slug.slice(0, idx), slug.slice(idx + 1)];

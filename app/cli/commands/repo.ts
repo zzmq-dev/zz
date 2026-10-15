@@ -7,7 +7,7 @@
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { apiFetch } from "../lib/api.js";
-import { authedCloneUrl, requireCredentials } from "../lib/credentials.js";
+import { authedCloneUrl, requireCredentials, resolveMe } from "../lib/credentials.js";
 
 interface RepoRow {
   slug: string;
@@ -50,6 +50,7 @@ export async function repoList(query?: string): Promise<void> {
 // memory from some other CLI firing on the wrong repo. Owner check
 // happens server-side (doDeleteRepo); this only gates the prompt.
 export async function repoDelete(slug: string, opts: { yes?: boolean } = {}): Promise<void> {
+  slug = resolveMe(slug);
   if (!opts.yes) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the repo slug to confirm: `);
@@ -66,18 +67,22 @@ export async function repoDelete(slug: string, opts: { yes?: boolean } = {}): Pr
 }
 
 export async function repoGrant(slug: string, principal: string, role: string): Promise<void> {
+  slug = resolveMe(slug);
+  principal = resolveMe(principal);
   const [owner, name] = splitSlug(slug);
   await apiFetch("POST", `/api/repos/${owner}/${name}/roles`, { principal, role });
   console.log(`Granted ${principal} "${role}" on ${slug}.`);
 }
 
 export async function repoAsk(slug: string, description: string, opts: { decompose?: boolean } = {}): Promise<void> {
+  slug = resolveMe(slug);
   const [owner, name] = splitSlug(slug);
   await apiFetch("POST", `/api/repos/${owner}/${name}/ask`, { description, decompose: opts.decompose });
   console.log(`Posted to ${slug}'s root Lane.${opts.decompose ? " (marked for decomposition into sub-tasks)" : ""}`);
 }
 
 export async function repoAsks(slug: string): Promise<void> {
+  slug = resolveMe(slug);
   const [owner, name] = splitSlug(slug);
   const { lane } = await apiFetch<{ lane: { history: LaneHistoryEntry[] } | null }>("GET", `/api/repos/${owner}/${name}/asks`);
   const history = lane?.history ?? [];
@@ -98,6 +103,7 @@ export async function repoAsks(slug: string): Promise<void> {
 // git prompts "Username for ..." is your own identity, not a bearer
 // token) that most people won't get it right by hand on the first try.
 export async function repoClone(slug: string, dir?: string): Promise<void> {
+  slug = resolveMe(slug);
   const creds = requireCredentials();
   const url = authedCloneUrl(creds.apiBase, creds.token, slug);
   const args = dir ? ["clone", url, dir] : ["clone", url];
@@ -120,6 +126,7 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
 }
 
 function splitSlug(slug: string): [string, string] {
+  slug = resolveMe(slug);
   const idx = slug.lastIndexOf("/");
   if (idx === -1) throw new Error(`expected "owner/repo-name", got "${slug}"`);
   return [slug.slice(0, idx), slug.slice(idx + 1)];

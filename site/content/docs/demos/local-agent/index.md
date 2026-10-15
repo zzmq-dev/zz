@@ -20,20 +20,20 @@ Hands off the keyboard entirely. One worker, running a local model, holds the ma
 ## Run sheet
 
 ```
-zz repo grant <me>/mathkit <me>[maint] maintainer
-zz work <me>/mathkit --as maint --scope all --provider ollama
+zz repo grant @me/mathkit "@me[maint]" maintainer
+zz work @me/mathkit --as maint --scope all --provider ollama
 ```
 
 The worker idles, polling for claimable work. In a second window (or `zz top`'s Lanes tab):
 
 ```
-zz repo ask <me>/mathkit "implement isEven(n)"
+zz repo ask @me/mathkit "implement isEven(n)"
 ```
 
 Watch the worker claim it, write `isEven`, open its own `changeset_review`, grant it, merge, and write the Ladder — the full [protocol](/docs/protocol/) sequence, no human step in the middle.
 
 ## Checkpoint
 
-`isEven` merged, authored and reviewed by `<me>[maint]`. Frame this explicitly as solo-maintainer policy — [Stage 5](/docs/demos/two-roles/) splits review and merge into separate Roles.
+`isEven` merged, authored and reviewed by `@me[maint]`. Frame this explicitly as solo-maintainer policy — [Stage 5](/docs/demos/two-roles/) splits review and merge into separate Roles.
 
-No cleanup here — [Stage 4](/docs/demos/hosted-agent/) continues directly on this same `mathkit` repo and the `<me>[maint]` worker. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.
+No cleanup here — [Stage 4](/docs/demos/hosted-agent/) continues directly on this same `mathkit` repo and the `@me[maint]` worker. Full cleanup is at [Stage 7](/docs/demos/decomposition/)'s checkpoint, the end of this chain.

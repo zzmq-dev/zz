@@ -20,22 +20,22 @@ A 2×2 grid: top-left `zz top`, top-right the coordinator's `zz work`, bottom-le
 ## Run sheet
 
 ```
-zz repo grant <me>/mathkit <me>[dev1] contributor
+zz repo grant @me/mathkit "@me[dev1]" contributor
 ```
 
 Top-right (coordinator):
 ```
-zz work <me>/mathkit --as maint --scope coordinator --provider groq
+zz work @me/mathkit --as maint --scope coordinator --provider groq
 ```
 
 Bottom-left (contributor):
 ```
-zz work <me>/mathkit --as dev1 --scope contributor --provider groq
+zz work @me/mathkit --as dev1 --scope contributor --provider groq
 ```
 
 Bottom-right:
 ```
-zz repo ask <me>/mathkit "implement min(...numbers)"
+zz repo ask @me/mathkit "implement min(...numbers)"
 ```
 
 Narrate as it happens: claim → fork into a shard → open a Lane in the shard → `submit_changeset` Ask back to the origin → coordinator reviews → merges → Ladder updated → original Ask closed. `ctrl+/` inside the TUI drops into the shard's own shell if you want to show the fork on disk.

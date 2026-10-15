@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { readAnchor } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
+import { resolveMe } from "./credentials.js";
 
 // `~/.zz/repos`/`~/.zz/state`, not anywhere relative to this module's own
 // location -- same convention as credentials.ts/config.ts's ~/.zz/*.json.
@@ -33,6 +34,7 @@ export function parseSlug(slug: string): { owner: string; name: string } {
   if (typeof slug !== "string" || !slug) {
     throw new Error(`expected a "repo" argument shaped "owner/repo", got ${JSON.stringify(slug)} -- every tool call that touches a repo needs one, even if you already passed it on an earlier call.`);
   }
+  slug = resolveMe(slug);
   const parts = slug.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`expected "owner/repo", got "${slug}"`);

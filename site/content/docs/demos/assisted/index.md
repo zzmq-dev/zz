@@ -20,8 +20,8 @@ Same protocol as [Stage 1](/docs/demos/by-hand/), but `isOdd` is drafted by an L
 ## Run sheet
 
 ```
-zz repo ask <me>/mathkit "implement isOdd(n)"
-zz work <me>/mathkit --assist
+zz repo ask @me/mathkit "implement isOdd(n)"
+zz work @me/mathkit --assist
 ```
 
 Inside `--assist`: pick the Lane, pick the `isOdd` work Ask, read the model's draft Changeset, discuss it, submit it as a real Answer. Same session, pick the `changeset_review` Ask it posts next, read its recommendation and Ladder summaries, and approve it. Approving posts a real `submit_changeset` Ask — same session, pick it, and `/merge`: nothing to draft or discuss there, just the same commit-and-write-the-Ladder mechanics `zz work`'s autonomous loop runs for this Ask kind, one keypress away instead of a separate terminal.

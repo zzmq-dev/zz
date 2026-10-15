@@ -14,6 +14,7 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 - `zz review`/`zz work`'s new `--no-wait`, and `zz work`'s new `--ask <id>`, on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work) page.
 - A new "Why `zz repo clone` sets `pull.rebase`" section on the [Git compatibility](https://zzmq.dev/docs/git-compatibility/) page: `zz repo submit` never pushes your local commit, so a later plain `git pull` needs rebase (not merge or `--ff-only`) to land cleanly on the coordinator's real merged commit.
 - `zz work --assist` now merges `submit_changeset` Asks directly (`/merge`), documented on the [CLI reference](https://zzmq.dev/docs/cli/#zz-work-assist) page. The [Assisted](https://zzmq.dev/docs/demos/assisted/) demo's run sheet now merges from the same `--assist` session instead of a separate terminal.
+- A new "`@me`" section on the [CLI reference](https://zzmq.dev/docs/cli/#me) page: expands to your own logged-in username anywhere a slug or principal is expected, replacing every demo page's old `<me>` placeholder (a real shell footgun, not just a copy-paste nuisance -- documented why, and why `@me[agent]` itself still needs quoting in zsh).
 
 ### Fixed
 - The Demos index still said "there's no `zz agent delete` yet" -- it's existed since the CLI's own `v1.0.0`.
