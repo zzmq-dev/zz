@@ -141,4 +141,4 @@ With `--local`, `zz` keeps everything on your machine:
 
 Shard names keep their brackets everywhere except on disk, where `repo[task]` becomes `repo__task`.
 
-The original design for a committed `.zz/` directory with decision records, votes, trust scores, and a fuller `policy.yaml` is in the [Archive](/docs/archive/data-format-design/).
+An earlier design considered a committed `.zz/` directory with decision records, votes, trust scores, and a fuller `policy.yaml` -- superseded by what's documented above.

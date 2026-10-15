@@ -19,7 +19,7 @@ description: "How zz is built on Cloudflare, what runs where, and how a repo sta
 | `zz` CLI | Your machine, CI, or a container | Commands, the TUIs, the work loop, model calls, `run_in_sandbox` |
 | Models | Ollama, Gemini, Groq, or Workers AI | Writing changes, reviews, and Ladder summaries for `zz work` |
 
-The Worker uses [isomorphic-git](https://isomorphic-git.org/) with an in-memory filesystem to read and write Artifacts repos, since a Worker can't run the `git` binary. Commits, Ladder notes, and `zz-meta` updates are all built in memory and pushed.
+The Worker has no filesystem and can't run the `git` binary. Reads (file content, commit history, the Ladder's git notes) go straight through Artifacts' own native binding -- no clone needed. Writing a commit uses [isomorphic-git](https://isomorphic-git.org/) for just its low-level object-writing calls (`writeBlob`/`writeTree`/`writeCommit`) against an in-memory filesystem, reconstructing only the handful of objects one commit actually needs (the parent tree's unchanged entries, re-read by content so their oid reproduces exactly, plus whatever's new) rather than ever cloning the repo's full history -- then pushes that over isomorphic-git's own HTTP transport. See [How zz is built on Cloudflare](/docs/cloudflare-architecture/) for the real code and the protocol bug this surfaced.
 
 ## Request paths
 
@@ -44,7 +44,7 @@ The Worker uses [isomorphic-git](https://isomorphic-git.org/) with an in-memory 
 | Vectorize | Semantic search over the Ladder | Planned |
 | R2 | Build logs and large generated reports | Planned |
 
-The [Remote agents](/docs/archive/remote-agents/) plan in the Archive describes running the work loop itself on Cloudflare.
+Running the work loop itself on Cloudflare, unattended, is still planned (today it always runs wherever a human or a container starts `zz work`).
 
 ## Artifacts
 

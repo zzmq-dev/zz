@@ -64,7 +64,7 @@ A Lane's `origin` points up the tree and `related_lanes` points down. For exampl
 
 **Planned.** A cascade is decomposition across repos at scale, for a change whose effect reaches many dependent repos at once. A vulnerability fixed in a widely used library is the typical case. Every consumer needs the fix, the fix is usually mechanical, and it needs to happen ahead of routine work.
 
-A cascade uses the decomposition mechanism above. The library's coordinator uses the dependency graph in its Ladder to find each affected repo and posts an Ask into that repo's root Lane, often with a generated patch attached. Doing this for thousands of repos raises problems that one Lane doesn't have: spreading coordination across several coordinators, limiting how many Asks are in flight, and letting urgent work jump the queue. Those controls are part of the Policy design in the [Archive](/docs/archive/data-format-design/#policy-roadmap-not-yet-enforced).
+A cascade uses the decomposition mechanism above. The library's coordinator uses the dependency graph in its Ladder to find each affected repo and posts an Ask into that repo's root Lane, often with a generated patch attached. Doing this for thousands of repos raises problems that one Lane doesn't have: spreading coordination across several coordinators, limiting how many Asks are in flight, and letting urgent work jump the queue. Those controls are part of the planned Policy roadmap, not yet built.
 
 ## Ladders
 

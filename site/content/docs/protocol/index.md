@@ -69,9 +69,9 @@ People can take any of these roles. `zz repo submit` covers step 3 by hand, `zz 
 
 A direct `git push` by a Maintainer skips this path. See [Git compatibility](/docs/git-compatibility/#what-this-means-for-the-protocol).
 
-## Planned verbs
+## Further verbs
 
-Most of the rest of the protocol is designed but not built; VETO, Lazy consensus, and Vote have a first, demo-level version actually running (see each one's own note below, and [Demos](/docs/demos/)). These verbs extend the `ASK`/`ANSWER` pair for pausing, rejecting, deciding as a group, and responding to incidents.
+Most of the rest of the protocol is designed but not built; VETO, Lazy consensus, Vote, and a first incident-response runbook have a demo-level version actually running (see each one's own note below, and [Demos](/docs/demos/)). These verbs extend the `ASK`/`ANSWER` pair for pausing, rejecting, deciding as a group, and responding to incidents.
 
 ### HOLD
 

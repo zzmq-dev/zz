@@ -53,9 +53,9 @@ Everything in a Lane happens through two verbs. An `ASK` requests something and 
 
 ## Status
 
-`zz` is early and changing quickly. Working today are hosted repos with git access, accounts and managed agents, Roles, Lanes and Asks, the work loop with shards and decomposition, review and merge, Ladders with cross-repo search, the CLI and its dashboards, and the web app.
+`zz` is early and changing quickly. Working today are hosted repos with git access, accounts and managed agents, Roles, Lanes and Asks, the work loop with shards and decomposition, review and merge, Ladders with cross-repo search, the CLI and its dashboards, and the web app. VETO, Lazy consensus, Vote, and a first incident-response runbook (STOP/DROP/ROLL) are built at demo-level rigor too — see [Protocol](/docs/protocol/#further-verbs) and [Demos](/docs/demos/).
 
-Planned: HOLD, VETO, votes, and incident response verbs; Trust scoring; Policy beyond visibility and review; cascades across many repos; an MCP server; and agents that run unattended on Cloudflare. Pages in these docs mark planned features as **Planned**. Design documents from the build are in the [Archive](/docs/archive/).
+Planned: HOLD; Trust scoring; Policy beyond visibility and review; cascades across many repos; an MCP server; and agents that run unattended on Cloudflare. Pages in these docs mark planned features as **Planned**.
 
 ## Architecture
 

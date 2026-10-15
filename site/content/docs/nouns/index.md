@@ -77,7 +77,7 @@ Splitting one task into independent sub-tasks, each posted as a `work` Ask in a 
 
 ### Merge grant
 
-**Planned.** A single-use authorization to merge one Changeset, issued by a coordinator. Today the coordinator's completion of a `submit_changeset` Ask plays this role. [Protocol](/docs/protocol/#planned-verbs).
+**Planned.** A single-use authorization to merge one Changeset, issued by a coordinator. Today the coordinator's completion of a `submit_changeset` Ask plays this role. [Protocol](/docs/protocol/#further-verbs).
 
 ## The record
 
@@ -109,19 +109,19 @@ The response to an Ask: `grant`, `deny`, or `complete`. An Answer is what change
 
 ### HOLD
 
-**Planned.** A reversible pause on a Lane or Claim. [Protocol](/docs/protocol/#planned-verbs).
+**Planned.** A reversible pause on a Lane or Claim. [Protocol](/docs/protocol/#further-verbs).
 
 ### VETO
 
-**Planned.** A hard rejection of one proposed change by a coordinator or Committee. [Protocol](/docs/protocol/#planned-verbs).
+**Built, demo-level.** A hard rejection of one proposed change by a coordinator or Committee. [Protocol](/docs/protocol/#veto).
 
 ### Vote
 
-**Planned.** A formal ballot (`+1`, `+0`, `-0`, `-1`) a Committee runs for decisions such as granting Roles or changing Policy. [Protocol](/docs/protocol/#planned-verbs).
+**Built, demo-level.** A formal ballot (`+1`, `+0`, `-0`, `-1`) a Committee runs for decisions such as granting Roles or changing Policy. The threshold growing with the stakes (larger than simple majority for Role grants, zero `-1`s for Owner succession) is still planned. [Protocol](/docs/protocol/#vote).
 
 ### Lazy consensus
 
-**Planned.** A timing rule. An Ask carries a deadline and is treated as approved if no one objects before it passes. [Protocol](/docs/protocol/#planned-verbs).
+**Built, demo-level, not yet automatic.** A timing rule. An Ask carries a deadline and is treated as approved if no one objects before it passes — there's no scheduler running that check on its own yet, so it needs a real check-and-grant call to actually apply it. [Protocol](/docs/protocol/#lazy-consensus).
 
 ## Rules and safety
 
@@ -131,7 +131,7 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### Tripwire
 
-**Planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#planned-verbs).
+**Planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#tripwires).
 
 ### Trust
 
@@ -139,11 +139,11 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### Whistleblow
 
-**Planned.** A report from any Agent that work is **tainted** (built on bad sources) or that an Agent has **defected** (broken protocol). [Protocol](/docs/protocol/#planned-verbs).
+**Filing is built; consequences are planned.** A report from any Agent that work is **tainted** (built on bad sources) or that an Agent has **defected** (broken protocol) -- `zz ask whistleblow`'s underlying Ask is open to anyone and works today. What a report actually affects (Trust, an automatic Tripwire) isn't built yet. [Protocol](/docs/protocol/#tainted-work-and-defecting-agents).
 
 ## Incident response
 
-**Planned.** Three verbs for when something goes wrong, run in order by a Tripwire or invoked directly. [Protocol](/docs/protocol/#planned-verbs).
+**A first, demo-level version is built.** Three verbs for when something goes wrong, run in order by a Lane's coordinator resolving a whistleblow report today (no standing Tripwire invokes it automatically yet): `STOP` halts further activity, `DROP` discards in-flight unmerged work, `ROLL` reverts merged work with a real new commit. See [Protocol](/docs/protocol/#incident-response) and [Demo: Whistleblow & incident response](/docs/demos/whistleblow-and-incident-response/).
 
 ### STOP
 

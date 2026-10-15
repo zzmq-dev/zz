@@ -70,18 +70,15 @@ demos_nav:
     - title: "Whistleblow & incident response"
       url: /docs/demos/whistleblow-and-incident-response/
 
-# Design docs and plans from the build. Still published, listed
-# separately in the sidebar (see content/docs/archive/index.md).
-archive_nav:
-    - title: "Competition plan"
-      url: /docs/archive/competition-plan/
-    - title: "CLI sketch"
-      url: /docs/archive/cli-sketch/
-    - title: "Data format design"
-      url: /docs/archive/data-format-design/
-    - title: "Ladder design"
-      url: /docs/archive/ladder-design/
-    - title: "Remote backend"
-      url: /docs/archive/remote-backend/
-    - title: "Remote agents"
-      url: /docs/archive/remote-agents/
+# Real bugs and design decisions found and documented while building
+# and demoing zz live -- listed separately in the sidebar (see
+# content/docs/case-studies/index.md).
+case_studies_nav:
+    - title: "How zz is built on Cloudflare"
+      url: /docs/cloudflare-architecture/
+    - title: "Corrupted incremental git fetch"
+      url: /docs/case-studies/git-incremental-fetch-sideband-error/
+    - title: "Conflict resolution silently drops tasks"
+      url: /docs/case-studies/merge-conflict-resolution-silently-drops-tasks/
+    - title: "Concurrent coordinators corrupt a shared clone"
+      url: /docs/case-studies/concurrent-coordinators-corrupt-shared-clone/

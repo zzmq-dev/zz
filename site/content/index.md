@@ -55,6 +55,6 @@ This project started as an entry in Cloudflare's ["next git platform"](https://b
 
 - [Prior art](/docs/prior-art/)
 - [Name & background](/docs/name-and-background/)
-- [Archive](/docs/archive/)
+- [Case studies](/docs/case-studies/)
 
 </nav-links>
