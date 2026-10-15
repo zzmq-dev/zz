@@ -20,6 +20,8 @@ Add two more contributor windows, or collapse all three workers to small tiles a
 ## Run sheet
 
 ```
+zz agent create dev2
+zz agent create dev3
 zz repo grant @me/mathkit "@me[dev2]" contributor
 zz repo grant @me/mathkit "@me[dev3]" contributor
 zz work @me/mathkit --as dev2 --scope contributor --provider groq

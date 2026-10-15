@@ -20,6 +20,7 @@ Hands off the keyboard entirely. One worker, running a local model, holds the ma
 ## Run sheet
 
 ```
+zz agent create maint
 zz repo grant @me/mathkit "@me[maint]" maintainer
 zz work @me/mathkit --as maint --scope all --provider ollama
 ```

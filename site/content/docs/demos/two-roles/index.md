@@ -20,6 +20,7 @@ A 2×2 grid: top-left `zz top`, top-right the coordinator's `zz work`, bottom-le
 ## Run sheet
 
 ```
+zz agent create dev1
 zz repo grant @me/mathkit "@me[dev1]" contributor
 ```
 
