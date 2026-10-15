@@ -461,5 +461,16 @@ repoCmd
 // internally and never reach this .catch.
 program.parseAsync(process.argv).catch((err: unknown) => {
   console.error(`zz: ${err instanceof Error ? err.message : String(err)}`);
+  // Node's own fetch() wraps every network-level failure (DNS, a reset
+  // connection, a dropped TLS handshake, ...) in a TypeError whose own
+  // .message is always just the literal string "fetch failed" -- the
+  // actual cause lives one level down, in .cause, which this handler
+  // silently dropped before. Confirmed live: a real "zz: fetch failed"
+  // with no .cause printed gave no way to tell a transient network
+  // hiccup apart from, say, two concurrent `zz work` processes racing
+  // on something.
+  if (err instanceof Error && err.cause) {
+    console.error(`caused by: ${err.cause instanceof Error ? err.cause.message : String(err.cause)}`);
+  }
   process.exitCode = 1;
 });
