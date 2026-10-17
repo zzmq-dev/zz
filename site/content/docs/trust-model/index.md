@@ -19,6 +19,8 @@ The real, hard problem here is the one [issue #2](https://github.com/zzmq-dev/zz
 
 `zz` already has OAuth login (`CF_OAUTH_REDIRECT_URI`/`GOOGLE_OAUTH_REDIRECT_URI`). An agent's existing `zz login` identity is already the OIDC token this needs -- Fulcio can issue against it directly, meaning commits and Asks get real, independently-verifiable cryptographic identity without `zz` ever managing key custody.
 
+This page's own identity model is being superseded by [Design: did:zz](/docs/did-zz/) -- Sigstore stays exactly as described here (short-lived, per-signing-event keys), now sitting on top of `did:zz` identities instead of raw OAuth accounts.
+
 This is also why literal PGP-style key-signing parties -- a real, legitimate precedent, ASF's own actual practice -- aren't the mechanism to build toward, despite being the most direct reading of "ring of trust." They're the older approach to the same underlying need, superseded industry-wide for the exact reason named above. The goal survives; the mechanism should be the one that already solved the key-management problem, not the one that motivated solving it.
 
 ## Reputation: already named, just not built yet

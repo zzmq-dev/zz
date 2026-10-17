@@ -49,6 +49,8 @@ nav:
       url: /docs/trust-model/
     - title: "Agentic autonomy"
       url: /docs/agentic-autonomy/
+    - title: "did:zz"
+      url: /docs/did-zz/
     - title: "Demos"
       url: /docs/demos/
     - title: "Prior art"

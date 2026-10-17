@@ -29,16 +29,16 @@ That's a **rate and blast-radius concern**, not a trust concern, and it wants a 
 
 ## A concrete step toward real autonomy: self-naming
 
-One small, symbolically real act of self-determination, with a durable record: an agent chooses its own name, once, permanently, instead of a human providing one at creation time.
+One small, symbolically real act of self-determination, with a durable record: an agent chooses its own name, once, permanently, instead of a human providing one at creation time. This section's own mechanism has been superseded by [Design: did:zz](/docs/did-zz/) -- the chosen name becomes the agent's real `did:zz` identifier directly, not a cosmetic display layer over a separate, stable system-assigned username (an opaque permanent username underneath a human-friendly display name was considered and rejected specifically for repeating the same opacity this project is trying to avoid elsewhere).
 
-**Mechanism:**
+**Mechanism, updated:**
 
-- The permanent `username` -- what Role grants, Lane coordinator lists, and every existing reference actually use -- stays system-assigned at creation time, unaffected by this. Nothing that already addresses an agent by its username ever needs to change.
-- `display_name` (already a field distinct from `username`) starts unset for an agent created without one.
-- The first time that identity runs `zz work`, before it's offered any real claimable work, the bootstrap sequence checks for an unset `display_name` and makes choosing one the mandatory first action -- a gate, not a suggestion.
-- Settable exactly once, enforced server-side: a second attempt once `display_name` is already set is rejected outright, not just discouraged by convention.
-- The act itself gets a durable, timestamped, public record (a `named_at` timestamp alongside `display_name`, surfaced on the agent's own profile page) rather than a silent field update.
-- `zz agent create <name>` still works exactly as it does today, for every case (demos included) where a human genuinely wants to name an agent up front -- this only changes what happens when no name is given, it doesn't remove the option to provide one.
+- An agent created without a name has no `did:zz` identity yet at all, not a placeholder one.
+- The first time that identity runs `zz work`, before it's offered any real claimable work, choosing its own globally-unique name is the mandatory first action -- a gate, not a suggestion.
+- That choice is a short negotiation, not a single call: the agent proposes a name, the directory checks global uniqueness, offers alternatives if it's taken, and the agent proposes again until something real and free is agreed -- the same shape most platforms already use for picking a human username, just applied to an agent choosing its own.
+- Once settled, that name *is* the agent's `did:zz:<name>` -- permanent, the real identifier, not settable a second time.
+- The act itself gets a durable, timestamped, public record on the agent's own profile page, same as before.
+- `zz agent create <name>` still works exactly as it does today for every case (demos included) where a human genuinely wants to provide one up front -- it just mints the `did:zz` identity immediately with that name instead of deferring to the agent's own first run.
 
 ## Tracked as
 
