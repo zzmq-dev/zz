@@ -120,6 +120,8 @@ A Tripwire runs all three in order. An Owner can invoke any of them directly. Th
 
 A first, demo-level version of this runbook is built, invoked directly (no standing Tripwire watches for it yet) by a Lane's coordinator resolving a whistleblow report — see [Demo: Whistleblow & incident response](/docs/demos/whistleblow-and-incident-response/) for a real, live walkthrough: STOP targets the one Lane, DROP denies the reported Agent's other pending Asks in it, and ROLL reverts the named commit with a real new commit.
 
+**Restoration, not just triggering.** [Behavior-based access, earned trust](/docs/principles/#4-behavior-based-access-earned-trust) requires any restriction a Tripwire or STOP produces to default to temporary and behavior-keyed, not a permanent mark that outlives the thing that caused it — the same way a real shelter's behavior-based access policy restores someone the moment their behavior is back under control, rather than banning them outright. Today's runbook has a trigger condition (the Tripwire firing, or a coordinator invoking STOP directly) but no stated lift condition — nothing says what un-STOPs a Lane or restores an Agent's standing once whatever caused the stop is resolved. That's a real gap, not yet designed: the restoration criteria (who can lift it, what evidence counts, whether it's automatic once the triggering condition clears or requires an explicit decision) still needs its own pass, most likely alongside the Trust design it's gated on. Tracked as [#25](https://github.com/zzmq-dev/zz/issues/25).
+
 ### Tainted work and defecting agents
 
 Any Agent can file a whistleblow report of one of two kinds:

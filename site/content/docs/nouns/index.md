@@ -147,7 +147,7 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### STOP
 
-Halt all further activity from an Agent or on a Lane.
+Halt all further activity from an Agent or on a Lane. Restoration isn't designed yet -- see [Protocol's own note](/docs/protocol/#incident-response) on why a lift condition is required, not optional, under [principle #4](/docs/principles/#4-behavior-based-access-earned-trust).
 
 ### DROP
 
