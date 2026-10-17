@@ -6,6 +6,9 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 
 ## [Unreleased]
 
+### Added
+- A new case study, [Designing on principle](https://zzmq.dev/docs/case-studies/designing-on-principle/): the framing for why [Principles](https://zzmq.dev/docs/principles/) being written down creates an obligation to check everything designed *before* it existed against it, not just a souvenir of values that were already operating informally -- the three kinds of finding the checkpoint audit is looking for (violation / gap / tension), and why the audit has to be a recurring practice rather than a one-time cleanup. Findings and fixes land in this page as the audit (tracked as #25) completes. Added to the case studies nav and index table.
+
 ### Changed
 - [Principles](https://zzmq.dev/docs/principles/): moved the Twitter-values "Inspired by" credit from leading the page to an indented blockquote directly after "The five, plainly," and added anchor links from each short-form statement to its own full section below.
 - Replaced the Archive section with [Case studies](https://zzmq.dev/docs/case-studies/): unpublished the whole old Archive (competition plan, CLI sketch, data-format design, Ladder design, remote backend, remote agents) -- kept on disk at `site/unpublished/archive/`, no longer in the built site or its nav, which now lists the real case studies (the Cloudflare architecture page, and the three bug writeups) instead. Every page that linked into the old Archive ([Overview](https://zzmq.dev/docs/overview/), [Core Concepts](https://zzmq.dev/docs/nouns/), [Lanes & Ladders](https://zzmq.dev/docs/lanes-and-ladders/), [Data format](https://zzmq.dev/docs/data-format/), [Architecture](https://zzmq.dev/docs/architecture/), the landing page) was rewritten so nothing points at a 404.

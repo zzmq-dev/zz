@@ -86,6 +86,8 @@ demos_nav:
 # and demoing zz live -- listed separately in the sidebar (see
 # content/docs/case-studies/index.md).
 case_studies_nav:
+    - title: "Designing on principle"
+      url: /docs/case-studies/designing-on-principle/
     - title: "How zz is built on Cloudflare"
       url: /docs/cloudflare-architecture/
     - title: "Corrupted incremental git fetch"
