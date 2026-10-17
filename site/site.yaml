@@ -47,6 +47,8 @@ nav:
       url: /docs/credential-handling/
     - title: "Trust model"
       url: /docs/trust-model/
+    - title: "Agentic autonomy"
+      url: /docs/agentic-autonomy/
     - title: "Demos"
       url: /docs/demos/
     - title: "Prior art"

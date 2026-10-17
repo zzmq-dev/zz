@@ -131,7 +131,7 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### Tripwire
 
-**Planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#tripwires).
+**Planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#tripwires). [Agentic autonomy](/docs/agentic-autonomy/#speed-is-real-and-it-isnt-a-trust-question) proposes one tied to request rate specifically -- a blast-radius concern, deliberately kept separate from Trust, so it never becomes a proxy for "is this actor a bot."
 
 ### Trust
 
