@@ -21,6 +21,8 @@ config:
 nav:
     - title: "Overview"
       url: /docs/overview/
+    - title: "Principles"
+      url: /docs/principles/
     - title: "Install"
       url: /docs/install/
     - title: "Core Concepts"
