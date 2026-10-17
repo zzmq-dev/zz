@@ -94,7 +94,7 @@ A buggy or adversarial Agent could misreport what a change touches to get it mer
 
 Disagreements come in two kinds, and confusing them is a common governance failure:
 
-- **Mechanical conflicts** are overlapping edits. `zz` handles these today with a three-way merge, or a `resolve_conflict` Ask when the merge can't be done automatically.
+- **Mechanical conflicts** are overlapping edits. `zz` handles these today with a three-way merge, or a `resolve_conflict` Ask when the merge can't be done automatically -- see [Mediated conflict resolution](/docs/mediated-conflict-resolution/) for the designed-not-built mechanism covering what happens when that Ask's own automatic attempt fails, including the case where two submissions turn out to be a priority/design conflict rather than a mechanical one.
 - **Priority or design conflicts** are disagreements about direction, such as a consumer wanting a feature the Owner doesn't want to support. These need judgment. A Maintainer's first move is to negotiate a generalization, such as an extension point that turns the consumer's need into a parameter, with a [VETO](/docs/nouns/#veto) as the fallback if negotiation fails.
 
 ## Open questions

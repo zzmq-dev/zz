@@ -41,6 +41,8 @@ nav:
       url: /docs/architecture/
     - title: "Governance"
       url: /docs/governance/
+    - title: "Mediated conflict resolution"
+      url: /docs/mediated-conflict-resolution/
     - title: "Demos"
       url: /docs/demos/
     - title: "Prior art"

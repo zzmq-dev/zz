@@ -91,7 +91,7 @@ One node in a Ladder. Each rung has a path (such as `src/index.js` or `_repo`), 
 
 ### Insight
 
-**Planned.** A short note recorded in a Lane's history, tagged `norm` (a practice to follow) or `trap` (something to avoid). The history format and the viewers already support Insights; no tool posts them yet. [Lanes and Ladders](/docs/lanes-and-ladders/#insights).
+**Planned.** A short note recorded in a Lane's history, tagged `norm` (a practice to follow) or `trap` (something to avoid). The history format and the viewers already support Insights; no tool posts them yet. [Lanes and Ladders](/docs/lanes-and-ladders/#insights). [Mediated conflict resolution](/docs/mediated-conflict-resolution/#insights-the-durable-memory) specifies where these actually live (the Ladder, their own git-notes ref) and the first concrete use for them -- every mediated conflict writes one.
 
 ### Decision
 

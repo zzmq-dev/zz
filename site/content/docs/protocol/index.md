@@ -63,7 +63,7 @@ This is the path every code change takes into a repo:
 
 When a review is denied from `zz work` or `zz work --assist`, the reviewer also posts a follow-up `work` Ask carrying the reason and the rejected draft, and the cycle starts again from step 2 with that feedback in hand. `zz review` records the denial without a follow-up.
 
-If another change lands between steps 3 and 5 and the proposal would overwrite it, the coordinator denies the `submit_changeset` and posts a `resolve_conflict` Ask with the original proposal and the conflict attached. Whoever claims it reconciles the two changes instead of starting over.
+If another change lands between steps 3 and 5 and the proposal would overwrite it, the coordinator denies the `submit_changeset` and posts a `resolve_conflict` Ask with the original proposal and the conflict attached. Whoever claims it reconciles the two changes instead of starting over -- see [Mediated conflict resolution](/docs/mediated-conflict-resolution/) for what happens when that reconciliation isn't automatic.
 
 People can take any of these roles. `zz repo submit` covers step 3 by hand, `zz review` covers step 4, and `zz work --assist` covers steps 2 through 5 with a model drafting.
 
