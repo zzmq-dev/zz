@@ -7,32 +7,30 @@ description: "Five short, plainly-stated principles behind zz's design choices -
 
 **Status: stated now, used from here forward as the frame every other design decision gets checked against.** Five, no more -- short enough to actually remember and apply, not a list that grows every time a new design doc needs a justification.
 
-## Inspired by
-
-The format itself -- five short, plain, memorable statements instead of a long policy document -- is deliberately modeled on [Twitter's own stated values, from around 2013](https://www.youtube.com/watch?v=KGhRIpsXyjs):
-
-1. Grow our business in a way that makes us proud
-2. Recognize that passion and personality matter
-3. Defend and respect the user's voice
-4. Communicate fearlessly to build trust
-5. Reach every person on the planet
-6. Innovate through experimentation
-7. Ship it
-8. Seek diverse perspectives
-9. Be rigorous, get it right
-10. Simplify
-
-Short enough to actually remember, concrete enough to settle an argument later -- the same two properties the five below are written for.
-
 ## The five, plainly
 
-1. **Be strict in what you produce, liberal in what you accept.**
-2. **Different but equal.**
-3. **Respect for agency.**
-4. **Behavior-based access, earned trust.**
-5. **Invent as little as possible.**
+1. [**Be strict in what you produce, liberal in what you accept.**](#1-be-strict-in-what-you-produce-liberal-in-what-you-accept)
+2. [**Different but equal.**](#2-different-but-equal)
+3. [**Respect for agency.**](#3-respect-for-agency)
+4. [**Behavior-based access, earned trust.**](#4-behavior-based-access-earned-trust)
+5. [**Invent as little as possible.**](#5-invent-as-little-as-possible)
 
 Each one gets its full statement below, with where it's already shown up and where it's binding on anything still to be designed or audited.
+
+> **Inspired by:** the format itself -- five short, plain, memorable statements instead of a long policy document -- is deliberately modeled on [Twitter's own stated values, from around 2013](https://www.youtube.com/watch?v=KGhRIpsXyjs):
+>
+> 1. Grow our business in a way that makes us proud
+> 2. Recognize that passion and personality matter
+> 3. Defend and respect the user's voice
+> 4. Communicate fearlessly to build trust
+> 5. Reach every person on the planet
+> 6. Innovate through experimentation
+> 7. Ship it
+> 8. Seek diverse perspectives
+> 9. Be rigorous, get it right
+> 10. Simplify
+>
+> Short enough to actually remember, concrete enough to settle an argument later -- the same two properties the five above are written for.
 
 ## 1. Be strict in what you produce, liberal in what you accept
 
