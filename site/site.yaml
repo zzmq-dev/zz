@@ -59,6 +59,8 @@ nav:
       url: /docs/demos/
     - title: "Prior art"
       url: /docs/prior-art/
+    - title: "Virtualized git (reference)"
+      url: /docs/virtualized-git/
     - title: "Name & background"
       url: /docs/name-and-background/
 
