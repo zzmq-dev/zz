@@ -84,3 +84,5 @@ case_studies_nav:
       url: /docs/case-studies/merge-conflict-resolution-silently-drops-tasks/
     - title: "Concurrent coordinators corrupt a shared clone"
       url: /docs/case-studies/concurrent-coordinators-corrupt-shared-clone/
+    - title: "Competition entrants"
+      url: /docs/case-studies/competition-entrants/
