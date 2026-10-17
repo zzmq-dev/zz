@@ -64,6 +64,16 @@ Four precedents inform the planned Vote, lazy consensus, and Committee model in 
 
 For splitting coordination across several coordinators, **the Linux kernel's subsystem-maintainer tree** is the model. Each subsystem maintainer merges independently into their own tree, and the trees flow up a hierarchy to Linus. It shows the pattern scales to one of the largest codebases there is.
 
+## Identity and trust without long-lived keys
+
+[Trust model](/docs/trust-model/) draws on three precedents, two of them pulling in different directions on the same underlying problem.
+
+**ASF's own key-signing parties** are the direct precedent for "a new contributor shouldn't start from zero trust" -- real, in-person PGP cross-signing among committers, building a literal web of trust. It's also the precedent this design deliberately doesn't adopt the mechanism of: long-lived key custody at the scale distributed agents would need is exactly the problem the industry moved away from PGP-style webs of trust to solve.
+
+**[Sigstore](https://www.sigstore.dev/)** (`cosign` + Fulcio + Rekor) is what replaced it: keyless signing, where an ephemeral certificate gets bound to an existing OIDC identity and expires in minutes, and the signing *event* -- not a durable key -- is what a public transparency log records. [Trust model](/docs/trust-model/#identity-sigstore-not-key-signing-parties) uses this for agent identity directly, since `zz` already has the OAuth login this needs.
+
+**[SLSA](https://slsa.dev/)**'s min-reduction over a dependency graph (an artifact's guarantee is bounded by its weakest attested dependency) is the direct model for computing effective attestation level over `zz`'s own existing dependency rungs, and recent work extending Sigstore-style attestation specifically to AI agent generation (binding a signed plan to a model's output, agent and model identity as attestable material) is close, real prior art for parts of this -- though it attests each agent invocation as a discrete unit and doesn't propagate trust through a creation chain, which is the one piece of [Trust model](/docs/trust-model/#open-the-vouch-graph)'s own design that isn't borrowed from anywhere.
+
 ## Held for later
 
 **Phabricator's Herald** (declarative "when X, do Y" automation rules) is close to Tripwires. A fuller comparison, including policy-as-code tools like Open Policy Agent and pull-request automation like GitHub Actions and Danger, belongs with the Tripwire implementation work.

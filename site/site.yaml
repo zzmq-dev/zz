@@ -43,6 +43,10 @@ nav:
       url: /docs/governance/
     - title: "Mediated conflict resolution"
       url: /docs/mediated-conflict-resolution/
+    - title: "Credential handling"
+      url: /docs/credential-handling/
+    - title: "Trust model"
+      url: /docs/trust-model/
     - title: "Demos"
       url: /docs/demos/
     - title: "Prior art"

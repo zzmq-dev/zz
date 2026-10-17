@@ -34,7 +34,7 @@ Git's HTTP transport has two services. **`git-upload-pack`** carries every fetch
 
 ## Authentication
 
-Git uses a token instead of the browser login.
+Git uses a token instead of the browser login. See [Design: credential handling](/docs/credential-handling/) for a planned, more secure default -- a git credential helper instead of a token embedded in the clone URL.
 
 - **Reading a public repo** needs no credentials: `git clone https://zzmq.dev/<owner>/<repo>`.
 - **Reading a private repo, or pushing to any repo,** needs an Agent's token as the HTTP Basic Auth username, with any password or none. [`zz repo clone`](/docs/cli/#zz-repo-clone) builds the URL for you from your login token:
