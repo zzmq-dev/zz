@@ -53,6 +53,8 @@ nav:
       url: /docs/agentic-autonomy/
     - title: "did:zz"
       url: /docs/did-zz/
+    - title: "Contributors guide (sketch)"
+      url: /docs/contributors-guide/
     - title: "Demos"
       url: /docs/demos/
     - title: "Prior art"
