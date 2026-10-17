@@ -93,6 +93,17 @@ Consultation is close to free. Contributors already run `ladder_search` before w
 
 ## Open questions
 
-- The claim-exclusivity race (two contributors granted the same Ask's claim near-simultaneously) is a real, separate bug, tracked on its own -- not fixed by anything in this design, and not something this design depends on.
 - Pairwise mediation across more than two conflicting parties folds left (resolve the first pair, treat the result as one side, resolve against the next) rather than attempting a genuine N-way negotiation -- simpler to reason about, at the cost of being order-sensitive in a way a true N-way resolution wouldn't be.
 - The exact shape of "interest extraction" (a distinct step, or folded into how a `work` Ask's description and a `submit_changeset`'s summary already get written) isn't settled yet.
+
+## Tracked as
+
+- [#3](https://github.com/zzmq-dev/zz/issues/3) Fix `claim_request` double-grant race -- a real, separate correctness bug this design's own live testing surfaced, not fixed by and not a dependency of anything below.
+- [#4](https://github.com/zzmq-dev/zz/issues/4) `conflict_policy` schema -- the foundation every mode below depends on.
+- [#5](https://github.com/zzmq-dev/zz/issues/5) Bounded deadline window for conflicts.
+- [#6](https://github.com/zzmq-dev/zz/issues/6) `first_wins` / `coordinator_decides` modes.
+- [#7](https://github.com/zzmq-dev/zz/issues/7) `vote` / `escalate_human` modes.
+- [#8](https://github.com/zzmq-dev/zz/issues/8) Insights: storage on the Ladder, `insight_post` tool, search ranking.
+- [#9](https://github.com/zzmq-dev/zz/issues/9) `mediate` mode (no-Jev fallback) and `discard_and_reclaim`.
+- [#10](https://github.com/zzmq-dev/zz/issues/10) Jev integration: `request_decision` tool, triage, scoring, argument-tree mediation.
+- [#11](https://github.com/zzmq-dev/zz/issues/11) Demo: a real, live-verified mediated conflict.
