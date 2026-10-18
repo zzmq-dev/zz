@@ -212,7 +212,7 @@ async function postForReview(opts: {
       lane_id: laneId,
       kind: "changeset_review",
       from: agent,
-      payload: { taskDescription, files, message, summary, baseCommit, ...sourceFields },
+      payload: { taskDescription, taskAskId, files, message, summary, baseCommit, ...sourceFields },
       depends_on: [],
     })) as AskEntry;
     dependsOn.push(review.id);
@@ -910,6 +910,8 @@ interface ChangesetReviewPayload {
   summary: string;
   /** Absent on an older ask posted before this field existed -- prepareReviewWorkspace falls back to a plain file dump (no base to diff against) in that case. */
   baseCommit?: string;
+  /** The originating "work" ask's id -- lets acceptReview's own deny-and-repost (below) link the revision chain all the way back, not just one hop. Absent on an older ask posted before this field existed. */
+  taskAskId?: string;
   /** Shard provenance (postForReview's own `source` param) -- when present, prepareReviewWorkspace clones/syncs *that* repo (the one the contributor actually worked in) instead of writing into the review ask's own parent repo. */
   source_repo?: string;
   source_lane?: string;
@@ -1100,12 +1102,28 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
     return;
   }
 
-  // description stays short and clean (the UI's own describeAsk, plus
-  // proposeContributorWork's shard-naming/Ladder-search, all read this
-  // field expecting a one-line task summary, not a wall of code) --
-  // the rejected draft and the reason live in priorAttempt instead,
-  // which proposeContributorWork folds into the model's own prompt
-  // without it ever reaching a display surface.
+  // description stays short and clean, UNCHANGED from the original task
+  // text -- the UI's own describeAsk, proposeContributorWork's
+  // shard-naming/Ladder-search, and this same function's own
+  // priorAttempts count (above) all read this field expecting the one
+  // stable task summary every attempt shares, not a wall of code and
+  // not a per-attempt variant that would break that exact-match count.
+  // `revises` is the actual answer to "this shouldn't read like a
+  // fresh green-field task": a real link back to the changeset_review
+  // that was just denied, which itself carries `taskAskId` pointing at
+  // the work ask before THAT -- so the whole revision history is a
+  // walkable chain (new work -> revises -> old review -> taskAskId ->
+  // older work -> ...), the same shape as a Lane's own origin chain or
+  // a git commit's parent pointer, not a bare restatement of the
+  // original ask with no trace of what's already been tried. This is
+  // what "the ask becomes a context window for the work" actually
+  // means mechanically: the accumulated context isn't crammed into one
+  // field, it's reconstructable by walking the chain. The rejected
+  // draft and the reason still live in priorAttempt too, for the
+  // immediate convenience of proposeContributorWork's own prompt
+  // (reads only the latest attempt, not the whole chain) -- the two
+  // aren't redundant, priorAttempt is the cheap one-hop case, revises
+  // is the full thread.
   const followup = (await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
@@ -1113,11 +1131,13 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
     from: agent,
     payload: {
       description: payload.taskDescription,
+      revises: theAsk.id,
+      attempt: priorAttempts + 1,
       priorAttempt: { reason: proposal.reason, files: payload.files },
     },
     depends_on: [],
   })) as AskEntry;
-  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked; posted a new work ask (${followup.id}, attempt ${priorAttempts + 1}/${MAX_REVIEW_RETRIES}) with the feedback for whoever picks it up next`);
+  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked; posted a new work ask (${followup.id}, attempt ${priorAttempts + 1}/${MAX_REVIEW_RETRIES}, revises ${theAsk.id}) with the feedback for whoever picks it up next`);
 }
 
 export async function runChangesetReview(opts: ScriptedFlowOptions): Promise<void> {
