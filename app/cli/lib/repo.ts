@@ -83,7 +83,7 @@ export function resolveRepo(slug: string): ResolvedRepo {
 // Cloudflare Artifacts' own git-upload-pack. This isn't only a risk
 // for a user's own `git pull` -- every zz-managed local clone under
 // ~/.zz/repos/ runs this same negotiation on its own, repeatedly:
-// syncClone below (called before every claimed ask, remote mode) and
+// fetchClone below (called before every claimed ask, remote mode) and
 // runCoordinatorSubmitChangeset's own fetch of a shard's objects
 // (agent/scriptedWork.ts) both send that clone's own `have` list
 // regardless of which remote they're actually fetching from -- found
