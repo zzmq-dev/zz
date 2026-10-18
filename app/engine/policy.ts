@@ -7,10 +7,11 @@
 import type { PathPolicyRule, PolicyMode, RepoPolicy } from "./types.js";
 
 // A repo with no policies set behaves exactly as before this feature
-// existed: any Maintainer may merge their own review, no vote, no
-// second approver. _repo defaults to the strictest mode on purpose --
-// a brand-new repo's own Policy document shouldn't be quietly
-// loosenable by a single Maintainer; an Owner always bypasses it
+// existed: any agent may have its own review approved under
+// self_review, no vote, no second approver required. _repo defaults
+// to the strictest mode on purpose -- a brand-new repo's own Policy
+// document shouldn't be quietly loosenable by a single Coordinator;
+// an Owner always bypasses it
 // regardless (see engine/lane.ts's writePolicy gate).
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   visibility: "public",

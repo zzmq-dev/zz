@@ -74,9 +74,25 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
   const sql = storage.sql;
   sql.exec("CREATE TABLE IF NOT EXISTS lanes (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
 
+  // A Lane persisted before the Maintainer->Coordinator rename has
+  // `maintainers` baked into its stored JSON, not `committee` -- the
+  // rename only changed what new code reads and writes, not what's
+  // already sitting in storage. Without this, every already-existing
+  // Lane would silently come back with `committee: undefined` after
+  // this deploy, breaking voting and the review backstop on all of
+  // them. Applied at every read path (readLaneSync and listLanes both
+  // call this), not just one, since listLanes parses its own rows
+  // directly rather than going through readLaneSync.
+  function migrateLane(lane: Lane): Lane {
+    if (lane.committee === undefined) {
+      const legacy = lane as unknown as { maintainers?: string[] };
+      lane.committee = legacy.maintainers ?? lane.coordinators;
+    }
+    return lane;
+  }
   function readLaneSync(laneId: string): Lane | null {
     const row = sql.exec("SELECT data FROM lanes WHERE id = ?", laneId).toArray()[0] as { data: string } | undefined;
-    return row ? (JSON.parse(row.data) as Lane) : null;
+    return row ? migrateLane(JSON.parse(row.data) as Lane) : null;
   }
   function writeLaneSync(lane: Lane): void {
     sql.exec("INSERT OR REPLACE INTO lanes (id, data) VALUES (?, ?)", lane.id, JSON.stringify(lane));
@@ -399,7 +415,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       return sql
         .exec("SELECT data FROM lanes")
         .toArray()
-        .map((r) => JSON.parse((r as { data: string }).data) as Lane);
+        .map((r) => migrateLane(JSON.parse((r as { data: string }).data) as Lane));
     },
 
     async withLane(_repo, laneId: string, mutate: (lane: Lane) => void): Promise<Lane> {

@@ -142,18 +142,18 @@ lane
 
 lane
   .command("propose <repo> <name>")
-  .description("propose a Lane by hand -- the one way to seat an explicit multi-member Committee (--maintainers); every other path defaults a new Lane's maintainers to just its proposer")
+  .description("propose a Lane by hand -- the one way to seat an explicit multi-member Committee (--committee); every other path defaults a new Lane's committee to just its proposer")
   .option("--objective <text>", "what this Lane is for (default: the name)")
-  .option("--maintainers <ids>", "comma-separated agent ids -- defaults to just you if omitted")
+  .option("--committee <ids>", "comma-separated agent ids -- defaults to just you if omitted")
   .option("--id <id>", "explicit lane id (default: a generated one)")
   .option("--as <name>", "propose as a managed agent instead of yourself")
-  .action(async (repo: string, name: string, opts: { objective?: string; maintainers?: string; id?: string; as?: string }) => {
+  .action(async (repo: string, name: string, opts: { objective?: string; committee?: string; id?: string; as?: string }) => {
     await laneProposeCmd(repo, name, opts);
   });
 
 lane
   .command("grant <repo> <lane-id> <principal> <role>")
-  .description('add an agent to an EXISTING Lane\'s coordinators or maintainers -- role is "coordinator" or "maintainer". Needs to already be a coordinator of that Lane yourself; a repo-level Role grant (zz repo grant) has no effect on a Lane\'s own authority by itself')
+  .description('add an agent to an EXISTING Lane\'s coordinators or committee -- role is "coordinator" or "committee". Needs to already be a coordinator of that Lane yourself; a repo-level Role grant (zz repo grant) has no effect on a Lane\'s own authority by itself')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, laneId: string, principal: string, role: string, opts: { as?: string }) => {
     await laneGrantCmd(repo, laneId, principal, role, opts);
@@ -196,7 +196,7 @@ askCmd
 
 askCmd
   .command("vote-tally <repo> <ask-id>")
-  .description("count ballots on a vote_request and close it once every maintainer has voted (and, if approved and it was a Policy change, apply it)")
+  .description("count ballots on a vote_request and close it once every committee member has voted (and, if approved and it was a Policy change, apply it)")
   .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
@@ -221,7 +221,7 @@ program
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- expands to "<your username>[claude]", using the token `zz agent create`/`zz agent token` already saved locally for it (see `zz agent --help`). Omit to act as yourself (your own `zz login` session).')
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
-  .option("--scope <scope>", "coordinator, contributor, maintainer (both review and merge, never open-scope work), or all (default: all)", "all")
+  .option("--scope <scope>", "coordinator, contributor, committee (merge and voting, never open-scope work), or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
   .option("--poll-ms <n>", "how often to recheck for claimable work when idle (default: 1000)", (v) => parseInt(v, 10))
@@ -239,8 +239,8 @@ program
     // defaulting true, false only when --no-wait was actually passed --
     // never a `noWait` field despite the flag's own spelling.
     const noWait = opts.wait === false;
-    if (opts.scope && !["coordinator", "contributor", "maintainer", "all"].includes(opts.scope)) {
-      console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, maintainer, or all`);
+    if (opts.scope && !["coordinator", "contributor", "committee", "all"].includes(opts.scope)) {
+      console.error(`unknown --scope "${opts.scope}"; expected coordinator, contributor, committee, or all`);
       process.exitCode = 1;
       return;
     }
@@ -254,7 +254,7 @@ program
         as: opts.as,
         agent: opts.agent,
         repos: repo ? [repo] : opts.repos,
-        scope: opts.scope as "coordinator" | "contributor" | "maintainer" | "all" | undefined,
+        scope: opts.scope as "coordinator" | "contributor" | "committee" | "all" | undefined,
         model: opts.model,
         provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
         local: opts.local,
@@ -265,7 +265,7 @@ program
       as: opts.as,
       agent: opts.agent,
       repos: repo ? [repo] : opts.repos,
-      scope: opts.scope as "coordinator" | "contributor" | "maintainer" | "all" | undefined,
+      scope: opts.scope as "coordinator" | "contributor" | "committee" | "all" | undefined,
       stdio: opts.stdio,
       maxTurns: opts.maxTurns,
       pollMs: opts.pollMs,
@@ -391,7 +391,7 @@ repoCmd
 
 repoCmd
   .command("grant <owner/repo> <principal> <role>")
-  .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, maintainer, contributor, or viewer. Needs Owner on the repo yourself.")
+  .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
   .action(async (slug: string, principal: string, role: string) => {
     await repoGrant(slug, principal, role);
   });
@@ -438,7 +438,7 @@ repoPolicyCmd
 repoPolicyCmd
   .command("set <owner/repo>")
   .description(
-    'change Policy directly -- only works for an Owner, or for anyone Maintainer+ when whatever\'s being changed is itself under a "direct" rule; anything stricter refuses and tells you to post a changeset_review/vote_request instead',
+    'change Policy directly -- only works for an Owner, or for anyone Coordinator+ when whatever\'s being changed is itself under a "direct" rule; anything stricter refuses and tells you to post a changeset_review/vote_request instead',
   )
   .option("--repo-rule <mode>", 'sets "_repo" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
   .option("--path <glob>", "with --mode: upserts one \"policies\" entry for this path glob")

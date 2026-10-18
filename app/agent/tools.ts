@@ -363,11 +363,11 @@ const laneProposeTool: ToolDef = {
       origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
       id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the root Lane a repo\'s Ladder root rung anchors to.' },
-      maintainers: { type: "array", items: { type: "string" }, description: "Who may grant/deny a changeset_review, or (as this Lane's Committee) vote/veto -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee." },
+      committee: { type: "array", items: { type: "string" }, description: "Who must cast a ballot on a vote_request -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee. changeset_review no longer uses this; it's open-scope, any agent may submit one." },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
   },
-  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id, maintainers }) {
+  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id, committee }) {
     const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? (repo as string), lane: origin_lane as string } : undefined;
     return proposeLane(repo as string, {
       id: (id as string) ?? shortId("lane"),
@@ -377,7 +377,7 @@ const laneProposeTool: ToolDef = {
       scope: scope as string[],
       proposedBy: actor as string,
       coordinators: [actor as string],
-      maintainers: maintainers as string[] | undefined,
+      committee: committee as string[] | undefined,
       origin,
     });
   },
@@ -386,20 +386,20 @@ const laneProposeTool: ToolDef = {
 const laneGrant: ToolDef = {
   name: "lane_grant",
   description:
-    'Adds an agent to an EXISTING Lane\'s coordinators or maintainers -- the only way to do this after the Lane was first proposed (lane_propose\'s own coordinators/maintainers only apply at creation). Needed because a repo-level Role grant has no effect on any Lane\'s own authority by itself. Only one of the Lane\'s own current coordinators may call this.',
+    'Adds an agent to an EXISTING Lane\'s coordinators or committee -- the only way to do this after the Lane was first proposed (lane_propose\'s own coordinators/committee only apply at creation). Needed because a repo-level Role grant has no effect on any Lane\'s own authority by itself. Only one of the Lane\'s own current coordinators may call this.',
   parameters: {
     type: "object",
     properties: {
       repo: { type: "string" },
       lane_id: { type: "string" },
       principal: { type: "string", description: "The agent id to add" },
-      as: { type: "string", enum: ["coordinator", "maintainer"] },
+      as: { type: "string", enum: ["coordinator", "committee"] },
       actor: { type: "string", description: "Your agent id -- must already be one of this Lane's coordinators" },
     },
     required: ["repo", "lane_id", "principal", "as", "actor"],
   },
   async execute({ repo, lane_id, principal, as, actor }) {
-    return grantLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "coordinator" | "maintainer", grantedBy: actor as string });
+    return grantLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "coordinator" | "committee", grantedBy: actor as string });
   },
 };
 
@@ -560,7 +560,7 @@ const askRelease: ToolDef = {
 const askAnswerTool: ToolDef = {
   name: "ask_answer",
   description:
-    'Answer an Ask you\'ve claimed: action "complete" with the result as payload when you\'ve finished the work, "deny" if you can\'t, "veto" to reject a "changeset_review" over a design/priority disagreement (not just "doesn\'t meet the bar" -- use "deny" for that), or "vote" to cast one Committee ballot on a "vote_request" (payload { ballot: "+1"|"+0"|"-0"|"-1" }) -- unlike every other action, "vote" can be answered once per distinct actor on the same ask; call vote_tally afterward to count ballots and close it once every maintainer has voted.',
+    'Answer an Ask you\'ve claimed: action "complete" with the result as payload when you\'ve finished the work, "deny" if you can\'t, "veto" to reject a "changeset_review" over a design/priority disagreement (not just "doesn\'t meet the bar" -- use "deny" for that), or "vote" to cast one Committee ballot on a "vote_request" (payload { ballot: "+1"|"+0"|"-0"|"-1" }) -- unlike every other action, "vote" can be answered once per distinct actor on the same ask; call vote_tally afterward to count ballots and close it once every committee member has voted.',
   parameters: {
     type: "object",
     properties: {
@@ -583,7 +583,7 @@ const askAnswerTool: ToolDef = {
 const voteTally: ToolDef = {
   name: "vote_tally",
   description:
-    'Counts ballots cast (ask_answer, action "vote") on a "vote_request" ask. Returns { resolved: false, missing: [...] } while any maintainer hasn\'t voted yet -- nothing closes until then. Once everyone has, this posts the real "complete" that closes the vote and, if approved and the decision was a Policy change, actually applies it.',
+    'Counts ballots cast (ask_answer, action "vote") on a "vote_request" ask. Returns { resolved: false, missing: [...] } while any committee member hasn\'t voted yet -- nothing closes until then. Once everyone has, this posts the real "complete" that closes the vote and, if approved and the decision was a Policy change, actually applies it.',
   parameters: {
     type: "object",
     properties: {

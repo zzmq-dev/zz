@@ -37,7 +37,7 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .filter((a) => (a.depends_on ?? []).every((depId) => isResolved(lane, depId, ["grant", "complete"])))
     .filter((a) => {
       const scope = ASK_SCOPE[a.kind];
-      return scope === "open" || (scope === "coordinator" && lane.coordinators.includes(actor)) || (scope === "maintainer" && lane.maintainers.includes(actor));
+      return scope === "open" || (scope === "coordinator" && lane.coordinators.includes(actor)) || (scope === "committee" && lane.committee.includes(actor));
     })
     .filter((a) => {
       const holder = claimHolder(lane, a.id);
@@ -46,7 +46,7 @@ export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
 
-export type WorkScope = "coordinator" | "contributor" | "all" | "maintainer";
+export type WorkScope = "coordinator" | "contributor" | "all" | "committee";
 
 export interface ClaimableEntry {
   repo: string;
@@ -86,14 +86,16 @@ export function claimableFromSnapshots(snapshots: { repo: string; lane: Lane }[]
       const askScope = ASK_SCOPE[a.kind];
       if (scope === "coordinator" && askScope !== "coordinator") continue;
       if (scope === "contributor" && askScope === "coordinator") continue;
-      // "maintainer": review (maintainer-scope) AND merge (coordinator-
-      // scope) -- the actual job of a single identity holding both
-      // Lane roles at once, same as "maint" throughout the demos.
-      // Deliberately its own value, not a redefinition of "coordinator"
-      // (which stays narrow on purpose) -- a worker needs a way to ask
-      // for privileged work without also being handed open-scope work
-      // meant for a contributor, which plain "all" would include.
-      if (scope === "maintainer" && askScope === "open") continue;
+      // "committee": merge (coordinator-scope) AND voting (committee-
+      // scope) -- privileged work, excluding plain open-scope work
+      // (which now includes changeset_review -- any Agent may submit
+      // a review opinion; it's no longer privileged the way a vote
+      // is). Deliberately its own value, not a redefinition of
+      // "coordinator" (which stays narrow on purpose) -- a worker
+      // needs a way to ask for privileged work without also being
+      // handed open-scope work meant for a contributor, which plain
+      // "all" would include.
+      if (scope === "committee" && askScope === "open") continue;
       out.push({ repo, laneId: lane.id, ask: a, alreadyClaimed: claimHolder(lane, a.id) === actor });
     }
   }

@@ -81,7 +81,7 @@ async function testFullProtocol(env: Env): Promise<Response> {
       { path: "index.js", content: "export { clamp } from \"./clamp.js\";\n\nexport function isOdd(n) { return n % 2 !== 0; }\n" },
     ];
 
-    // The Maintainer-role gate from earlier this session: a review has
+    // The merge backstop from earlier this session: a review has
     // to exist and be granted before submit_changeset is even
     // claimable (enforced in engine/lane.ts's answer(), not just
     // hoped for) -- so post and grant it first, same order

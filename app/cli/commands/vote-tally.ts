@@ -1,5 +1,5 @@
 // `zz ask vote-tally <owner/repo> <ask-id>`: counts ballots cast on a
-// vote_request (zz ask answer ... vote) and, once every maintainer has
+// vote_request (zz ask answer ... vote) and, once every committee member has
 // voted, closes it for real -- the human-by-hand counterpart to
 // agent/tools.ts's own "vote_tally" tool. Safe to call early and
 // often; it just reports who's still missing until the vote is

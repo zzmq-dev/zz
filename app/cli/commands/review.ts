@@ -1,6 +1,6 @@
 // `zz review`: the minimal slice of what was deferred as "zz cowork"
 // this session -- a human claiming and answering changeset_review asks
-// specifically (the Maintainer judgment call policy requires, see
+// specifically (open-scope; any Agent may submit one, see
 // site/content/governance/index.md), with the mechanical protocol bits
 // (claim, grant/deny) handled for them rather than hand-typed. Not a
 // general interactive session manager: just this one HITL-critical
@@ -122,7 +122,7 @@ export async function review(options: ReviewOptions): Promise<void> {
       } else {
         const claim = await ask(resolved.slug, next.laneId, { kind: "claim_request", from: config.agent, payload: { target: next.ask.id } });
         const lane = await resolveBackend().readLane(resolved.slug, next.laneId);
-        await answer(resolved.slug, next.laneId, claim, { from: lane?.maintainers[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
+        await answer(resolved.slug, next.laneId, claim, { from: lane?.coordinators[0] ?? config.agent, action: "grant", payload: { grant: `grant-${claim.id}` } });
       }
     }
 

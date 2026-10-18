@@ -109,12 +109,12 @@ async function ensureRepoLaneRemote(repo: ResolvedRepo, agent: string): Promise<
   }
   const rootRung = await callRemoteTool(repo.slug, "ladder_read", { path: REPO_RUNG_PATH });
   if (!rootRung) {
-    // Best-effort only: ladder_write_rung needs at least Maintainer
+    // Best-effort only: ladder_write_rung needs at least Coordinator
     // server-side, but this bootstrap runs for the FIRST agent of any
     // role to touch a fresh repo, contributor included -- a
     // contributor can't write this rung, and shouldn't need to just
     // to launch. Found live: `zz work --as <contributor>` on a repo
-    // whose root rung a Maintainer hadn't written yet refused to even
+    // whose root rung a Coordinator hadn't written yet refused to even
     // start, with no way for a contributor-scoped identity to clear
     // it. The rung itself is enrichment for the Ladder, not something
     // claim/propose/submit (a contributor's actual job) depends on --

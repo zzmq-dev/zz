@@ -1,8 +1,8 @@
 // `zz repo policy show|set`: the human-by-hand counterpart to the
 // policy_show/policy_set tools (agent/tools.ts). `show` is unrestricted
-// read -- Policy is meant to be visible to a repo's Maintainers, not
+// read -- Policy is meant to be visible to a repo's Coordinators, not
 // just enforced against them. `set` is the UNGATED write path: an
-// Owner may always use it; a Maintainer only when whatever's being
+// Owner may always use it; a Coordinator only when whatever's being
 // changed is itself under a "direct" Policy rule (enforced server-side,
 // worker/src/webApp.ts's handleApiCallTool) -- anything stricter
 // refuses here and has to go through the existing Ask/Vote protocol

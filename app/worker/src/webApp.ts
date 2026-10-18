@@ -487,7 +487,7 @@ h1 .badge{margin-left:.7rem;vertical-align:middle;font-size:.6em}
    a label. Surface/border/fg instead of the stone/zinc literal colors
    this was adapted from, to match the rest of the theme. */
 .rung{display:inline-block;vertical-align:middle;background:#342e56;color:#e2589a;font-family:var(--mono);font-weight:600;font-size:.85rem;padding:.15em 1em;margin:0 .2em;border-top:1px solid #121827;border-bottom:1px solid #121827;clip-path:polygon(6px 0%,calc(100% - 6px) 0%,100% 50%,calc(100% - 6px) 100%,6px 100%,0% 50%)}
-/* A Role (owner/maintainer/contributor/viewer), framed by subtle
+/* A Role (owner/coordinator/contributor/viewer), framed by subtle
    corner crosshairs instead of a solid pill border -- the role name's
    own color (its existing badge-variant semantics) carries the
    meaning; the crosshairs just mark it as a distinct kind of token. */
@@ -509,7 +509,7 @@ function card(heading: string, innerHtml: string, opts: { addModal?: string; ext
   return `<section class="card${opts.extraClass ? ` ${opts.extraClass}` : ""}"><div class="card-head"><h2>${esc(heading)}</h2>${addBtn}</div>${innerHtml}</section>`;
 }
 
-const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", maintainer: "blue", contributor: "green", viewer: "muted" };
+const ROLE_BADGE_VARIANT: Record<string, string> = { owner: "pink", coordinator: "blue", contributor: "green", viewer: "muted" };
 const LANE_STATUS_BADGE_VARIANT: Record<string, string> = { proposed: "yellow", open: "yellow", claimed: "blue", active: "cyan", merged: "green", closed: "muted", vetoed: "red", stopped: "red" };
 const BADGE_VARIANT_COLOR: Record<string, string> = { pink: "var(--pink)", yellow: "var(--yellow)", cyan: "var(--cyan)", green: "var(--green)", blue: "var(--blue)", red: "var(--red)", muted: "var(--muted)" };
 /** A Lane's status, as .kind-code (the same box every other protocol-event kind/action gets), colored by its existing badge-variant semantics instead of a hash -- vetoed/stopped stay red, merged stays green, etc. */
@@ -535,7 +535,7 @@ function policyModeCode(rule: { mode: string; expiry_hours?: number }): string {
   return `<code class="kind-code" style="color:${color}">${esc(rule.mode)}</code>${expiry}`;
 }
 
-/** The repo page's own "Policy" panel -- same collapsed-by-default <details> the Roles panel uses, since Policy is meant to be visible to a repo's Maintainers, not just enforced against them. */
+/** The repo page's own "Policy" panel -- same collapsed-by-default <details> the Roles panel uses, since Policy is meant to be visible to a repo's Coordinators, not just enforced against them. */
 function policyPanelHtml(policy: RepoPolicy): string {
   const repoRow = `<li class="row"><span class="rung">_repo</span> ${policyModeCode(policy._repo)}</li>`;
   const pathRows = policy.policies.map((r) => `<li class="row"><span class="rung">${esc(r.path)}</span> ${policyModeCode(r)}</li>`).join("");
@@ -1500,7 +1500,7 @@ function doStub(env: WebEnv, artifactsName: string) {
   return stub;
 }
 
-/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). Real `Lane` objects throughout (not a trimmed display type): claimableAsks (engine/workqueue.ts) needs the real shape (coordinators AND maintainers), and the DO already hands back exactly that. */
+/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). Real `Lane` objects throughout (not a trimmed display type): claimableAsks (engine/workqueue.ts) needs the real shape (coordinators AND committee), and the DO already hands back exactly that. */
 async function getRootLane(env: WebEnv, artifactsName: string): Promise<Lane | null> {
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
@@ -1718,7 +1718,7 @@ cd ${esc(repoSlug.split("/").pop() ?? "repo")}
 # ...edit files...
 git add &lt;the files you changed&gt;
 zz repo submit ${esc(repoSlug)} ${esc(laneId)} ${esc(askId)} --message "what you did"</pre>
-    <p class="hint">Posts your changes for review and marks this Ask complete -- the same protocol sequence a scripted agent follows (changeset_review + submit_changeset, then a Maintainer's \`zz review\` and a coordinator's \`zz work\` merge it), just with content you wrote instead of generated.</p>`;
+    <p class="hint">Posts your changes for review and marks this Ask complete -- the same protocol sequence a scripted agent follows (changeset_review + submit_changeset, then a human's \`zz review\` and a coordinator's \`zz work\` merge it), just with content you wrote instead of generated.</p>`;
 }
 
 async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Response> {
@@ -1785,7 +1785,7 @@ async function handleAgentPage(username: string, request: Request, env: WebEnv):
 
 async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
   // Owned AND role-granted -- a repo this agent only ever holds a
-  // Maintainer/Contributor Role on (never owns) is exactly the kind of
+  // Coordinator/Contributor Role on (never owns) is exactly the kind of
   // repo its real work tends to live in, and it was missing entirely
   // from this page before (only ownership was ever checked here).
   const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, agent.username), listRepoRolesForAgent(env.DB, agent.username)]);
@@ -2289,7 +2289,7 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // against a remote repo without the CLI needing its own copy of any
 // of that logic. No repo-level RBAC gate here beyond "authenticated as
 // someone real" -- every tool already enforces its own Lane-level
-// rules (coordinators/maintainers/ASK_SCOPE) server-side, the same as
+// rules (coordinators/committee/ASK_SCOPE) server-side, the same as
 // it does called from the web app or MaintainerDO's existing routes.
 // The one thing checked here: args.actor/args.from, when present,
 // must equal the authenticated caller's own username -- otherwise a
@@ -2313,7 +2313,7 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // else changes: a private repo still requires a real, granted Role
 // (not just "logged in as somebody," see the private-repo check
 // below), and commit_changeset/ladder_write_rung still require
-// Maintainer+ regardless of visibility (COORDINATOR_ONLY_REMOTE_TOOLS,
+// Coordinator+ regardless of visibility (COORDINATOR_ONLY_REMOTE_TOOLS,
 // below) -- both enforced here now, not just by the CLI's own choice
 // of which tools to hand a model.
 const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info"]);
@@ -2321,8 +2321,8 @@ const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info"]);
 // These two write committed content directly, with no further
 // per-call authority check of their own the way claim/answer have
 // (engine/lane.ts's answer() already checks lane.coordinators/
-// maintainers at the protocol level) -- held here to the same
-// Maintainer-or-above bar canPushRepo already holds a raw git push to,
+// committee at the protocol level) -- held here to the same
+// Coordinator-or-above bar canPushRepo already holds a raw git push to,
 // since a direct commit_changeset bypasses the per-changeset review a
 // push would otherwise go through. Previously enforced only by zz
 // work's own choice of which tools to hand the model
@@ -2350,12 +2350,12 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     }
     if (COORDINATOR_ONLY_REMOTE_TOOLS.has(toolName)) {
       const role = me ? await getRepoRoleForPrincipal(env.DB, repo.slug, me.username) : null;
-      if (!role || !repoAtLeast(role as RbacRole, "maintainer")) {
-        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Maintainer of ${slug} -- "${toolName}" requires at least Maintainer`);
+      if (!role || !repoAtLeast(role as RbacRole, "coordinator")) {
+        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Coordinator of ${slug} -- "${toolName}" requires at least Coordinator`);
       }
     }
     // policy_set is the UNGATED write path -- an Owner may always call
-    // it (the designed escape hatch), and anyone Maintainer+ may when
+    // it (the designed escape hatch), and anyone Coordinator+ may when
     // Policy's own "_repo" rule says "direct". Anything stricter
     // (self_review/other_approver/vote_quorum/vote_expiring) refuses
     // this tool outright: changing Policy then has to go through the
@@ -2364,8 +2364,8 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     // "policy", proposal }; engine/lane.ts applies it on grant/tally).
     if (toolName === "policy_set") {
       const role = me ? await getRepoRoleForPrincipal(env.DB, repo.slug, me.username) : null;
-      if (!role || !repoAtLeast(role as RbacRole, "maintainer")) {
-        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Maintainer of ${slug} -- "policy_set" requires at least Maintainer`);
+      if (!role || !repoAtLeast(role as RbacRole, "coordinator")) {
+        throw new ApiError(403, `${me?.username ?? "anonymous"} is not a Coordinator of ${slug} -- "policy_set" requires at least Coordinator`);
       }
       if (role !== "owner") {
         const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
@@ -2738,16 +2738,16 @@ async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnTy
 
 // Push always requires real, resolved authentication -- never
 // anonymous, even on a public repo (same as GitHub: public means
-// publicly readable, not publicly writable). Gated at Maintainer or
+// publicly readable, not publicly writable). Gated at Coordinator or
 // above, same bar as granting a changeset_review -- matching
-// governance.md's own model (Contributor "needs a Maintainer's grant
+// governance.md's own model (Contributor "needs a Coordinator's grant
 // for each changeset"; a raw push bypasses that per-changeset review
 // entirely, so it's deliberately held to the same authority that
 // could grant the review anyway, not opened to every Contributor).
 async function canPushRepo(request: Request, env: WebEnv, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
   const principal = await resolveGitAuthPrincipal(request, env);
   if (!principal) return false;
-  return repoAtLeast(repoRoleFor(roles, principal), "maintainer");
+  return repoAtLeast(repoRoleFor(roles, principal), "coordinator");
 }
 
 function needGitAuthResponse(): Response {
@@ -2949,7 +2949,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
            <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
          </div>
        </div>
-       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Maintainer). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
        <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
        <a href="${origin}/${esc(slug)}/archive.zip" style="display:inline-block;margin-bottom:.75rem"><button class="secondary">Download .zip</button></a>
        <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
@@ -2986,7 +2986,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
-            ${(["owner", "maintainer", "contributor", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
+            ${(["owner", "coordinator", "contributor", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
           </select>
           <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
           <button type="submit" class="secondary" hidden>Save</button>
@@ -3052,7 +3052,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
        <h3>Add a role</h3>
        <form method="post" action="/${esc(slug)}/settings/roles" class="stack">
          ${agentAutocompleteField("principal", "agent name or id", "add-role")}
-         <select name="role"><option>owner</option><option>maintainer</option><option selected>contributor</option><option>viewer</option></select>
+         <select name="role"><option>owner</option><option>coordinator</option><option selected>contributor</option><option>viewer</option></select>
          <div class="modal-actions">
            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Grant</button>

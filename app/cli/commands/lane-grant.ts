@@ -1,10 +1,10 @@
 // `zz lane grant <owner/repo> <lane-id> <principal> <role>`: adds an
-// agent to an EXISTING Lane's coordinators or maintainers -- the only
+// agent to an EXISTING Lane's coordinators or committee -- the only
 // way to do this after the Lane was first proposed. Needed because a
 // repo-level Role grant (zz repo grant) has no effect on any Lane's
 // own authority by itself, and "_repo" in particular is created
-// lazily on first post with maintainers hardcoded to just the repo's
-// owner. Mirrors lane-propose.ts's shape (callRemoteTool).
+// lazily on first post with its committee hardcoded to just the
+// repo's owner. Mirrors lane-propose.ts's shape (callRemoteTool).
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
@@ -20,7 +20,7 @@ export interface LaneGrantOptions {
 }
 
 export async function laneGrantCmd(slug: string, laneId: string, principal: string, role: string, opts: LaneGrantOptions): Promise<void> {
-  if (role !== "coordinator" && role !== "maintainer") throw new Error(`role must be "coordinator" or "maintainer" -- got "${role}".`);
+  if (role !== "coordinator" && role !== "committee") throw new Error(`role must be "coordinator" or "committee" -- got "${role}".`);
   const identity = await resolveIdentity(opts.as);
   setActiveToken(identity.token);
 
@@ -36,7 +36,7 @@ export async function laneGrantCmd(slug: string, laneId: string, principal: stri
   try {
     const expanded = expandAgentId(resolveMe(principal), requireCredentials().username);
     const lane = (await callRemoteTool(slug, "lane_grant", { lane_id: laneId, principal: expanded, as: role, actor: identity.username })) as Lane;
-    console.log(`Added "${expanded}" as ${role} on ${slug}/${laneId} -- coordinators: [${lane.coordinators.join(", ")}], maintainers: [${lane.maintainers.join(", ")}]`);
+    console.log(`Added "${expanded}" as ${role} on ${slug}/${laneId} -- coordinators: [${lane.coordinators.join(", ")}], committee: [${lane.committee.join(", ")}]`);
   } finally {
     await cleanup();
   }

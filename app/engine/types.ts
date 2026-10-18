@@ -1,7 +1,7 @@
 // Mirrors the schema documented at zzbin.dev/data-format/.
 // Keep this file and that page in sync; the docs are the source of truth for shape.
 
-export type Role = "owner" | "maintainer" | "committer" | "contributor" | "reader";
+export type Role = "owner" | "coordinator" | "committer" | "contributor" | "reader";
 
 export interface RoleGrant {
   role: Role;
@@ -19,8 +19,8 @@ export interface AgentRoles {
 // no gate at all), "self_review" (needs a changeset_review, same agent
 // may author and approve it -- today's only behavior, still the
 // default), "other_approver" (same, but the approver must differ from
-// the author), "vote_quorum" (a real Committee vote, every maintainer
-// must cast a ballot, never resolves on silence), "vote_expiring" (the
+// the author), "vote_quorum" (a real Committee vote, every committee
+// member must cast a ballot, never resolves on silence), "vote_expiring" (the
 // same vote, but opts into lazy consensus -- unanswered past its
 // deadline auto-approves instead of staying open forever). Ordered
 // loosest-to-strictest; engine/policy.ts's resolvePolicyMode relies on
@@ -98,14 +98,18 @@ export type AskKind =
   // merge_request granting a Ladder write. No file ever needs to exist
   // on disk before this: the content lives entirely in the payload.
   | "submit_changeset"
-  // A Maintainer's review of a proposed changeset, before it may be
-  // merged -- is this what was actually asked for, does it stay in
-  // scope, does it do anything that wasn't requested. Separate from
-  // submit_changeset's own (coordinator-scope) grant, which is purely
-  // mechanical: 3-way merge, commit, Ladder writes. submit_changeset
-  // depends_on this, so it can't even be claimed before a Maintainer
-  // has granted it (see engine/lane.ts's ASK_SCOPE and the backstop
-  // check in answer()).
+  // A review of a proposed changeset, before it may be merged -- is
+  // this what was actually asked for, does it stay in scope, does it
+  // do anything that wasn't requested. Open-scope: any Agent may
+  // submit one, an opinion rather than a privileged act -- what makes
+  // a given set of reviews *sufficient* to merge is Policy's approval
+  // mode (self_review/other_approver/vote_quorum/vote_expiring), not
+  // membership on a restricted list. Separate from submit_changeset's
+  // own (coordinator-scope) grant, which is purely mechanical: 3-way
+  // merge, commit, Ladder writes. submit_changeset depends_on this, so
+  // it can't even be claimed before a qualifying review has granted it
+  // (see engine/lane.ts's ASK_SCOPE and the backstop check in
+  // answer()).
   | "changeset_review"
   // Posted when a submit_changeset is denied specifically because
   // another change landed first and the proposal, based on a now-stale
@@ -119,8 +123,7 @@ export type AskKind =
   // decisions lazy consensus doesn't settle, such as granting Roles
   // above Contributor, changing Policy, or replacing an Owner, a
   // Committee holds a formal Vote"). Scope "committee" (ASK_SCOPE,
-  // engine/lane.ts) -- resolved against the Lane's own `maintainers`
-  // list, same as changeset_review; Committee is not a separate list.
+  // engine/lane.ts) -- resolved against the Lane's own `committee` list.
   // payload.decisionKind names what's being decided ("policy" |
   // "role_grant" | "owner_succession" | "other"); payload.proposal
   // carries the kind-specific detail (e.g. a RepoPolicy diff for
@@ -190,7 +193,7 @@ export interface AnswerEntry {
   ask: string;
   from: string;
   // "veto": a hard, terminal rejection of one changeset_review by a
-  // Maintainer/Committee member, for a design/priority disagreement
+  // Committee member, for a design/priority disagreement
   // negotiation couldn't resolve -- distinct from "deny" (didn't meet
   // the bar) in both meaning and effect (sets the Lane to "vetoed", a
   // LaneStatus value that already existed, unused, before this).
@@ -235,15 +238,14 @@ export interface Lane {
   scope: string[];
   trigger: Trigger;
   coordinators: string[];
-  // Who may grant a changeset_review -- the Maintainer role from
-  // site/content/governance/index.md ("Reviews and decides;
-  // accountable for what merges"), distinct from coordinators (which
-  // governs the mechanical merge step: commit_changeset,
-  // ladder_write_rung). Defaults to coordinators when not set
-  // explicitly, so existing fully-autonomous flows keep working;
-  // narrow it (e.g. to a single human actor id) to require real human
-  // sign-off.
-  maintainers: string[];
+  // Who must cast a ballot on a vote_request (Committee membership --
+  // "committee" ASK_SCOPE). changeset_review no longer reads this: it
+  // is open-scope, any Agent may submit one, and Policy's approval
+  // mode decides what's actually sufficient to merge. Defaults to
+  // coordinators when not set explicitly, so existing fully-autonomous
+  // flows keep working; narrow it to require a specific set of real
+  // votes.
+  committee: string[];
   budget?: { cap_usd: number; spent_usd: number };
   history: HistoryEntry[];
   related_lanes: RelatedLaneEntry[];

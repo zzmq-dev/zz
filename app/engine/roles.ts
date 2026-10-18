@@ -7,7 +7,7 @@ const RANK: Record<Role, number> = {
   reader: 0,
   contributor: 1,
   committer: 2,
-  maintainer: 3,
+  coordinator: 3,
   owner: 4,
 };
 

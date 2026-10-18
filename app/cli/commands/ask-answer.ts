@@ -1,6 +1,6 @@
 // `zz ask answer <owner/repo> <ask-id> <action>`: the human-by-hand
 // counterpart to agent/tools.ts's own "ask_answer" tool -- the one
-// generic CLI path for "complete"/"deny"/"veto"/"vote", so a maintainer
+// generic CLI path for "complete"/"deny"/"veto"/"vote", so a coordinator
 // or Committee member can resolve, reject, or cast a ballot on an Ask
 // without a model in the loop. Mirrors ask-claim.ts's shape exactly
 // (resolveIdentity + setActiveToken + SIGINT/SIGTERM cleanup +

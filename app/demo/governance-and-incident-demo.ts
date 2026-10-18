@@ -52,7 +52,7 @@ async function main() {
   // agent delete" exists), so a plain "alice" would collide with any
   // earlier run's and get a server-appended "-2" suffix, which is
   // harmless but clutters the account across repeat runs.
-  step("Creating four peer Agents: alice, bob (Committee/maintainers), mallory (does the tainted work), dan (whistleblower)");
+  step("Creating four peer Agents: alice, bob (the Committee), mallory (does the tainted work), dan (whistleblower)");
   const alice = await createAgent(`alice-${runId}`);
   const bob = await createAgent(`bob-${runId}`);
   const mallory = await createAgent(`mallory-${runId}`);
@@ -76,11 +76,11 @@ async function main() {
   // ---------------------------------------------------------------
   section("Scenario A: Committee Vote on a Policy change");
   // ---------------------------------------------------------------
-  step(`Granting mallory Maintainer on ${slug} -- she's a trusted contributor today, which is exactly what makes Scenario B interesting later`);
+  step(`Granting mallory Coordinator on ${slug} -- she's a trusted contributor today, which is exactly what makes Scenario B interesting later`);
   setActiveToken(requireCredentials().token);
-  await apiFetch("POST", `/api/repos/${slug.split("/")[0]}/${slug.split("/")[1]}/roles`, { principal: mallory, role: "maintainer" });
+  await apiFetch("POST", `/api/repos/${slug.split("/")[0]}/${slug.split("/")[1]}/roles`, { principal: mallory, role: "coordinator" });
 
-  step("Proposing a Lane with alice+bob as its Committee (maintainers) -- every other path defaults a new Lane's maintainers to just its proposer");
+  step("Proposing a Lane with alice+bob as its Committee -- every other path defaults a new Lane's committee to just its proposer");
   setActiveToken(aliceId.token);
   const govLane = (await callRemoteTool(slug, "lane_propose", {
     repo: slug,
@@ -88,9 +88,9 @@ async function main() {
     objective: "Decide on Policy changes for this repo",
     scope: ["**"],
     actor: alice,
-    maintainers: [alice, bob],
+    committee: [alice, bob],
   })) as Lane;
-  console.log(`   Lane ${govLane.id} -- maintainers: ${govLane.maintainers.join(", ")}`);
+  console.log(`   Lane ${govLane.id} -- committee: ${govLane.committee.join(", ")}`);
 
   step('Posting a vote_request: "require a different approver than the author, repo-wide" (a Policy change -- never lazy consensus, only a real Vote)');
   const voteAsk = (await callRemoteTool(slug, "ask_post", {
@@ -132,7 +132,7 @@ async function main() {
   const policy = (await callRemoteTool(slug, "policy_set", { repo: slug, actor: human, path_rule: { path: "README.md", mode: "vote_quorum" } })) as RepoPolicy;
   console.log(`   README.md's own rule is now "${policy.policies.find((r) => r.path === "README.md")?.mode}"`);
 
-  step(`For contrast: mallory (Maintainer, not Owner) tries the same thing herself -- rejected, since "_repo" itself defaults to "vote_quorum"`);
+  step(`For contrast: mallory (Coordinator, not Owner) tries the same thing herself -- rejected, since "_repo" itself defaults to "vote_quorum"`);
   try {
     setActiveToken(malloryId.token);
     await callRemoteTool(slug, "policy_set", { repo: slug, actor: mallory, path_rule: { path: "README.md", mode: "direct" } });
@@ -141,7 +141,7 @@ async function main() {
     console.log(`   Rejected as expected: ${(e as Error).message.slice(0, 160)}`);
   }
 
-  step("A changeset touching README.md now needs a real Vote, not just a Maintainer's own review -- mallory submits one and it's blocked on exactly that");
+  step("A changeset touching README.md now needs a real Vote, not just a review -- mallory submits one and it's blocked on exactly that");
   setActiveToken(malloryId.token);
   const policyLane = (await callRemoteTool(slug, "lane_propose", { repo: slug, name: "README update", objective: "Tweak the README", scope: ["README.md"], actor: mallory })) as Lane;
   const gatedVote = (await callRemoteTool(slug, "ask_post", {
@@ -180,7 +180,7 @@ async function main() {
   // ---------------------------------------------------------------
   section("Scenario B: tainted work and the STOP/DROP/ROLL incident runbook");
   // ---------------------------------------------------------------
-  step("mallory commits directly to README.md -- a real commit, by a trusted Maintainer, that turns out to be bad (e.g. a leaked secret)");
+  step("mallory commits directly to README.md -- a real commit, by a trusted Coordinator, that turns out to be bad (e.g. a leaked secret)");
   setActiveToken(malloryId.token);
   const currentReadme = (await callRemoteTool(slug, "git_show_file", { repo: slug, sha: "HEAD", path: "README.md" })) as string;
   const taintedReadme = `${currentReadme}\n<!-- oops: API_KEY=sk-live-not-a-real-secret-but-pretend-it-is -->\n`;

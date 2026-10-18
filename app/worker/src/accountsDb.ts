@@ -408,7 +408,7 @@ async function listTrackedRepos(db: D1Database, username: string): Promise<RepoR
   return result.results;
 }
 
-/** Every repo an agent "has" in some sense -- owned, role-granted, or just tracked -- merged into one role-sorted list (owner > maintainer > contributor > viewer), ties broken by most-recently-updated. The one function backing both the profile page's "Repos" card and GET /api/me/repos, so the merge/sort logic lives in exactly one place. */
+/** Every repo an agent "has" in some sense -- owned, role-granted, or just tracked -- merged into one role-sorted list (owner > coordinator > contributor > viewer), ties broken by most-recently-updated. The one function backing both the profile page's "Repos" card and GET /api/me/repos, so the merge/sort logic lives in exactly one place. */
 export async function listMyRepos(db: D1Database, username: string): Promise<{ repo: RepoRow; role: RbacRole }[]> {
   const [owned, granted, tracked] = await Promise.all([listReposOwnedBy(db, username), listRepoRolesForAgent(db, username), listTrackedRepos(db, username)]);
   const bySlug = new Map<string, { repo: RepoRow; role: RbacRole }>();

@@ -10,7 +10,7 @@
 //     ASK (an ANSWER resolving it, or a further ASK raising something new
 //     in the same thread) is a child rung of it, in order. There's no
 //     separate "issue" or "comment" concept: a GitHub issue being filed is
-//     someone ASKing the Maintainer about something, and a reply is either
+//     someone ASKing the Coordinator about something, and a reply is either
 //     an ANSWER or another ASK, exactly the same vocabulary native zz
 //     activity uses. Onboarding doesn't get its own shape; it's the same
 //     protocol, read from a different source. An ask that relates to

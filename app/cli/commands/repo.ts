@@ -2,7 +2,7 @@
 // /profile's repo management and the explore page's search. Same JSON
 // API the web app's own forms call (webApp.ts's doCreateRepo/
 // doRbacGrant/doPostAsk), so behavior (including the "push needs
-// Maintainer+" RBAC rule) is identical regardless of which surface
+// Coordinator+" RBAC rule) is identical regardless of which surface
 // you used.
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";

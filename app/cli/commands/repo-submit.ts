@@ -10,7 +10,7 @@
 // directory's git index, same as any other git-adjacent CLI command.
 //
 // This does NOT commit anything itself -- posting a changeset_review
-// only proposes one. A Maintainer still has to `zz review` and approve
+// only proposes one. Someone still has to `zz review` and approve
 // it before a coordinator's `zz work` run actually merges it (calls
 // commit_changeset for real). That two-step is the point: a raw push
 // bypasses per-changeset review entirely, which is exactly what this
@@ -166,8 +166,8 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
       rule.mode === "direct"
         ? `Next: a coordinator's \`zz work\` run merges it for real.`
         : rule.mode === "vote_quorum" || rule.mode === "vote_expiring"
-          ? `Next: every maintainer votes (\`zz ask answer ... vote\`), then \`zz ask vote-tally\` closes it; once approved, a coordinator's \`zz work\` run merges it for real.`
-          : `Next: a Maintainer needs to \`zz review\` and approve it; once granted, a coordinator's \`zz work\` run merges it for real.`,
+          ? `Next: every committee member votes (\`zz ask answer ... vote\`), then \`zz ask vote-tally\` closes it; once approved, a coordinator's \`zz work\` run merges it for real.`
+          : `Next: someone needs to \`zz review\` and approve it; once granted, a coordinator's \`zz work\` run merges it for real.`,
     );
   } finally {
     await cleanup();

@@ -308,7 +308,7 @@ const release_v6_3_1: Rung = {
 };
 
 // No "issue" concept: a GitHub issue being filed is someone ASKing the
-// Maintainer about something, and a reply is either an ANSWER or another
+// Coordinator about something, and a reply is either an ANSWER or another
 // ASK in the same thread, exactly the vocabulary native zz activity uses.
 // smolinari's purely social "Thanks!" isn't dropped for space; it's dropped
 // because it isn't answering anything, so it isn't protocol content.

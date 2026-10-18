@@ -29,7 +29,7 @@ function randomId(prefix: string): string {
 
 export async function proposeLane(
   repo: string,
-  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; maintainers?: string[] },
+  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; committee?: string[] },
 ): Promise<Lane> {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
   const coordinators = input.coordinators ?? [input.proposedBy];
@@ -44,10 +44,10 @@ export async function proposeLane(
     trigger,
     coordinators,
     // Defaults to the same set as coordinators, so a Lane proposed
-    // without explicit maintainers still works fully autonomously --
+    // without an explicit committee still works fully autonomously --
     // narrow this explicitly (e.g. to a single human actor id) to
-    // require real sign-off on every changeset.
-    maintainers: input.maintainers ?? coordinators,
+    // require real votes from a specific set of agents.
+    committee: input.committee ?? coordinators,
     history: [],
     related_lanes: [],
   };
@@ -56,28 +56,28 @@ export async function proposeLane(
 }
 
 /**
- * Adds `principal` to an EXISTING Lane's `coordinators` or `maintainers`
- * list -- the thing proposeLane's own `coordinators`/`maintainers`
+ * Adds `principal` to an EXISTING Lane's `coordinators` or `committee`
+ * list -- the thing proposeLane's own `coordinators`/`committee`
  * params can't do, since those only ever apply at the moment a Lane is
  * first proposed. Needed because granting a repo-level Role
  * (site/content/docs/governance's "Planned: Tying Lane rights to repo
  * Roles") has no effect on any Lane's own authority today -- `_repo`
- * in particular is created lazily on first post with maintainers
- * hardcoded to just the repo's owner, so a Maintainer-Role agent
+ * in particular is created lazily on first post with its committee
+ * hardcoded to just the repo's owner, so a Coordinator-Role agent
  * granted afterward could claim open-scope work forever but never
- * actually review or merge any of it, with no way to fix that short
+ * actually cast a vote on any of it, with no way to fix that short
  * of this. Gated to the Lane's own current coordinators -- the same
  * "authority only comes from an explicit grant" principle every other
  * RBAC check here already follows, not a repo-Owner-only action,
  * since a Lane's coordinator is the one who actually knows who should
  * share its authority.
  */
-export async function grantLaneRole(repo: string, laneId: string, input: { principal: string; as: "coordinator" | "maintainer"; grantedBy: string }): Promise<Lane> {
+export async function grantLaneRole(repo: string, laneId: string, input: { principal: string; as: "coordinator" | "committee"; grantedBy: string }): Promise<Lane> {
   return resolveBackend().withLane(repo, laneId, (lane) => {
     if (!lane.coordinators.includes(input.grantedBy)) {
       throw new Error(`"${input.grantedBy}" cannot grant Lane roles on "${laneId}" -- only one of its own coordinators (${lane.coordinators.join(", ")}) can.`);
     }
-    const list = input.as === "coordinator" ? lane.coordinators : lane.maintainers;
+    const list = input.as === "coordinator" ? lane.coordinators : lane.committee;
     if (!list.includes(input.principal)) list.push(input.principal);
   });
 }
@@ -239,23 +239,17 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
         `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's coordinator-scope and "${input.from}" is not one of lane "${laneId}"'s coordinators (${lane.coordinators.join(", ")}).`,
       );
     }
-    // Same enforcement for the Maintainer role (site/content/governance)
-    // -- a changeset_review may only be granted/denied by someone this
-    // Lane actually lists as a maintainer, which can be a strict
+    // Committee enforcement -- a vote/veto may only be cast by someone
+    // this Lane actually lists in `committee`, which can be a strict
     // subset of coordinators (e.g. a single human actor id), not just
-    // "any coordinator."
-    if (ASK_SCOPE[theAsk.kind] === "maintainer" && !lane.maintainers.includes(input.from)) {
+    // "any coordinator." changeset_review carries no equivalent check
+    // here on purpose: it's open-scope, any Agent may submit one, and
+    // Policy's approval mode (self_review/other_approver/vote_quorum/
+    // vote_expiring) is what decides whether a given set of reviews is
+    // actually sufficient to merge.
+    if (ASK_SCOPE[theAsk.kind] === "committee" && !lane.committee.includes(input.from)) {
       throw new Error(
-        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that requires being one of lane "${laneId}"'s maintainers (${lane.maintainers.join(", ")}).`,
-      );
-    }
-    // Committee is not a separate list (site/content/docs/governance:
-    // "by default the Agents holding Maintainer") -- same check as
-    // maintainer-scope above, just a clearer error for a vote/veto
-    // specifically.
-    if (ASK_SCOPE[theAsk.kind] === "committee" && !lane.maintainers.includes(input.from)) {
-      throw new Error(
-        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's a Committee decision, and this Lane's Committee is its maintainers list (${lane.maintainers.join(", ")}), which "${input.from}" isn't on.`,
+        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's a Committee decision, and this Lane's Committee is (${lane.committee.join(", ")}), which "${input.from}" isn't on.`,
       );
     }
     // A VETO only makes sense as a response to a specific proposed
@@ -292,18 +286,18 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
         // self_review or other_approver -- both need a granted
         // changeset_review; other_approver additionally requires the
         // granting agent to differ from whoever proposed this Lane
-        // (the Lane's own author), so a Maintainer can't satisfy that
+        // (the Lane's own author), so an agent can't satisfy that
         // stricter mode by approving their own work.
         const reviewId = (theAsk.depends_on ?? []).find((id) => lane.history.some((e) => e.type === "ASK" && e.id === id && e.kind === "changeset_review"));
         const grant = reviewId !== undefined ? lane.history.find((e): e is AnswerEntry => e.type === "ANSWER" && e.ask === reviewId && e.action === "grant") : undefined;
         if (!grant) {
           throw new Error(
-            `ask ${theAsk.id} ("submit_changeset") can't be completed without an approved changeset_review in its depends_on -- post one (ask_post, kind "changeset_review") and get it granted by one of this lane's maintainers first.`,
+            `ask ${theAsk.id} ("submit_changeset") can't be completed without an approved changeset_review in its depends_on -- post one (ask_post, kind "changeset_review") and get it granted first.`,
           );
         }
         if (rule.mode === "other_approver" && grant.from === lane.trigger.proposed_by) {
           throw new Error(
-            `ask ${theAsk.id} ("submit_changeset") touches a path whose Policy rule is "other_approver" -- its changeset_review was granted by "${grant.from}", the same agent who proposed this Lane. Get a different maintainer to review it.`,
+            `ask ${theAsk.id} ("submit_changeset") touches a path whose Policy rule is "other_approver" -- its changeset_review was granted by "${grant.from}", the same agent who proposed this Lane. Get a different agent to review it.`,
           );
         }
       }
@@ -365,15 +359,16 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
 
 // Which actor may act on (claim, or grant/deny/complete) an ask of a
 // given kind: "coordinator" means only someone in that lane's
-// `coordinators` list, "maintainer" only someone in its `maintainers`
-// list (the Maintainer role, site/content/governance -- can be a
-// strict subset of coordinators), "committee" the same list again
-// (Committee is Maintainers by default, not a separate list -- see
-// governance's own "planned" section), "open" means anyone. A
-// property of the kind, not a central lock -- the query that reads
-// this (engine/workqueue.ts's claimableAsks) is what a real
-// concurrent actor would run against a shared queue.
-export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer" | "committee"> = {
+// `coordinators` list, "committee" only someone in its `committee`
+// list (can be a strict subset of coordinators), "open" means anyone.
+// changeset_review is open-scope -- any Agent may submit a review
+// opinion, with Policy's approval mode (self_review/other_approver/
+// vote_quorum/vote_expiring) deciding what's actually sufficient to
+// merge, not list membership. A property of the kind, not a central
+// lock -- the query that reads this (engine/workqueue.ts's
+// claimableAsks) is what a real concurrent actor would run against a
+// shared queue.
+export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "committee"> = {
   claim_request: "coordinator",
   claim_release: "coordinator",
   merge_request: "coordinator",
@@ -388,7 +383,7 @@ export const ASK_SCOPE: Record<AskKind, "coordinator" | "open" | "maintainer" | 
   work: "open",
   submit_changeset: "coordinator",
   resolve_conflict: "open",
-  changeset_review: "maintainer",
+  changeset_review: "open",
   vote_request: "committee",
   // Posting (filing a report) is unrestricted -- ask() never
   // scope-checks. This governs who may act on one (complete it, which
@@ -425,21 +420,20 @@ export async function postInsight(repo: string, laneId: string, input: { kind: "
 }
 
 export interface VoteTally {
-  /** False while any expected Committee member (this Lane's `maintainers`) hasn't cast a ballot yet -- nothing is closed, no "complete" posted. */
+  /** False while any expected Committee member (this Lane's `committee`) hasn't cast a ballot yet -- nothing is closed, no "complete" posted. */
   resolved: boolean;
   approved?: boolean;
   ballots: Record<string, "+1" | "+0" | "-0" | "-1">;
   missing: string[];
-  /** True when this closed via its deadline passing with votes still missing, not a real quorum -- only possible for a "vote_expiring" Policy rule's own vote_request (payload.lazyEligible); every other vote_request still needs every maintainer's ballot, same as always. */
+  /** True when this closed via its deadline passing with votes still missing, not a real quorum -- only possible for a "vote_expiring" Policy rule's own vote_request (payload.lazyEligible); every other vote_request still needs every committee member's ballot, same as always. */
   lazyConsensus?: boolean;
 }
 
 /**
  * Counts ballots on a vote_request and, once every one of this Lane's
- * maintainers (the Committee -- site/content/docs/governance: "by
- * default the Agents holding Maintainer") has voted, posts the real,
- * terminal "complete" that closes it -- the only thing that ever
- * does. Demo-level tallying (simple majority of +1 vs -1, +0/-0 count
+ * committee members has voted, posts the real, terminal "complete"
+ * that closes it -- the only thing that ever does. Demo-level
+ * tallying (simple majority of +1 vs -1, +0/-0 count
  * toward quorum but not the result) -- the real design wants
  * stakes-scaled thresholds (a Role grant above Contributor needing a
  * bigger majority, an Owner succession needing zero -1s); not built
@@ -462,7 +456,7 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
       ballots[e.from] = (e.payload as { ballot: "+1" | "+0" | "-0" | "-1" }).ballot;
     }
   }
-  const missing = lane.maintainers.filter((m) => !(m in ballots));
+  const missing = lane.committee.filter((m) => !(m in ballots));
   const lazyEligible = (theAsk.payload as { lazyEligible?: boolean } | undefined)?.lazyEligible === true;
   const pastDeadline = !!theAsk.deadline && new Date(theAsk.deadline).getTime() <= Date.now();
   if (missing.length > 0 && !(lazyEligible && pastDeadline)) return { resolved: false, ballots, missing };

@@ -86,11 +86,11 @@ async function main() {
   section("Scenario A: a real Committee actually votes on a Policy change");
   // ---------------------------------------------------------------
   setActiveToken(requireCredentials().token);
-  await apiFetch("POST", `/api/repos/${slug.split("/")[0]}/${slug.split("/")[1]}/roles`, { principal: mallory, role: "maintainer" });
+  await apiFetch("POST", `/api/repos/${slug.split("/")[0]}/${slug.split("/")[1]}/roles`, { principal: mallory, role: "coordinator" });
 
   setActiveToken(aliceId.token);
-  const govLane = (await callRemoteTool(slug, "lane_propose", { repo: slug, name: "Policy Committee", objective: "Decide on Policy changes for this repo", scope: ["**"], actor: alice, maintainers: [alice, bob] })) as Lane;
-  console.log(`   Lane ${govLane.id} -- maintainers: ${govLane.maintainers.join(", ")}`);
+  const govLane = (await callRemoteTool(slug, "lane_propose", { repo: slug, name: "Policy Committee", objective: "Decide on Policy changes for this repo", scope: ["**"], actor: alice, committee: [alice, bob] })) as Lane;
+  console.log(`   Lane ${govLane.id} -- committee: ${govLane.committee.join(", ")}`);
 
   const voteAsk = (await callRemoteTool(slug, "ask_post", {
     repo: slug,
@@ -102,7 +102,7 @@ async function main() {
   console.log(`   Ask ${voteAsk.id}: ${JSON.stringify(voteAsk.payload)}`);
 
   const votePrompt = (agentUsername: string) =>
-    `You are ${agentUsername}, a Committee member (maintainer) on the Lane "${govLane.id}" in repo "${slug}". ` +
+    `You are ${agentUsername}, a Committee member on the Lane "${govLane.id}" in repo "${slug}". ` +
     `There is an open vote_request Ask (id "${voteAsk.id}") proposing a Policy change. ` +
     `Use lane_get to read its full payload (the proposal and description), decide for yourself whether it's a reasonable change, ` +
     `then cast your real ballot with ask_answer: repo "${slug}", lane_id "${govLane.id}", ask_id "${voteAsk.id}", actor "${agentUsername}", action "vote", payload {"ballot": "+1"} to approve or "-1" to reject. ` +

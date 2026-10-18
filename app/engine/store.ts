@@ -66,9 +66,24 @@ function getDb(repoStateDir: string): DatabaseSync {
   return db;
 }
 
+// A Lane persisted before the Maintainer->Coordinator rename has
+// `maintainers` baked into its stored JSON, not `committee` -- the
+// rename only changed what new code reads and writes, not what's
+// already sitting on disk. Without this, an already-existing local
+// Lane would silently come back with `committee: undefined` after an
+// upgrade, breaking voting and the review backstop on it. Applied at
+// every read path below, not just one.
+function migrateLane(lane: Lane): Lane {
+  if (lane.committee === undefined) {
+    const legacy = lane as unknown as { maintainers?: string[] };
+    lane.committee = legacy.maintainers ?? lane.coordinators;
+  }
+  return lane;
+}
+
 export function readLane(repoStateDir: string, laneId: string): Lane | null {
   const row = getDb(repoStateDir).prepare("SELECT data FROM lanes WHERE id = ?").get(laneId) as { data: string } | undefined;
-  return row ? (JSON.parse(row.data) as Lane) : null;
+  return row ? migrateLane(JSON.parse(row.data) as Lane) : null;
 }
 
 export function writeLane(repoStateDir: string, lane: Lane): void {
@@ -77,7 +92,7 @@ export function writeLane(repoStateDir: string, lane: Lane): void {
 
 export function listLanes(repoStateDir: string): Lane[] {
   const rows = getDb(repoStateDir).prepare("SELECT data FROM lanes").all() as { data: string }[];
-  return rows.map((r) => JSON.parse(r.data) as Lane);
+  return rows.map((r) => migrateLane(JSON.parse(r.data) as Lane));
 }
 
 /**
@@ -94,7 +109,7 @@ export function withLane(repoStateDir: string, laneId: string, mutate: (lane: La
   try {
     const row = db.prepare("SELECT data FROM lanes WHERE id = ?").get(laneId) as { data: string } | undefined;
     if (!row) throw new Error(`no such lane: ${laneId}`);
-    const lane = JSON.parse(row.data) as Lane;
+    const lane = migrateLane(JSON.parse(row.data) as Lane);
     mutate(lane);
     db.prepare("INSERT OR REPLACE INTO lanes (id, data) VALUES (?, ?)").run(lane.id, JSON.stringify(lane, null, 2));
     db.exec("COMMIT");

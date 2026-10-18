@@ -181,7 +181,7 @@ async function verifyProposal(resolved: ResolvedRepo, files: { path: string; con
 // allowed" are two separate, separately-gated steps, not one agent's
 // unilateral judgment call. A repo with no policies set behaves
 // exactly as before this existed (resolvePolicyMode's own default):
-// self_review, i.e. always a changeset_review, any maintainer may
+// self_review, i.e. always a changeset_review, any agent may
 // grant their own.
 async function postForReview(opts: {
   resolved: ResolvedRepo;
@@ -361,7 +361,7 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
   const payload = theAsk.payload as { description?: string; priorAttempt?: { reason: string; files: { path: string; content: string }[] } } | undefined;
   const description = payload?.description ?? JSON.stringify(theAsk.payload);
   const priorAttemptBlock = payload?.priorAttempt
-    ? `\n\nA Maintainer requested changes on a previous submission for this task: ${payload.priorAttempt.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${payload.priorAttempt.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`
+    ? `\n\nA reviewer requested changes on a previous submission for this task: ${payload.priorAttempt.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${payload.priorAttempt.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`
     : "";
 
   // Remote contributor work always happens in a task shard: a real
@@ -481,7 +481,7 @@ export async function commitContributorWork(opts: ScriptedFlowOptions, proposed:
   const { resolved, laneId, proposal } = proposed;
   if (!authedCloneUrlFor) return proposed;
   // Commit for real in the shard -- the agent owns it, so this is
-  // authorized the same way a maintainer's own direct commit on a
+  // authorized the same way a coordinator's own direct commit on a
   // repo it coordinates is (lane_propose made this agent the shard
   // lane's coordinator). This, plus the ladder write right after, is
   // the real "creating a changeset and a ladder within that lane" the
@@ -739,7 +739,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   // shard, that commit only exists in the shard's own git history.
   // threeWayMerge below diffs it against resolved.repoDir (the
   // ORIGIN's local clone), which never has those objects unless
-  // fetched first. Confirmed live: a self-merge (Stage 3, maintainer
+  // fetched first. Confirmed live: a self-merge (Stage 3, an agent
   // reviewing/merging its own sharded work) failed here with git's own
   // "fatal: bad object" on exactly the second changeset in a row --
   // the first one's objects happened to already be reachable from a
@@ -931,14 +931,14 @@ interface ChangesetReviewPayload {
 }
 
 // The policy this judges against is site/content/governance/index.md's
-// own definition of the Maintainer role -- "Reviews and decides;
-// accountable for what merges" -- and its security principle "never
-// trust self-declared scope": a Maintainer independently checks what a
-// change actually touches against what it claims to, rather than
-// trusting the contributor's own summary. This step exists
-// specifically so that check is never skipped, not folded silently
-// into the mechanical merge.
-const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a Maintainer (site/content/governance/index.md: "Reviews and decides; accountable for what merges"). You are reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your only job: does this change actually match what was asked, does it stay in scope, does it do anything that wasn't requested. Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
+// security principle "never trust self-declared scope": a reviewer
+// independently checks what a change actually touches against what
+// it claims to, rather than trusting the contributor's own summary.
+// changeset_review is open-scope -- any agent may submit one -- so
+// this step exists specifically so that check is never skipped
+// regardless of who's performing it, not folded silently into the
+// mechanical merge.
+const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your only job: does this change actually match what was asked, does it stay in scope, does it do anything that wasn't requested. Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
 
 You never call tools or write JSON here -- you only write plain text in the exact format below.
 
@@ -990,7 +990,7 @@ function resolveReviewTarget(resolved: ResolvedRepo, payload: ChangesetReviewPay
   return resolved;
 }
 
-/** Prepares a changeset_review ask for a human to actually look at: writes its proposed files into a real local clone -- the same task shard the contributor worked in, when the ask's payload names one (source_repo) and we're in remote mode (cloning/syncing it if needed), falling back to the review's own parent repo otherwise -- and computes a real diff against baseCommit, so a Maintainer can `cd` in and run the code, not just read a model's decision. Calls no model and claims nothing; proposeReview/acceptReview (below) own the protocol side. Safe to call more than once (idempotent: a second call reuses and fast-forwards the same named worktree rather than creating a second one, and the file write just overwrites with the same content). A *named*, persistent worktree (ensureNamedWorktree), not an ephemeral one -- this exists specifically so a human can `cd` in and run the code after this returns, possibly across more than one --assist turn on the same ask; an auto-removed worktree would delete the thing this function exists to produce. */
+/** Prepares a changeset_review ask for a human to actually look at: writes its proposed files into a real local clone -- the same task shard the contributor worked in, when the ask's payload names one (source_repo) and we're in remote mode (cloning/syncing it if needed), falling back to the review's own parent repo otherwise -- and computes a real diff against baseCommit, so a human reviewer can `cd` in and run the code, not just read a model's decision. Calls no model and claims nothing; proposeReview/acceptReview (below) own the protocol side. Safe to call more than once (idempotent: a second call reuses and fast-forwards the same named worktree rather than creating a second one, and the file write just overwrites with the same content). A *named*, persistent worktree (ensureNamedWorktree), not an ephemeral one -- this exists specifically so a human can `cd` in and run the code after this returns, possibly across more than one --assist turn on the same ask; an auto-removed worktree would delete the thing this function exists to produce. */
 export async function prepareReviewWorkspace(opts: ScriptedFlowOptions): Promise<ReviewWorkspace> {
   const { resolved, theAsk, authedCloneUrlFor } = opts;
   const payload = theAsk.payload as ChangesetReviewPayload;
@@ -1048,7 +1048,7 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   return parseReviewDecision(text);
 }
 
-const CHANGESET_DISCUSS_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a Maintainer discussing a proposed changeset with the human who will make the final approve/request_changes call. You already gave an initial recommendation; the human is now asking a follow-up question or pushing back on it. Answer plainly and specifically about the real file contents and the task -- don't repeat your whole earlier analysis, just address what they're asking. Free-form prose is fine here (this is discussion, not the final decision) -- no DECISION:/REASON: format, no tool calls.`;
+const CHANGESET_DISCUSS_SYSTEM_PROMPT = `You are an agent in the zz coordination system, discussing a proposed changeset with the human who will make the final approve/request_changes call. You already gave an initial recommendation; the human is now asking a follow-up question or pushing back on it. Answer plainly and specifically about the real file contents and the task -- don't repeat your whole earlier analysis, just address what they're asking. Free-form prose is fine here (this is discussion, not the final decision) -- no DECISION:/REASON: format, no tool calls.`;
 
 /** Free-form Q&A about a changeset_review before the human finalizes it -- unlike proposeReview, this doesn't produce a DECISION:/REASON: pair, just an answer to append to the chat transcript. `conversation` is the prior turns (proposeReview's own initial recommendation counts as the first assistant turn) so follow-up questions have context. */
 export async function discussReview(opts: ScriptedFlowOptions, conversation: { role: "assistant" | "user"; content: string }[], question: string): Promise<string> {
@@ -1072,10 +1072,11 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // The gated submit_changeset is now permanently unclaimable (its
   // depends_on will never resolve) -- a real, visible terminal state
   // in the lane log, not denied outright here: denying it is a
-  // coordinator-scope action, and a Maintainer doing the reviewing is
-  // deliberately not required to also be a coordinator (that's the
-  // whole point of narrowing maintainers to e.g. a single human actor
-  // who approves but never merges).
+  // coordinator-scope action, and reviewing is open-scope -- an agent
+  // doing the reviewing is never required to also be a coordinator,
+  // since review and merge are deliberately separate authorities
+  // (judgment vs mechanics), not because any list narrows who may
+  // review.
   //
   // The original "work" ask is already answered complete by this point
   // (acceptContributorWork answers it the moment a changeset is

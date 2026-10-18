@@ -3,7 +3,7 @@
 // not by writing Ladder rungs directly. One local agent (configurable
 // id, default "zz-local") plays both sides of the protocol -- it's the
 // single actor in the system for this bootstrap step, holding
-// Maintainer-level access by construction (no role-grant ceremony yet,
+// Coordinator-level access by construction (no role-grant ceremony yet,
 // see the plan). Any content analysis goes through a local Ollama model
 // (engine/model.ts); nothing here ever shells out to another CLI.
 import { ensureCloned, resolveRepo } from "../lib/repo.js";
