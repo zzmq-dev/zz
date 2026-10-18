@@ -1144,6 +1144,22 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
       action: "deny",
       payload: { reason: proposal.reason, needsTriage: true, attempts: priorAttempts, retryChain },
     });
+    // Makes the failure informative, not just capped -- a denial
+    // record alone only ever helps whoever triages *this* task;
+    // without this, the exact same mistake (the live incident this
+    // cap exists for: "clamp"/"mean"/"median"/"roundTo" each denied
+    // and reposted four times) stays invisible to a completely
+    // unrelated task that happens to hit the same underlying reason
+    // later, since Lane history is scoped to this one Lane, not
+    // searchable repo-wide the way the Ladder is. See
+    // https://zzmq.dev/docs/plans/directed-selection-implementation/#step-1-insights----the-evolutionary-engine-itself.
+    await callTool("insight_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "trap",
+      text: `Repeated task "${payload.taskDescription}" failed review ${priorAttempts} times, capped without resolving -- most recent reason: ${proposal.reason}. Check whether this is already satisfied, or off-target in a way grooming should catch, before attempting it again.`,
+      actor: agent,
+    }).catch((err) => onLog(`[scripted] insight_post failed (non-fatal, the denial above already landed): ${err instanceof Error ? err.message : String(err)}`));
     onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- NOT reposting again, this task has already been attempted ${priorAttempts} times (cap: ${MAX_REVIEW_RETRIES}). Flagged needsTriage: true on the denial -- a human needs to look at why this keeps failing, not another automatic retry.`);
     return;
   }

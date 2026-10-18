@@ -42,7 +42,7 @@ async function withRepo<T>(artifacts: ArtifactsNamespace, name: string, fn: (rep
 // they only ever appear embedded inside an anchor's children, which
 // this function's own recursive .map(toSimpleRung) call handles
 // without needing its own case here.
-const IMPLEMENTED_KINDS = new Set<Rung["kind"]>(["repo", "file", "changeset", "filechange", "directory", "release", "ask", "contributor", "dependencies"]);
+const IMPLEMENTED_KINDS = new Set<Rung["kind"]>(["repo", "file", "changeset", "filechange", "directory", "release", "ask", "contributor", "dependencies", "insight_norm", "insight_trap"]);
 
 function toSimpleRung(rung: Rung): SimpleRung {
   const kind = rung.kind;
@@ -59,14 +59,20 @@ function toSimpleRung(rung: Rung): SimpleRung {
 }
 
 /** Every "file"/"repo" kind rung in the tree, in-memory only (a SimpleRung's children are already embedded inline, not a separate fetch per child) -- the set of things worth putting in the cross-repo search index. "changeset"/"filechange" are historical per-commit entries, not current-state descriptions, so they're skipped. */
+// Insights added here deliberately -- without this, insight_norm/
+// insight_trap rungs would write and store fine (REPO_WIDE_ROOT_KINDS
+// already covers their anchor logic) but never actually turn up in
+// ladder_search, which is the entire point of putting them on the
+// Ladder instead of leaving them as Lane-history-only (engine/lane.ts's
+// existing, narrower postInsight).
 function collectSearchableRungs(rung: SimpleRung, out: SimpleRung[]): void {
-  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  if (rung.kind === "file" || rung.kind === "repo" || rung.kind === "insight_norm" || rung.kind === "insight_trap") out.push(rung);
   for (const child of rung.children) collectSearchableRungs(child, out);
 }
 
 /** Same filter, over a resolveLadderTree()-resolved tree instead of a SimpleRung -- used by reindexLadder, which walks the Ladder as it reads back (refs followed, not embedded inline the way a fresh write's SimpleRung already is). */
 function collectSearchableResolvedRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
-  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  if (rung.kind === "file" || rung.kind === "repo" || rung.kind === "insight_norm" || rung.kind === "insight_trap") out.push(rung);
   for (const child of rung.children) collectSearchableResolvedRungs(child, out);
 }
 
@@ -233,6 +239,13 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       }
       if (path === "dependencies" || path.startsWith("dependencies/") || path === "dependents") {
         return (await readRung(remote, token, repo, "dependencies", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
+      }
+      if (path.startsWith("insights/")) {
+        // Either insight kind constant works identically here -- same
+        // as engine/ladderNotes.ts's local equivalent, notesRefFor
+        // only needs to know it's an insight kind to route by path,
+        // not which specific one.
+        return (await readRung(remote, token, repo, "insight_norm", path, await cachedRootCommitOid(repo), notesCache)) as RealEmbeddedRung | null;
       }
       // Root-anchored, not index-resolved-to-the-tag's-own-commit the
       // way the local backend does it (engine/ladderNotes.ts's own

@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 // fresh top-level item. contributor/dependencies never thread, so they're
 // always anchors wherever they appear.
 const STRUCTURAL_ANCHOR_KINDS = new Set<RungKind>(["repo", "directory", "file", "release", "changeset"]);
-const REPO_WIDE_ROOT_KINDS = new Set<RungKind>(["ask", "contributor", "dependencies"]);
+const REPO_WIDE_ROOT_KINDS = new Set<RungKind>(["ask", "contributor", "dependencies", "insight_norm", "insight_trap"]);
 
 // Git ref names forbid several characters a real-world path segment can
 // easily contain (a bot login like "dependabot[bot]" has brackets). Applied
@@ -231,6 +231,14 @@ export async function readAnchor(repoDir: string, stateDir: string, path: string
   if (path.startsWith("contributors/")) {
     const sha = await cachedRootCommit(repoDir);
     return readNote<EmbeddedRung>(repoDir, notesRef("contributor", path), sha);
+  }
+  if (path.startsWith("insights/")) {
+    const sha = await cachedRootCommit(repoDir);
+    // Either kind shares the "insights/" path prefix; notesRef only
+    // needs REPO_WIDE_ROOT_KINDS.has(kind) to be true to route
+    // correctly, so either insight kind constant works identically
+    // here -- the ref name itself is keyed by path, not kind.
+    return readNote<EmbeddedRung>(repoDir, notesRef("insight_norm", path), sha);
   }
   if (path === "dependencies" || path.startsWith("dependencies/") || path === "dependents") {
     const sha = await cachedRootCommit(repoDir);

@@ -410,12 +410,43 @@ export async function mergeLaneLadder(repo: string, laneLadder: Rung | Rung[]): 
   }
 }
 
-/** Posts an Insight -- a norm observed or a trap found (site/content/docs/nouns), never answered the way an Ask is. The first real poster of one: before runIncidentRunbook below, nothing in the codebase ever pushed an INSIGHT entry. */
+/**
+ * Posts an Insight -- a norm observed or a trap found (site/content/docs/nouns).
+ * Two writes, not one, for two different reasons to read it back later:
+ * a Lane-history entry (this Lane's own timeline, same as any Ask/Answer --
+ * runIncidentRunbook's original use), and a repo-wide rung on the Ladder,
+ * anchored and indexed the same way `ask`/`contributor` already are
+ * (REPO_WIDE_ROOT_KINDS, engine/ladderNotes.ts), so a *different*,
+ * unrelated agent touching this repo later can actually find it via
+ * `ladder_search` -- Lane history alone only ever reaches someone already
+ * working inside this one Lane, which defeats the entire point of an
+ * Insight existing to prevent a mistake from being repeated by someone who
+ * was never part of the Lane that found it the first time.
+ */
 export async function postInsight(repo: string, laneId: string, input: { kind: "norm" | "trap"; text: string; from: string }): Promise<InsightEntry> {
   const entry: InsightEntry = { type: "INSIGHT", kind: input.kind, text: input.text, from: input.from, at: nowIso() };
   await resolveBackend().withLane(repo, laneId, (lane) => {
     lane.history.push(entry);
   });
+  const rung: Rung = {
+    path: `insights/${randomId("insight")}`,
+    kind: input.kind === "trap" ? "insight_trap" : "insight_norm",
+    summary: input.text,
+    sources: [],
+    children: [],
+  };
+  try {
+    await resolveBackend().writeLadder(repo, rung);
+    await resolveBackend().appendRepoChildren(repo, [{ path: rung.path, kind: rung.kind }]);
+  } catch (err) {
+    // appendRepoChildren throws outright on a repo with no "_repo" rung
+    // yet (never onboarded/built) -- the Lane-history write above
+    // already landed by this point, so swallow this specific, expected
+    // case rather than make the caller think posting the Insight failed
+    // entirely. Anything else re-throws; a real failure here shouldn't
+    // look like success.
+    if (!/repo root has no note yet/.test(err instanceof Error ? err.message : String(err))) throw err;
+  }
   return entry;
 }
 

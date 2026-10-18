@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight } from "../engine/lane.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -225,7 +225,7 @@ function normalizeRung(rung: unknown): Rung {
 }
 
 const RUNG_KINDS_NEEDING_A_COMMIT_SOURCE = new Set(["repo", "directory", "file", "release", "changeset"]);
-const VALID_TOP_LEVEL_KINDS = new Set(["repo", "directory", "file", "release", "changeset", "ask", "contributor", "dependencies"]);
+const VALID_TOP_LEVEL_KINDS = new Set(["repo", "directory", "file", "release", "changeset", "ask", "contributor", "dependencies", "insight_norm", "insight_trap"]);
 
 // Small local models follow a literal example far more reliably than a
 // prose description of the right shape -- appended to every validation
@@ -624,6 +624,26 @@ const whistleblowResolve: ToolDef = {
   },
 };
 
+const insightPost: ToolDef = {
+  name: "insight_post",
+  description:
+    'Posts an Insight -- a "norm" (something that worked, worth repeating) or a "trap" (a real mistake, worth not repeating) -- so a *different*, unrelated agent touching this repo later can actually find it via ladder_search, not just whoever happens to read this Lane\'s own history. Use this whenever you notice a real pattern during ordinary work: a review you deny for a reason likely to recur, a convention that turned out to matter, a dependency gotcha. Not for routine task outcomes -- post one when you\'d want a future agent, who never saw this Lane, to know it before making the same call.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      kind: { type: "string", enum: ["norm", "trap"] },
+      text: { type: "string", description: "The insight itself, stated plainly enough to be useful out of context -- a future reader won't have this Lane's own history to fall back on." },
+      actor: { type: "string" },
+    },
+    required: ["repo", "lane_id", "kind", "text", "actor"],
+  },
+  async execute({ repo, lane_id, kind, text, actor }) {
+    return postInsight(repo as string, lane_id as string, { kind: kind as "norm" | "trap", text: text as string, from: actor as string });
+  },
+};
+
 // --- real code: committing it, and testing it before committing -------
 
 function validateChangesetFiles(files: unknown): string | null {
@@ -877,7 +897,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, policyShow, policySet, repoInfo];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

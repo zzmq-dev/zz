@@ -468,7 +468,7 @@ export interface LadderSearchHit {
   summary: string;
 }
 
-/** BM25-ranked full-text search over every indexed rung's summary, joined back to the owning repo for its slug and gated by the same public-or-granted visibility rule as searchRepos. */
+/** BM25-ranked full-text search over every indexed rung's summary, joined back to the owning repo for its slug and gated by the same public-or-granted visibility rule as searchRepos. A `trap`-kind Insight (a documented mistake worth not repeating) outranks an equally-relevant ordinary summary -- ignoring a known trap should cost more than missing a routine note, so it has to actually surface first, not just exist somewhere in the results. SQLite's bm25() returns more-negative scores for a better match, ascending order already puts the best match first -- multiplying a trap's (negative) score by >1 makes it more negative, moving it earlier without needing a second ORDER BY clause. */
 export async function searchLadderIndex(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<LadderSearchHit[]> {
   const result = await db
     .prepare(
@@ -476,7 +476,7 @@ export async function searchLadderIndex(db: D1Database, query: string, limit: nu
        FROM ladder_index li
        JOIN repos r ON r.artifacts_name = li.artifacts_name
        WHERE ladder_index MATCH ? AND ${VISIBILITY_CLAUSE}
-       ORDER BY bm25(ladder_index) LIMIT ?`,
+       ORDER BY bm25(ladder_index) * (CASE WHEN li.kind = 'insight_trap' THEN 1.5 ELSE 1.0 END) LIMIT ?`,
     )
     .bind(query, viewerUsername ?? "", limit)
     .all<LadderSearchHit>();

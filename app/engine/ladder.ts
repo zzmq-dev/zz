@@ -38,6 +38,16 @@ export type RungKind =
   | "answer"
   | "contributor"
   | "dependencies"
+  // A norm observed or a trap found (site/content/docs/nouns/#insight) --
+  // repo-wide, anchored the same way ask/contributor/dependencies are,
+  // not nested in the file/directory tree even when it's about one
+  // specific file (see RungSource/`touches` for that relationship
+  // instead). Split into two kinds rather than one "insight" kind with
+  // a sub-field so search ranking (worker/src/accountsDb.ts's
+  // searchLadderIndex) can boost traps with a plain SQL CASE on the
+  // kind column already indexed for every rung, no new column needed.
+  | "insight_norm"
+  | "insight_trap"
   // Historical changelog: one changeset per commit, replayed in order.
   // A changeset's filechange children are embedded in its one note, not
   // separate anchors -- they're only ever read as part of that commit's

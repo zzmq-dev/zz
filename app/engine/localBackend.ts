@@ -31,9 +31,9 @@ import { commitChangeset as commitChangesetImpl, type ChangesetFile, type Commit
 import { readLane as readLaneImpl, writeLane as writeLaneImpl, listLanes as listLanesImpl, withLane as withLaneImpl } from "./store.js";
 import { resolveRepo } from "../cli/lib/repo.js";
 
-/** Every "file"/"repo" kind rung in an already-resolved tree -- same filter as cloudflareBackend.ts's collectSearchableRungs (a changeset/filechange rung is a historical per-commit entry, not a holistic current-state description), just over ResolvedRung (local, children already resolved from notes refs) instead of SimpleRung (remote, embedded inline). */
+/** Every "file"/"repo"/insight kind rung in an already-resolved tree -- same filter as cloudflareBackend.ts's collectSearchableRungs (a changeset/filechange rung is a historical per-commit entry, not a holistic current-state description), just over ResolvedRung (local, children already resolved from notes refs) instead of SimpleRung (remote, embedded inline). */
 function collectSearchableRungs(rung: ResolvedRung, out: ResolvedRung[]): void {
-  if (rung.kind === "file" || rung.kind === "repo") out.push(rung);
+  if (rung.kind === "file" || rung.kind === "repo" || rung.kind === "insight_norm" || rung.kind === "insight_trap") out.push(rung);
   for (const child of rung.children) collectSearchableRungs(child, out);
 }
 
@@ -170,6 +170,12 @@ export function createLocalBackend(): Backend {
           // repo not onboarded/bootstrapped yet -- skip rather than fail the whole search
         }
       }
+      // Same boost as the remote backend's BM25 multiplier, just
+      // expressed as a sort since there's no ranking score here to
+      // scale -- a trap outranks an equally-matched ordinary summary,
+      // stable otherwise (no secondary sort key, so equal-rank hits
+      // keep whatever order they were collected in).
+      hits.sort((a, b) => (b.kind === "insight_trap" ? 1 : 0) - (a.kind === "insight_trap" ? 1 : 0));
       return hits.slice(0, limit);
     },
 

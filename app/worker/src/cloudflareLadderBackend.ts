@@ -37,7 +37,7 @@ import type { ArtifactsRepoHandle } from "./cloudflareGitBackend.js";
 
 export interface SimpleRung {
   path: string;
-  kind: "repo" | "file" | "changeset" | "filechange" | "directory" | "release" | "ask" | "contributor" | "dependencies";
+  kind: "repo" | "file" | "changeset" | "filechange" | "directory" | "release" | "ask" | "contributor" | "dependencies" | "insight_norm" | "insight_trap";
   summary: string;
   sources: { kind: "commit"; ref: string; title: string; author: string; at: string }[];
   children: SimpleRung[];
@@ -59,9 +59,25 @@ function isRef(x: EmbeddedRung | EmbeddedRef): x is EmbeddedRef {
   return "ref" in x;
 }
 
-function notesRefFor(kind: SimpleRung["kind"]): string {
+// `path` only matters for insight_norm/insight_trap -- every other
+// kind ignores it and shares its existing fixed ref, unchanged. Found
+// live: insight/ask/directory/contributor/dependencies all share one
+// "code" ref AND the same anchor oid (the repo's root commit, via
+// ROOT_ANCHORED_KINDS), which only stayed safe because ask/directory/
+// contributor/dependencies are only ever written once, as a complete
+// batch, during onboarding -- nothing was ever there before that one
+// write. Insights are posted incrementally, one at a time, throughout
+// a Lane's ongoing life, long after onboarding -- writing one via the
+// shared ref would silently replace whatever note (quite possibly
+// _repo's own rung) was already sitting at that exact (ref, oid) slot,
+// since addNote's `force: true` overwrites rather than merges. Giving
+// insights their own path-keyed ref sidesteps this the same way
+// engine/ladderNotes.ts's local equivalent already does for exactly
+// this class of repo-wide item (REPO_WIDE_ROOT_KINDS, same reasoning).
+function notesRefFor(kind: SimpleRung["kind"], path?: string): string {
   if (kind === "changeset") return "refs/notes/zz/ladder/changeset";
   if (kind === "release") return "refs/notes/zz/ladder/release";
+  if ((kind === "insight_norm" || kind === "insight_trap") && path) return `refs/notes/zz/ladder/${path}`;
   return "refs/notes/zz/ladder/code";
 }
 
@@ -78,7 +94,7 @@ function notesRefFor(kind: SimpleRung["kind"]): string {
 // even have pushed tags to resolve. The real commit a release maps to
 // is still recorded in its own `sources`, just not used as the note's
 // anchor.
-const ROOT_ANCHORED_KINDS = new Set<SimpleRung["kind"]>(["repo", "directory", "ask", "contributor", "dependencies", "release"]);
+const ROOT_ANCHORED_KINDS = new Set<SimpleRung["kind"]>(["repo", "directory", "ask", "contributor", "dependencies", "release", "insight_norm", "insight_trap"]);
 
 function embed(rung: SimpleRung): EmbeddedRung {
   return { path: rung.path, kind: rung.kind, summary: rung.summary, sources: rung.sources, children: rung.children.map(embed) };
@@ -170,7 +186,7 @@ async function pushNote(remote: string, token: { plaintext: string } | string, f
 }
 
 export async function writeRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, rung: SimpleRung): Promise<void> {
-  const ref = notesRefFor(rung.kind);
+  const ref = notesRefFor(rung.kind, rung.path);
   const anchorSha = await anchorShaForRung(repo, rung);
   const { fs, dir } = await scopedNotesCheckout(remote, token, ref);
   await pushNote(remote, token, fs, dir, ref, anchorSha, embed(rung));
@@ -191,7 +207,7 @@ export async function writeRung(remote: string, token: { plaintext: string } | s
 // the end -- the git-level cost of n notes on one ref drops from n
 // fetches of a growing history to 1.
 export async function writeRungsBatch(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, rungs: SimpleRung[]): Promise<void> {
-  const withAnchors = await Promise.all(rungs.map(async (rung) => ({ rung, ref: notesRefFor(rung.kind), anchorSha: await anchorShaForRung(repo, rung) })));
+  const withAnchors = await Promise.all(rungs.map(async (rung) => ({ rung, ref: notesRefFor(rung.kind, rung.path), anchorSha: await anchorShaForRung(repo, rung) })));
   const byRef = new Map<string, typeof withAnchors>();
   for (const item of withAnchors) {
     const group = byRef.get(item.ref);
@@ -245,7 +261,7 @@ export type NotesCache = Map<string, { fs: ReturnType<typeof createMemFs>; dir: 
 // commit instead of a separate ref). Flagging for follow-up rather
 // than chasing further right now.
 export async function readRung(remote: string, token: { plaintext: string } | string, repo: ArtifactsRepoHandle, kind: SimpleRung["kind"], path: string, explicitAnchorSha?: string, cache?: NotesCache): Promise<EmbeddedRung | null> {
-  const ref = notesRefFor(kind);
+  const ref = notesRefFor(kind, path);
   const anchorSha = explicitAnchorSha ?? (await anchorShaForRung(repo, { kind, path, sources: [] }));
   let checkout = cache?.get(ref);
   if (!checkout) {
