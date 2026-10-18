@@ -21,7 +21,7 @@ This is the load-bearing design constraint, checked directly against [principle 
 
 ## Where hand-written content lives
 
-A maintainer should be able to add guidance directly, not only let the system infer it from incidents. That hand-written preface needs a storage location, and it needs to learn directly from a mistake this project just caught itself making: [Lane history living only in the Durable Object](/docs/case-studies/designing-on-principle/) was a real portability violation (principle #3) found during the Principles checkpoint audit. The hand-written preface should live in `zz-meta`, git-tracked, for the same reason -- not DO-only, or it's the same mistake again in a new place.
+A Coordinator should be able to add guidance directly, not only let the system infer it from incidents. That hand-written preface needs a storage location, and it needs to learn directly from a mistake this project just caught itself making: [Lane history living only in the Durable Object](/docs/case-studies/designing-on-principle/) was a real portability violation (principle #3) found during the Principles checkpoint audit. The hand-written preface should live in `zz-meta`, git-tracked, for the same reason -- not DO-only, or it's the same mistake again in a new place.
 
 ## Mining history during import
 

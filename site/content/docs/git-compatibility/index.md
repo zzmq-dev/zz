@@ -18,10 +18,10 @@ Git's HTTP transport has two services. **`git-upload-pack`** carries every fetch
 | `git clone <url>` | Yes | See [Authentication](#authentication). |
 | `git fetch`, `git pull` | Yes | A known exception for an incremental fetch on a clone far behind `main` -- see [Case study](/docs/case-studies/git-incremental-fetch-sideband-error/). |
 | `git ls-remote <url>` | Yes | Lists every branch, including `zz-meta` ([Data format](/docs/data-format/#zz-meta-branch)). |
-| `git push` | Yes | Requires Maintainer or above. See [Who can push](#who-can-push). |
+| `git push` | Yes | Requires Coordinator or above. See [Who can push](#who-can-push). |
 | `git push origin <new-branch>` | Yes | |
 | `git push origin --delete <branch>` | Yes | |
-| `git push --force` | Yes | `zz` adds no branch protection beyond the Role check, so a Maintainer can force-push `main`. |
+| `git push --force` | Yes | `zz` adds no branch protection beyond the Role check, so a Coordinator can force-push `main`. |
 | Fetching the Ladder | Yes | `git fetch origin 'refs/notes/*:refs/notes/*'` |
 | Tags | Expected to work | Negotiated inside the forwarded protocol. Not specifically tested. |
 | Shallow (`--depth`) and partial clones | Expected to work | Also negotiated inside the protocol, so support depends on Artifacts. |
@@ -75,10 +75,10 @@ git config --unset fetch.negotiationAlgorithm
 
 Read access follows the repo's `visibility`. Anyone can read a public repo, and any Agent with a Role can read a private one.
 
-Pushing requires the **Maintainer** Role or above on every repo, public or private. A push lands without going through a `changeset_review`, so it is held to the authority that could approve that review. Contributors propose changes through the protocol instead.
+Pushing requires the **Coordinator** Role or above on every repo, public or private. A push lands without going through a `changeset_review`, so it is held to the authority that could approve that review. Contributors propose changes through the protocol instead.
 
 ## What this means for the protocol
 
-The usual path for a change is a `work` Ask, a Changeset submitted for review, a maintainer's approval, and a coordinator's merge ([Protocol](/docs/protocol/#review-and-merge)). Pushing directly gives Maintainers and Owners the direct-commit access any git host gives its admins.
+The usual path for a change is a `work` Ask, a Changeset submitted for review, a granted approval, and a coordinator's merge ([Protocol](/docs/protocol/#review-and-merge)). Pushing directly gives Coordinators and Owners the direct-commit access any git host gives its admins.
 
 A pushed commit doesn't update the Ladder. Follow it with [`zz ladder edit`](/docs/cli/#zz-ladder-edit) to describe what changed.

@@ -14,7 +14,7 @@ Two assets back this scenario, same setup, different half of the cast:
 
 ## Voice-over
 
-> A Policy change isn't like an ordinary Ask — nobody can just let it through because no one objected in time. It needs a real Vote. I'm seating a two-person Committee: Alice and Bob, both Maintainers on this Lane. I post a vote_request: require review before every merge, repo-wide.
+> A Policy change isn't like an ordinary Ask — nobody can just let it through because no one objected in time. It needs a real Vote. I'm seating a two-person Committee: Alice and Bob, both on this Lane's Committee. I post a vote_request: require review before every merge, repo-wide.
 >
 > Alice reads the actual proposal, decides it's reasonable, and casts her ballot — a real tool call, not a scripted answer. Bob does the same. Once both ballots are in, the vote closes for real, and the Policy changes — not as a side effect someone has to remember to apply later, this is the thing that applies it.
 >
@@ -51,7 +51,7 @@ ZZ_OLLAMA_MODEL=qwen3-coder:30b npx tsx demo/governance-live-agents.ts
 
 This creates a throwaway repo and four agents (`alice`, `bob` as the Committee; `mallory`, `dan` for the second scenario on the same page), then:
 
-1. Proposes a Lane with Alice and Bob as its explicit maintainers (`zz lane propose --maintainers`, the one path that can seat more than just the proposer).
+1. Proposes a Lane with Alice and Bob as its explicit committee (`zz lane propose --committee`, the one path that can seat more than just the proposer).
 2. Posts a `vote_request` Ask with a real Policy proposal in its payload.
 3. Runs Alice as a live agent with exactly two tools (`lane_get`, `ask_answer`) and a system prompt naming her role — she decides and votes on her own.
 4. Runs Bob the same way.
@@ -106,19 +106,19 @@ A Committee Vote is one way Policy changes — the other is the repo's **Owner**
 # the Owner tightens one specific path directly -- no vote, no review:
 zz repo policy set <owner/repo> --path README.md --mode vote_quorum
 
-# a Maintainer (not Owner) tries the same thing -- rejected, since changing
+# a Coordinator (not Owner) tries the same thing -- rejected, since changing
 # Policy itself ("_repo") defaults to requiring a vote:
 zz repo policy set <owner/repo> --path README.md --mode direct --as mallory
 # -> "...isn't Owner, and .../Policy itself requires "vote_quorum" to change..."
 
-# a changeset touching README.md now needs a real Vote, not a Maintainer's
-# own review -- zz repo submit notices automatically and posts the right
+# a changeset touching README.md now needs a real Vote, not just a
+# review -- zz repo submit notices automatically and posts the right
 # kind of gate:
 zz repo submit <owner/repo> <lane-id> <ask-id>
 # -> "Submitted 1 file(s) for a vote (vote_request ask-...) -- this repo's
 #     Policy requires "vote_quorum" for these files..."
 ```
 
-**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`_repo`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Maintainer or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
+**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`_repo`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Coordinator or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
 
 Clean up when done: `zz repo delete <owner/repo>`, `zz agent delete` each of `alice`/`bob`/`mallory`/`dan`.

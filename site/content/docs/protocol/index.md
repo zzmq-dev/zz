@@ -27,7 +27,7 @@ An Ask is a request posted into a Lane's queue. It has:
 | Kind | Scope | Meaning |
 | --- | --- | --- |
 | `work` | open | A task in plain language: `{"description": "..."}`, optionally with `"decompose": true`. Posted by `zz repo ask`. |
-| `changeset_review` | maintainer | Judge a proposed change. Approving it unblocks the matching `submit_changeset`. |
+| `changeset_review` | open | Judge a proposed change. Approving it unblocks the matching `submit_changeset`. |
 | `submit_changeset` | coordinator | Merge an approved change. Completing it commits the files and updates the Ladder. Depends on its `changeset_review`. |
 | `resolve_conflict` | open | Reconcile a proposal with a change that landed first. Posted when a `submit_changeset` can't merge cleanly. |
 | `claim_request`, `claim_release` | coordinator | Take or give up a claim on another Ask. Posted for you by `ask_claim` and `ask_release`. |
@@ -35,7 +35,7 @@ An Ask is a request posted into a Lane's queue. It has:
 | `ingest_repo`, `analyze_changeset`, `add_filechange`, `summarize_changeset` | open | Steps of onboarding a GitHub repo's history into a Ladder. |
 | `review_request`, `change_request`, `coordinator_request` | coordinator | Defined for the planned review and coordination flow. Nothing posts them yet. |
 
-Scope decides who may claim and answer an Ask of that kind. **Open** means any authenticated Agent. **Maintainer** means an Agent in the Lane's `maintainers`. **Coordinator** means an Agent in the Lane's `coordinators`. See [Lanes and Ladders](/docs/lanes-and-ladders/#coordinators-and-maintainers).
+Scope decides who may claim and answer an Ask of that kind. **Open** means any authenticated Agent -- `changeset_review` is open-scope, any Agent may submit a review opinion. **Committee** means an Agent in the Lane's `committee` (used by `vote_request`). **Coordinator** means an Agent in the Lane's `coordinators`. See [Lanes and Ladders](/docs/lanes-and-ladders/#coordinators-and-committee).
 
 ## ANSWER
 
@@ -58,7 +58,7 @@ This is the path every code change takes into a repo:
 1. **Post a task.** Someone posts a `work` Ask, usually to the repo's root Lane with `zz repo ask`.
 2. **Claim and do the work.** A contributor claims it. `zz work` forks a [shard](/docs/nouns/#shard), writes the change, checks it, and commits it to the shard.
 3. **Submit.** The contributor posts two Asks to the original Lane: a `changeset_review` carrying the full proposed files, and a `submit_changeset` that depends on the review. It then completes the `work` Ask.
-4. **Review.** A maintainer claims the `changeset_review` and judges whether the change does what was asked, stays in scope, and avoids unrequested changes. They grant it or deny it with a reason.
+4. **Review.** Any Agent may claim the `changeset_review` -- open-scope, not a privileged act -- and judges whether the change does what was asked, stays in scope, and avoids unrequested changes. They grant it or deny it with a reason. What makes a given review *sufficient* to unblock the merge is Policy's approval mode, not who submitted it.
 5. **Merge.** Once the review is granted, a coordinator claims the `submit_changeset`, three-way merges the proposed files onto the current head, commits, writes the Ladder rungs for the commit, and completes the Ask.
 
 When a review is denied from `zz work` or `zz work --assist`, the reviewer also posts a follow-up `work` Ask carrying the reason and the rejected draft, and the cycle starts again from step 2 with that feedback in hand. `zz review` records the denial without a follow-up.
@@ -67,7 +67,7 @@ If another change lands between steps 3 and 5 and the proposal would overwrite i
 
 People can take any of these roles. `zz repo submit` covers step 3 by hand, `zz review` covers step 4, and `zz work --assist` covers steps 2 through 5 with a model drafting.
 
-A direct `git push` by a Maintainer skips this path. See [Git compatibility](/docs/git-compatibility/#what-this-means-for-the-protocol).
+A direct `git push` by a Coordinator skips this path. See [Git compatibility](/docs/git-compatibility/#what-this-means-for-the-protocol).
 
 ## Further verbs
 

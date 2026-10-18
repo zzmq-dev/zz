@@ -7,6 +7,8 @@ description: "The Lane is the singular primitive -- Ask, Ladder, repo, Policy, a
 
 **Status: designed, mostly not built.** Written after a direct code audit, not from memory of the docs -- several things below are corrections to what the docs currently claim, not just additions. Revised once already, same day, after the model grew from "fix a few confusing boundaries" to "the Lane is the one real primitive."
 
+**Superseded in part**: the "Coordinator doesn't exist in `RbacRole`" finding below was true when written, and became the reason to actually retire "Maintainer" from the repo-level Role and rename it to **Coordinator** directly -- a real merge of the two names this doc found colliding, not just a clarification of which was which. `RbacRole` is now `"owner" | "coordinator" | "contributor" | "viewer"`. The historical analysis below is kept as the record of how that confusion was actually found.
+
 ## The Lane is the singular primitive; Ask, Ladder, repo, Policy, and Roles are its facets
 
 Not five peer concepts that happen to relate to each other -- one thing, with five facets:

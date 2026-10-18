@@ -1,7 +1,7 @@
 ---
 layout: docs
 title: "Demo: Whistleblow & incident response"
-description: "A trusted Maintainer commits a real tainted change; a real model investigates, confirms it, and runs STOP/DROP/ROLL -- live, against the deployed Worker."
+description: "A trusted Coordinator commits a real tainted change; a real model investigates, confirms it, and runs STOP/DROP/ROLL -- live, against the deployed Worker."
 ---
 # Demo: Whistleblow & incident response
 
@@ -14,7 +14,7 @@ Same two assets as the [Vote & Policy](/docs/demos/committee-vote-and-policy/) d
 
 ## Voice-over
 
-> Mallory is a trusted Maintainer. That's what makes this interesting: she has real commit access, and she commits something bad — a leaked key, right here in the README. [screen shows the commit] Dan notices and files a whistleblow report. Filing one is open to anyone; that part's just reporting what you saw.
+> Mallory is a trusted Coordinator. That's what makes this interesting: she has real commit access, and she commits something bad — a leaked key, right here in the README. [screen shows the commit] Dan notices and files a whistleblow report. Filing one is open to anyone; that part's just reporting what you saw.
 >
 > Dan isn't this Lane's coordinator, so he can't act on his own report.
 >
@@ -40,7 +40,7 @@ ZZ_OLLAMA_MODEL=qwen3-coder:30b npx tsx demo/governance-live-agents.ts
 
 Scenario B of that script:
 
-1. **Scripted:** Mallory (already granted Maintainer earlier in the same run) commits a real change to `README.md` with a fake-but-realistic leaked key, via `commit_changeset` directly — a fixture, not a model decision.
+1. **Scripted:** Mallory (already granted Coordinator earlier in the same run) commits a real change to `README.md` with a fake-but-realistic leaked key, via `commit_changeset` directly — a fixture, not a model decision.
 2. **Scripted:** Dan files a `whistleblow` Ask naming the commit and the reason.
 3. **Scripted, expected to fail:** Dan tries to resolve his own report — rejected, since `whistleblow` is coordinator-scope to act on, open-scope only to post.
 4. **Live:** the repo's real coordinator (an actual model) reads the report, independently fetches the suspect commit's real content, reasons about whether it's actually bad, and — only then — calls `whistleblow_resolve`.

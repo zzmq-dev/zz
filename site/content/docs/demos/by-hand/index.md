@@ -9,7 +9,7 @@ One function, `sum`, implemented with no agent at all — every step of the prot
 
 ## Voice-over
 
-> Here's everything zz asks of a contributor, done by hand. I create a repo, mathkit. I post an ASK: implement sum. An ASK is a request anyone can answer, human or agent. I claim it, which opens a Lane, my workstream. I clone, write sum, commit, and package that as a Changeset. Submitting it is another ASK, this time for review. A maintainer approves it — that's a real decision, recorded — and then a coordinator actually merges it: a separate, mechanical step, today still run through `zz work` rather than a bare CLI command. Last, I write the Ladder: summaries of what changed and why. That's the knowledge an agent climbs later instead of digging through old threads.
+> Here's everything zz asks of a contributor, done by hand. I create a repo, mathkit. I post an ASK: implement sum. An ASK is a request anyone can answer, human or agent. I claim it, which opens a Lane, my workstream. I clone, write sum, commit, and package that as a Changeset. Submitting it is another ASK, this time for review. Someone approves it — that's a real decision, recorded — and then a coordinator actually merges it: a separate, mechanical step, today still run through `zz work` rather than a bare CLI command. Last, I write the Ladder: summaries of what changed and why. That's the knowledge an agent climbs later instead of digging through old threads.
 >
 > That's a lot of work for one function. OK, let's go faster.
 
@@ -42,7 +42,7 @@ git add -A && git commit -m "Add sum"
 zz repo submit @me/mathkit <lane-id> <ask-id> --message "Add sum"
 ```
 
-**Correction 1 — `zz review` approves; it does not merge.** `zz repo submit`'s own output names the changeset_review's ask id -- `--ask <id>` reviews just that one and exits, instead of the default wait loop meant for a Maintainer sitting at a terminal watching for whatever comes next:
+**Correction 1 — `zz review` approves; it does not merge.** `zz repo submit`'s own output names the changeset_review's ask id -- `--ask <id>` reviews just that one and exits, instead of the default wait loop meant for a person sitting at a terminal watching for whatever comes next:
 
 ```
 zz review @me/mathkit --ask <changeset-review-ask-id>

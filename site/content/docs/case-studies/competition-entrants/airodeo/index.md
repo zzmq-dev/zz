@@ -21,7 +21,7 @@ This also explains why "a merge conflict becomes a re-run" is sufficient for Rod
 
 ## Where it's ahead of what it needs to be, and where it's behind
 
-Ahead, in one specific way worth taking: **outcome-based review**. The owner's explicit, structured checks get auto-verified by the judge *before* any diff-reading happens at all. `zz`'s own `changeset_review` is still fundamentally a Maintainer reading files. There's a real, narrow idea here -- an optional, structured, auto-verifiable checks field alongside a `work` Ask's plain-English description, checked by `run_in_sandbox` or a judge step as a pre-filter, not a replacement for review.
+Ahead, in one specific way worth taking: **outcome-based review**. The owner's explicit, structured checks get auto-verified by the judge *before* any diff-reading happens at all. `zz`'s own `changeset_review` is still fundamentally a human or model reading files. There's a real, narrow idea here -- an optional, structured, auto-verifiable checks field alongside a `work` Ask's plain-English description, checked by `run_in_sandbox` or a judge step as a pre-filter, not a replacement for review.
 
 Also worth taking, smaller: **token/cost transparency per request**, surfaced plainly in the UI (token count and AI-call count on every race). `zz` has no equivalent anywhere right now (`zz top`, `zz lane log`).
 

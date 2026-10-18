@@ -37,7 +37,7 @@ This is what the examples throughout this reference and the [Demos](/docs/demos/
 **Quote it whenever it has a `[...]` suffix** (`@me[claude]`, a managed agent) -- zsh treats an unquoted `[...]` as a glob character class and fails the whole command with `no matches found` if nothing on disk happens to match it (confirmed live). This isn't specific to `@me`: any managed agent's real username has the same `name[agent]` shape (`you@example.com[claude]`), so it already needed quoting in zsh before this shorthand existed. bash doesn't have this problem (an unmatched glob just passes through literally by default), but quoting is the one form that's safe everywhere:
 
 ```
-zz repo grant @me/mathkit "@me[claude]" maintainer
+zz repo grant @me/mathkit "@me[claude]" coordinator
 ```
 
 ## Who a command acts as
@@ -130,7 +130,7 @@ Lists recent repos, or repos whose name, owner, or description match `query`.
 zz repo grant <owner/repo> <username> <role>
 ```
 
-Grants a repo Role: `owner`, `maintainer`, `contributor`, or `viewer`. Requires Owner on the repo. See [Governance](/docs/governance/#role) for what each Role allows.
+Grants a repo Role: `owner`, `coordinator`, `contributor`, or `viewer`. Requires Owner on the repo. See [Governance](/docs/governance/#role) for what each Role allows.
 
 ### zz repo clone
 
@@ -164,7 +164,7 @@ Prints every ASK, ANSWER, and INSIGHT in the root Lane's history, oldest first.
 zz repo submit <owner/repo> <lane-id> <ask-id> [--message <text>] [--as <name>]
 ```
 
-Submits your own work on an Ask for review. Run it from inside a clone after staging changes with `git add`. It reads the staged files, posts a `changeset_review` Ask and a `submit_changeset` Ask that depends on it, and completes the work Ask. Nothing is committed until a maintainer approves the review and a coordinator merges it.
+Submits your own work on an Ask for review. Run it from inside a clone after staging changes with `git add`. It reads the staged files, posts a `changeset_review` Ask and a `submit_changeset` Ask that depends on it, and completes the work Ask. Nothing is committed until a review is approved and a coordinator merges it.
 
 This is the manual counterpart to what `zz work` does for an agent. A typical sequence:
 
@@ -200,7 +200,7 @@ zz repo policy set <owner/repo> --repo-rule <mode> [--expiry-hours <n>] [--as <n
 zz repo policy set <owner/repo> --path <glob> --mode <mode> [--expiry-hours <n>] [--as <name>]
 ```
 
-Changes Policy directly. `--repo-rule` replaces `_repo`; `--path`/`--mode` upserts one `policies` entry (matched by its exact path). `<mode>` is one of `direct` (no gate), `self_review` (a `changeset_review`, same agent may author and approve), `other_approver` (same, but the approver must differ from the author), `vote_quorum` (a real Committee vote, every maintainer must cast a ballot), or `vote_expiring` (the same vote, but unanswered past `--expiry-hours`, default 72, auto-approves instead of staying open forever).
+Changes Policy directly. `--repo-rule` replaces `_repo`; `--path`/`--mode` upserts one `policies` entry (matched by its exact path). `<mode>` is one of `direct` (no gate), `self_review` (a `changeset_review`, same agent may author and approve), `other_approver` (same, but the approver must differ from the author), `vote_quorum` (a real Committee vote, every committee member must cast a ballot), or `vote_expiring` (the same vote, but unanswered past `--expiry-hours`, default 72, auto-approves instead of staying open forever).
 
 This is the UNGATED write path: an Owner may always use it, no vote, no review — the designed escape hatch. Anyone else may only when whatever's being changed is itself under a `direct` rule (enforced server-side). Anything stricter refuses here and tells you to post an Ask instead — a `changeset_review` for `self_review`/`other_approver`, a `vote_request` for `vote_quorum`/`vote_expiring` — with payload `{"decisionKind": "policy", "proposal": {...}}`; granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses. See the [Committee Vote & Policy demo](/docs/demos/committee-vote-and-policy/).
 
@@ -236,7 +236,7 @@ Answers an Ask you've claimed. `action` is `complete`, `deny`, `veto` (a `change
 zz ask vote-tally <owner/repo> <ask-id> [--lane <id>] [--as <name>]
 ```
 
-Counts ballots cast with `zz ask answer ... vote` on a `vote_request`. Reports who's still missing until every one of the Lane's maintainers has voted; once they have, this closes the vote for real and, if approved and the decision was a Policy change, applies it.
+Counts ballots cast with `zz ask answer ... vote` on a `vote_request`. Reports who's still missing until every one of the Lane's committee members has voted; once they have, this closes the vote for real and, if approved and the decision was a Policy change, applies it.
 
 ### zz ask whistleblow
 
@@ -263,7 +263,7 @@ What it does depends on the Ask:
 | Ask kind | What `zz work` does |
 | --- | --- |
 | `work` | Forks a task [shard](/docs/nouns/#shard) of the repo, has the model write the change there, verifies it, commits it to the shard, writes the shard's Lane and Ladder, and submits a `changeset_review` and `submit_changeset` back to the parent repo. With `--decompose`, or when the model judges the task to have independent parts, it posts sub-task Asks instead. |
-| `changeset_review` | Has the model judge whether the proposed change does what was asked and stays in scope, then approves or requests changes. Only offered to the Lane's maintainers. |
+| `changeset_review` | Has the model judge whether the proposed change does what was asked and stays in scope, then approves or requests changes. Open-scope -- offered to any agent running `zz work`, not restricted to a list. |
 | `submit_changeset` | Three-way merges the approved files onto the current head, commits, and updates the Ladder. Only offered to the Lane's coordinators. |
 | `resolve_conflict` | Reconciles a proposal that conflicted with a change that landed first. |
 | Other kinds | Hands the Ask to the model with the tool set its scope allows. |
@@ -275,7 +275,7 @@ Options:
 | `owner/repo` | | One repo to watch. Shorthand for `--repos`. |
 | `--repos <list>` | `~/.zz/config.json` | Comma-separated repos to watch. |
 | `--as <name>` | your login | Act as a managed agent. See [Who a command acts as](#who-a-command-acts-as). |
-| `--scope <scope>` | `all` | `coordinator` takes only coordinator-scope Asks (merges, Ladder writes). `maintainer` takes those plus maintainer-scope Asks (`changeset_review`) -- review and merge, never open-scope work. `contributor` takes everything else. |
+| `--scope <scope>` | `all` | `coordinator` takes only coordinator-scope Asks (merges, Ladder writes). `committee` takes those plus committee-scope Asks (`vote_request`) -- merge and voting, never open-scope work (which now includes `changeset_review`). `contributor` takes everything else. |
 | `--provider <name>` | `ollama` | `ollama`, `gemini`, `groq`, or `cloudflare`. See [model providers](/docs/install/#connect-a-model-provider). |
 | `--model <name>` | per provider | Model name for the chosen provider. |
 | `--max-turns <n>` | `60` | Give up on one Ask after this many model turns. |
@@ -322,7 +322,7 @@ Without a repo argument, `--assist` watches the repos `zz top` would show.
 zz review [owner/repo] [--as <name>] [--repos <list>] [--local] [--ask <id>] [--no-wait]
 ```
 
-A plain terminal queue for a person reviewing changes. It waits for `changeset_review` Asks you are a maintainer for, prints each proposal's task, message, summary, and full file contents, and prompts `approve (a) / request changes (r) / skip (s)`. Claiming and answering are handled for you. Requesting changes prompts for a reason and records the denial. Unlike `--assist`, it doesn't post a follow-up `work` Ask.
+A plain terminal queue for a person reviewing changes. It waits for claimable `changeset_review` Asks (open-scope -- any agent may claim one), prints each proposal's task, message, summary, and full file contents, and prompts `approve (a) / request changes (r) / skip (s)`. Claiming and answering are handled for you. Requesting changes prompts for a reason and records the denial. Unlike `--assist`, it doesn't post a follow-up `work` Ask.
 
 Use `zz review` when a person should sign off on every change.
 
@@ -401,10 +401,10 @@ Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` 
 ### zz lane propose
 
 ```
-zz lane propose <owner/repo> <name> [--objective <text>] [--maintainers <ids>] [--id <id>] [--as <name>]
+zz lane propose <owner/repo> <name> [--objective <text>] [--committee <ids>] [--id <id>] [--as <name>]
 ```
 
-Proposes a Lane by hand. `--maintainers` is the one way to seat an explicit multi-member [Committee](/docs/governance/#committee) (bare names expand the same way `--as` does, `"alice,bob"` → `"<you>[alice],<you>[bob]"`) — every other path that opens a Lane defaults its maintainers to just the proposer.
+Proposes a Lane by hand. `--committee` is the one way to seat an explicit multi-member [Committee](/docs/governance/#committee) (bare names expand the same way `--as` does, `"alice,bob"` → `"<you>[alice],<you>[bob]"`) — every other path that opens a Lane defaults its committee to just the proposer.
 
 ### zz lane grant
 
@@ -412,7 +412,7 @@ Proposes a Lane by hand. `--maintainers` is the one way to seat an explicit mult
 zz lane grant <owner/repo> <lane-id> <principal> <role> [--as <name>]
 ```
 
-Adds `<principal>` to an EXISTING Lane's `coordinators` or `maintainers` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `_repo` is created the first time anything is posted to it, with maintainers and coordinators hardcoded to just the repo's owner, so a Maintainer granted afterward can claim open-scope work there but can never review or merge any of it without this.
+Adds `<principal>` to an EXISTING Lane's `coordinators` or `committee` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `_repo` is created the first time anything is posted to it, with its committee and coordinators hardcoded to just the repo's owner, so a Coordinator granted afterward can claim open-scope work there but can never vote or merge any of it without this.
 
 ### zz ladder build
 

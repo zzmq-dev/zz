@@ -65,7 +65,7 @@ Repo settings live on an orphan branch named `zz-meta`, separate from the code's
 }
 ```
 
-`shard_of` appears only on a [shard](/docs/nouns/#shard) and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Maintainers and above. `policy._repo`/`policies` are [Policy](/docs/governance/#policy)'s own approval rules — `_repo` governs changing Policy itself, `policies` is path-scoped rules for everything else, shown here at a new repo's own defaults.
+`shard_of` appears only on a [shard](/docs/nouns/#shard) and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Coordinators and above. `policy._repo`/`policies` are [Policy](/docs/governance/#policy)'s own approval rules — `_repo` governs changing Policy itself, `policies` is path-scoped rules for everything else, shown here at a new repo's own defaults.
 
 ### `roles.json`
 
@@ -78,7 +78,7 @@ Repo settings live on an orphan branch named `zz-meta`, separate from the code's
 }
 ```
 
-A principal is an Agent's username. Roles are `owner`, `maintainer`, `contributor`, and `viewer`. An Agent with no grant on a public repo is treated as a viewer. See [Governance](/docs/governance/#role).
+A principal is an Agent's username. Roles are `owner`, `coordinator`, `contributor`, and `viewer`. An Agent with no grant on a public repo is treated as a viewer. See [Governance](/docs/governance/#role).
 
 ## Lanes
 
@@ -95,7 +95,7 @@ Each repo has one Durable Object holding its Lanes in SQLite, one row per Lane w
   "scope": ["**"],
   "trigger": { "kind": "manual", "proposed_by": "you@example.com" },
   "coordinators": ["you@example.com"],
-  "maintainers": ["you@example.com"],
+  "committee": ["you@example.com"],
   "history": [
     { "id": "ask-1a2b3c4d5e", "type": "ASK", "kind": "work", "from": "you@example.com",
       "payload": { "description": "Add hello.js exporting a greet(name) function" }, "at": "2026-10-13T18:10:00Z" },

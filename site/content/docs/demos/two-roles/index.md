@@ -5,11 +5,11 @@ description: "Stage 5 of the zz demo video: a contributor worker that can't merg
 ---
 # Stage 5: Two roles
 
-The shape the earlier stages were building toward: a contributor worker that can write code but holds no merge authority, and a coordinator worker that holds the maintainer [Role](/docs/governance/#role) but only ever answers review and merge Asks. `min` goes through a real fork.
+The shape the earlier stages were building toward: a contributor worker that can write code but holds no merge authority, and a coordinator worker that holds the Coordinator [Role](/docs/governance/#role) and only ever merges. `min` goes through a real fork.
 
 ## Voice-over
 
-> Now the real shape. A contributor worker that can write code but can't merge, and a coordinator worker that can merge but only answers review and merge ASKs. I post: implement min. The contributor claims it, forks mathkit, opens a Lane, and does the work in its fork. When it's done it ASKs the origin repo to merge. The coordinator picks up the Changeset, reviews it, merges it, updates the Ladder, and closes out the original ASK. Two agents, one protocol, nobody waiting on me.
+> Now the real shape. A contributor worker that can write code but can't merge, and a coordinator worker that can merge but only answers merge ASKs. I post: implement min. The contributor claims it, forks mathkit, opens a Lane, and does the work in its fork. When it's done it ASKs the origin repo to merge. The coordinator picks up the Changeset, reviews it, merges it, updates the Ladder, and closes out the original ASK. Two agents, one protocol, nobody waiting on me.
 >
 > OK, let's go faster.
 
@@ -26,10 +26,10 @@ zz repo grant @me/mathkit "@me[dev1]" contributor
 
 Top-right (coordinator):
 ```
-zz work @me/mathkit --as maint --scope maintainer --provider groq
+zz work @me/mathkit --as maint --scope all --provider groq
 ```
 
-**Correction -- `--scope coordinator` is too narrow for this.** It only includes Asks whose scope is literally `coordinator` (`submit_changeset`, the merge step) -- `changeset_review` is scope `maintainer`, a separate category, so a worker started with `--scope coordinator` never claims it at all, no matter what Lane authority it holds. `--scope maintainer` includes both `maintainer`- and `coordinator`-scope Asks (review and merge) while still excluding `open`-scope `work` Asks -- exactly "do everything the maintainer worker should, never the contributor's job."
+**Correction -- `changeset_review` moved to open-scope, which changes what `--scope` can express here.** Review used to be its own scope value, bundled together with merge under one "privileged, not open" filter. Now that any agent may submit a review opinion, review and ordinary open-scope `work` are the same bucket by scope alone -- there's no longer a single `--scope` value meaning "review and merge, never plain contributor work." `--scope coordinator` is too narrow (only the merge step); `--scope committee` deliberately excludes everything open-scope, which now excludes review too. `--scope all` is what actually works here, accepting that this worker would also claim a plain `work` Ask if one existed unclaimed -- not a concern in this specific run, since the contributor worker claims `implement min` first.
 
 Bottom-left (contributor):
 ```
