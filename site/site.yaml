@@ -55,6 +55,8 @@ nav:
       url: /docs/did-zz/
     - title: "Lane, Ask, and Role boundaries"
       url: /docs/lanes-asks-and-roles/
+    - title: "Cost tracking (sketch)"
+      url: /docs/cost-tracking/
     - title: "Contributors guide (sketch)"
       url: /docs/contributors-guide/
     - title: "Demos"
