@@ -88,7 +88,7 @@ This isn't a UI restriction layered on top — the merge backstop lives in the o
 
 **Known gap**: a vote's quorum is whoever the *Lane's own* `maintainers` list says, not the repo's Maintainer Role grants — a Lane opened by a single `zz ask claim` has only its own claimant on that list, so a `vote_quorum` rule there needs just that one ballot. [`zz lane grant`](/docs/cli/#zz-lane-grant) adds others to an existing Lane's maintainers before this matters; tying Lane rights to repo Roles directly (above, "Planned") would close this for good.
 
-**What Policy deliberately doesn't answer**: every mode above governs *process* — who approves, how many, under what gate. None of them can answer whether a change belongs in the repo at all, because that's not a process question. [Charter](/docs/charter-and-initiatives/) is the designed, not-yet-built answer to that different question — a repo's own stated purpose and non-goals, checked by review as substance rather than routed by Policy as process.
+**What Policy deliberately doesn't answer**: every mode above governs *process* — who approves, how many, under what gate. None of them can answer whether a change belongs in the repo at all, because that's not a process question. [Charter](/docs/charter/) is the designed, not-yet-built answer to that different question — a repo's own stated purpose and non-goals, checked by review as substance rather than routed by Policy as process.
 
 ## Two cost tiers
 
