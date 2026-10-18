@@ -41,6 +41,21 @@ Stated as a hard constraint, not a preference, because this project has already 
 
 **Phase B, model-discretionary, throughout the task.** A different kind of lookup than Phase A, not the same search run twice: Phase A is semantic (find what's relevant when you don't yet know what to look for); Phase B is structural, against the already-materialized session buffer -- by symbol name, or one more hop along the reference graph from something already in the buffer. The hard semantic work already happened in Phase A; a small, already-curated buffer doesn't need a second embedding search to query by name.
 
+### Ask grooming: a third use of the same retrieval machinery, and the actual fix for a real live bug
+
+Not a separate system -- a step that runs before Phase A, using the same underlying retrieval, that turns out to directly fix a real bug found live in this project's own bulk-ask demo: a `changeset_review` that keeps requesting changes on an already-fine implementation (plain model non-determinism, not a real defect) reposted the same task as a fresh "work" ask indefinitely, with nothing anywhere checking whether the task still needed doing at all. The same function -- `clamp`, `mean`, `median`, `roundTo` -- got committed four separate times in a row; the open-ask count climbed instead of draining. A hard cap on repost attempts is in place now as an immediate safety net, but it only limits the damage. Grooming is the actual fix.
+
+Before an Ask is handed to whoever claims it, a grooming step:
+
+1. **Determines intent and fleshes it out.** A minimal ask like "implement sum(n)" becomes something more concrete and checkable, the same quality step a human task-writer would do by hand.
+2. **Checks whether it's already satisfied.** Queries the Ladder for code that already does what the ask describes. If it does, the ask resolves without anyone implementing anything redundant -- this is the root-cause fix the retry cap above only works around.
+3. **Materializes the relevant context into a buffer.** The same Phase A retrieval already specified above, just triggered at grooming time -- "pull the ladder graph that relates" is Phase A, not a second mechanism.
+4. **Sets acceptance criteria.** Decided once, up front, rather than left to an independently re-rolled judgment call every time review runs. This is what actually stops the deny-repost loop at its other root cause: a reviewer checking a fixed standard converges; a reviewer with no fixed standard to check against can flip-flop between "fine" and "needs a tweak" indefinitely, which is exactly what was observed.
+
+**The buffer is Lane/Ask-scoped, not process-scoped -- a correction to how #50 was first specified.** The original two-phase design treated the session buffer as something the claiming worker's own process materializes for itself. Grooming needs one shared buffer per Ask instead: the worker reads from it while implementing, and the reviewer reads from the *same* buffer -- same context, same acceptance criteria, both sides checking against an identical standard rather than each reconstructing their own view.
+
+**Two versions, split deliberately so the real fix doesn't wait on the bigger build-out.** A simple version needs none of the symbol-level/vector-backed machinery above -- one model call against today's existing file-level Ladder content, asking "does this already exist, and if not, what are the acceptance criteria," ships against what exists right now. The full version (grooming backed by symbol-level retrieval and a real vector-searched buffer) is still correctly gated behind [the retrieval-recall benchmark](#the-central-risk-retrieval-recall) like the rest of this doc.
+
 ### Traversal, ranking, and a token budget
 
 Phase A's walk ranks direct dependencies and direct callers above transitive ones, and cuts off on a **token budget**, not a node-count budget -- the entire point is bounding tokens specifically. Not yet designed in detail; flagged under [What's still open](#whats-still-open).
@@ -70,11 +85,14 @@ Both tiers wait on the retrieval-recall benchmark above landing with a real, fav
 - Cache invalidation depth -- does invalidating a changed symbol also walk into its callers, and how far.
 - Phase B's exact query shape -- confirmed structural-by-name/graph-hop here, not re-confirmed against a case where the model needs to ask something genuinely fuzzy mid-task.
 - The retrieval-recall benchmark's own methodology -- not designed yet, and the thing everything else above is gated on.
+- Grooming's "already satisfied" check needs its own precision/recall thinking, same shape as the central risk above but one level earlier: a false "yes, already done" is a missed contribution, a false "no, still needed" is the exact redundant-work problem grooming exists to prevent.
 
 ## Tracked as
 
 - [#47](https://github.com/zzmq-dev/zz/issues/47) Symbol-level Ladder rungs -- the foundational prerequisite everything else depends on.
 - [#48](https://github.com/zzmq-dev/zz/issues/48) Embedding step alongside existing write-time summarization.
 - [#49](https://github.com/zzmq-dev/zz/issues/49) Vector-search backend integration, as a derived/rebuildable index over git-notes rungs -- never the canonical store.
-- [#50](https://github.com/zzmq-dev/zz/issues/50) Two-phase retrieval: harness-enforced Phase A, model-discretionary Phase B, the session buffer between them.
+- [#50](https://github.com/zzmq-dev/zz/issues/50) Two-phase retrieval: harness-enforced Phase A, model-discretionary Phase B, the session buffer between them -- now also Lane/Ask-scoped, shared between worker and reviewer, not process-scoped.
 - [#51](https://github.com/zzmq-dev/zz/issues/51) The retrieval-recall benchmark -- do this before committing further, not after.
+- [#53](https://github.com/zzmq-dev/zz/issues/53) Ask grooming, simple version -- one model call against today's file-level Ladder, ships now, actually fixes the live deny-repost bug.
+- [#54](https://github.com/zzmq-dev/zz/issues/54) Ask grooming, full version -- symbol-level retrieval, a real shared buffer, gated behind #51 like the rest of this doc.
