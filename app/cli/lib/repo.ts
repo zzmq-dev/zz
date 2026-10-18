@@ -4,9 +4,9 @@
 // reason not to use the fastest tool available for this one step; only the
 // Ladder's own reads/writes go through the Workers-compatible engine).
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { readAnchor } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
 import { resolveMe } from "./credentials.js";
@@ -100,9 +100,15 @@ function disableFetchNegotiation(repoDir: string): void {
 /** `remoteUrl`, when given, is a real git URL with credentials already embedded (cli/lib/credentials.ts's authedCloneUrl) -- the zz Worker's own git smart-HTTP proxy, cloned exactly like any other git remote. Omit it for the original GitHub-based local/demo path, unchanged. */
 export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
   if (existsSync(repo.repoDir)) {
+    // Fetch-only (updates origin/main, never resets the shared clone's own
+    // working tree) -- see fetchClone's own comment for why. Startup is just
+    // as concurrency-prone as any other call site if more than one `zz
+    // work` process against this repo happens to start around the same
+    // time; whichever worktree a given operation needs gets created fresh,
+    // off whatever this fetch just landed, not by resetting this directory.
     if (remoteUrl) {
       disableFetchNegotiation(repo.repoDir);
-      syncClone(repo);
+      fetchClone(repo);
     }
     return;
   }
@@ -111,11 +117,91 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
   if (remoteUrl) disableFetchNegotiation(repo.repoDir);
 }
 
-/** Fast-forwards an existing clone to match the remote's current `main` -- needed in remote mode specifically, since other agents' commits land on the real remote, not in this local working copy, between one read and the next (local mode has no such gap: LocalBackend commits land directly in this same repoDir). */
-export function syncClone(repo: ResolvedRepo): void {
+/**
+ * Fetches the remote's current `main` into the shared base clone's own
+ * remote-tracking ref (`origin/main`) -- needed in remote mode specifically,
+ * since other agents' commits land on the real remote, not in this local
+ * working copy, between one read and the next (local mode has no such gap:
+ * LocalBackend commits land directly in this same repoDir).
+ *
+ * Fetch-only, deliberately -- this used to also run `git reset --hard
+ * origin/main` directly against the shared clone's own working tree, which
+ * is exactly what let two concurrent `zz work` processes against the same
+ * repo corrupt each other (confirmed live: "fatal: path '<file>' exists on
+ * disk, but not in '<sha>'" -- one process's reset yanking files out from
+ * under the other's in-progress read). A `git fetch` only updates a
+ * remote-tracking ref, which git's own ref-locking already serializes
+ * safely across concurrent callers; it never touches the working tree, so
+ * it's safe to call from as many concurrent processes as actually show up.
+ * Each one now resets into its own isolated worktree instead (see
+ * ensureWorktree below) -- the shared base clone's own working tree should
+ * never be reset or checked out in directly once a repo has any concurrent
+ * users at all.
+ */
+export function fetchClone(repo: ResolvedRepo): void {
   disableFetchNegotiation(repo.repoDir);
   execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
-  execFileSync("git", ["-C", repo.repoDir, "reset", "--quiet", "--hard", "origin/main"], { stdio: "inherit" });
+}
+
+/**
+ * Creates an isolated git worktree off `repo`'s own shared base clone,
+ * detached at `ref`. Returns a ResolvedRepo-shaped object whose `repoDir`
+ * points at the worktree instead of the shared clone -- every existing
+ * caller that already takes a ResolvedRepo and touches `.repoDir`
+ * (runWorkAsk, runCoordinatorSubmitChangeset, runResolveConflict, the whole
+ * fileContentAtCommit/commitChangeset path) keeps working completely
+ * unchanged, now isolated from every other concurrent operation's own
+ * worktree without needing to know that's what happened. `stateDir` is left
+ * pointing at the base repo's own -- it's a shared Ladder-anchor cache, not
+ * per-operation state, and isolating it would just cause redundant anchor
+ * recomputation for no benefit.
+ *
+ * Same underlying pattern agent/tools.ts's `run_in_sandbox` already uses
+ * for disposable test checkouts (`git worktree add --detach`, stdio fully
+ * suppressed so git's own progress text never leaks into a live TUI frame)
+ * -- reused here rather than invented twice, just scoped to a whole
+ * claimed-ask operation instead of one tool call. The container/subdirectory
+ * split (mkdtemp the container, let `worktree add` create the not-yet-
+ * existing path inside it) is the same trick for the same reason: `git
+ * worktree add` wants to create its own target directory, not be handed one
+ * that already exists.
+ *
+ * Multiple worktrees safely share one base clone's object store and
+ * remote-tracking refs -- only a *shared working tree* was ever unsafe for
+ * concurrent use. The base clone itself must never be reset/checked-out-in
+ * directly once this exists for a repo; `fetchClone` (ref-only) is the only
+ * thing that should still touch it directly.
+ */
+export function ensureWorktree(repo: ResolvedRepo, ref: string): ResolvedRepo {
+  const worktreesRoot = join(zzHome(), "worktrees");
+  mkdirSync(worktreesRoot, { recursive: true });
+  const container = mkdtempSync(join(worktreesRoot, "zz-"));
+  const worktreeDir = join(container, repo.name);
+  execFileSync("git", ["-C", repo.repoDir, "worktree", "add", "--detach", "--quiet", worktreeDir, ref], { stdio: ["ignore", "ignore", "ignore"] });
+  return { ...repo, repoDir: worktreeDir };
+}
+
+/**
+ * Removes a worktree created by `ensureWorktree`. `base` is the ORIGINAL
+ * (non-worktree) ResolvedRepo passed to `ensureWorktree` -- `git worktree
+ * remove` has to run against the shared base clone's own `.git` directory,
+ * which knows about the worktree; the worktree's own copy doesn't carry
+ * that bookkeeping. Best-effort: tolerates one already gone (a process that
+ * crashed before cleanup, a second call), same idempotency convention as
+ * this file's other cleanup paths.
+ */
+export function removeWorktree(base: ResolvedRepo, worktree: ResolvedRepo): void {
+  try {
+    execFileSync("git", ["-C", base.repoDir, "worktree", "remove", "--force", worktree.repoDir], { stdio: ["ignore", "ignore", "ignore"] });
+  } catch {
+    // best-effort
+  }
+  try {
+    rmSync(dirname(worktree.repoDir), { recursive: true, force: true });
+  } catch {
+    // best-effort -- `worktree remove` above already deletes the directory
+    // on success; this only matters if that failed and left it behind.
+  }
 }
 
 /** Same definition `zz ladder build` itself uses to decide whether the file tree already got onboarded (cli/commands/ladder-build.ts's own isPresent check on REPO_RUNG_PATH) -- not a new check, just this one reused so `zz top --local`'s discovery agrees with onboarding about what "onboarded" means. No existsSync short-circuit on stateDir: confirmed live that readAnchor finds real content (it's a git note on repoDir's own clone) even when stateDir doesn't exist on disk at all, so a "does the directory exist" guard here only produces false negatives. */

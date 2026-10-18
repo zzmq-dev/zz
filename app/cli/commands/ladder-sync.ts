@@ -33,7 +33,7 @@
 // at all -- there's no delete primitive for a rung yet. Printed as a
 // warning so they're not silently lost from view, not auto-removed.
 import { execFileSync } from "node:child_process";
-import { resolveRepo, syncClone } from "../lib/repo.js";
+import { resolveRepo, fetchClone, ensureWorktree, removeWorktree } from "../lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, parseDependencies, describeOneFile } from "../../engine/ingest.js";
 import { resolveModelBackend } from "../../engine/model.js";
 import type { Provider } from "../lib/resolveChatBackend.js";
@@ -55,12 +55,19 @@ export async function ladderSync(sourceSlug: string, targetSlug: string, options
   // sourceSlug is a GitHub "owner/repo", not a zz account -- @me means
   // nothing there. targetSlug is the real zz-hosted destination.
   targetSlug = resolveMe(targetSlug);
-  const repo = resolveRepo(sourceSlug);
+  const base = resolveRepo(sourceSlug);
   const model = await resolveModelBackend(options.provider, options.model);
   console.error(`model backend: ${model.name}`);
 
   console.error(`fetching ${sourceSlug}'s real GitHub source...`);
-  syncClone(repo);
+  fetchClone(base);
+  // Isolated worktree, not the shared base clone's own working tree --
+  // this reads/diffs real file content below (git diff, describeOneFile,
+  // parseDependencies), which needs a working tree that actually matches
+  // the fetched HEAD, and a worktree is what keeps that safe if a `zz
+  // work` process is concurrently doing the same against this repo.
+  const repo = ensureWorktree(base, "origin/main");
+  try {
   const head = git(repo.repoDir, ["rev-parse", "HEAD"]);
   const origin = await resolveRepoLaneOrigin(repo.slug, repo.stateDir);
 
@@ -159,4 +166,7 @@ export async function ladderSync(sourceSlug: string, targetSlug: string, options
   // ladder-push.ts's own comment on the option).
   await ladderPush(sourceSlug, targetSlug, { markIngesting: false });
   console.error("sync done.");
+  } finally {
+    removeWorktree(base, repo);
+  }
 }

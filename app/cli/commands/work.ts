@@ -11,7 +11,7 @@
 import React from "react";
 import { execFileSync } from "node:child_process";
 import { render } from "ink";
-import { ensureCloned, resolveRepo, syncClone, type ResolvedRepo } from "../lib/repo.js";
+import { ensureCloned, resolveRepo, fetchClone, ensureWorktree, removeWorktree, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
 import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
@@ -395,12 +395,29 @@ export async function work(options: WorkOptions): Promise<void> {
 
   // Shared by both the loop and --ask below: fast-forward a remote
   // clone against another agent's since-landed commit (once per
-  // claimed ask, not every idle poll), log, and actually work it.
+  // claimed ask, not every idle poll), isolate this operation into its
+  // own worktree, log, and actually work it.
+  //
+  // The isolated worktree (not `resolved` itself) is what actually gets
+  // handed to runClaimedAsk below -- this is the fix for two concurrent
+  // `zz work` processes (same identity or different, same repo, each
+  // legitimately holding a different claimed Ask) corrupting each
+  // other's checkout by resetting/writing into one shared working tree
+  // at the same time (confirmed live: "fatal: path '<file>' exists on
+  // disk, but not in '<sha>'"). Applies in both remote and local mode --
+  // local mode never had a fetch step (LocalBackend commits land
+  // directly in the shared clone), but the same two-processes-writing-
+  // into-one-working-tree risk exists there too, independent of fetch.
   const workClaimed = async (resolved: ResolvedRepo, next: Awaited<ReturnType<typeof claimableAcrossRepos>>[number]): Promise<void> => {
-    if (useRemote) syncClone(resolved);
-    statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
-    onLog(statusRef.current);
-    await runClaimedAsk(resolved, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+    if (useRemote) fetchClone(resolved);
+    const working = ensureWorktree(resolved, useRemote ? "origin/main" : "HEAD");
+    try {
+      statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
+      onLog(statusRef.current);
+      await runClaimedAsk(working, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+    } finally {
+      removeWorktree(resolved, working);
+    }
   };
 
   // --ask <id>: work this one specific ask and exit, regardless of
