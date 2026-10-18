@@ -11,7 +11,7 @@
 import React from "react";
 import { execFileSync } from "node:child_process";
 import { render } from "ink";
-import { ensureCloned, resolveRepo, fetchClone, ensureWorktree, removeWorktree, type ResolvedRepo } from "../lib/repo.js";
+import { ensureCloned, resolveRepo, fetchClone, withIsolatedRepo, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
 import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
@@ -410,14 +410,11 @@ export async function work(options: WorkOptions): Promise<void> {
   // into-one-working-tree risk exists there too, independent of fetch.
   const workClaimed = async (resolved: ResolvedRepo, next: Awaited<ReturnType<typeof claimableAcrossRepos>>[number]): Promise<void> => {
     if (useRemote) fetchClone(resolved);
-    const working = ensureWorktree(resolved, useRemote ? "origin/main" : "HEAD");
-    try {
+    await withIsolatedRepo(resolved, "HEAD", async (working) => {
       statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
       onLog(statusRef.current);
       await runClaimedAsk(working, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
-    } finally {
-      removeWorktree(resolved, working);
-    }
+    });
   };
 
   // --ask <id>: work this one specific ask and exit, regardless of

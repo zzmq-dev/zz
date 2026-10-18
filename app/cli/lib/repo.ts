@@ -137,10 +137,38 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
  * ensureWorktree below) -- the shared base clone's own working tree should
  * never be reset or checked out in directly once a repo has any concurrent
  * users at all.
+ *
+ * Noteworthy, not a bug: after this runs, `git status` inside the base
+ * clone's own directory will show every tracked file as "modified" --
+ * expected, not a sign anything is wrong. Moving `refs/heads/main` (below)
+ * without touching the checked-out files on disk means the base clone's
+ * working tree no longer matches its own HEAD, on purpose. Nothing in this
+ * codebase reads or writes that working tree directly anymore -- only
+ * `git worktree add`, which checks out fresh content from the object
+ * database at whatever ref it's given, never from the base's own
+ * (intentionally stale-looking) working-tree files. Resist the urge to
+ * "clean this up" with a reset or checkout here; that's exactly the
+ * mutation that caused the original race this function exists to avoid.
  */
 export function fetchClone(repo: ResolvedRepo): void {
   disableFetchNegotiation(repo.repoDir);
   execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
+  // Ref-only, like the fetch above -- moves the LOCAL `main` branch to
+  // point at whatever origin/main now does, without touching the working
+  // tree, the index, or HEAD's own symbolic-ref target at all (unlike
+  // `git checkout`/`git reset`, which this deliberately isn't using; see
+  // this file's own git history for why those are unsafe here).
+  //
+  // This is what keeps a plain `"HEAD"` -- the default ref every
+  // worktree-creation call in this codebase resolves against
+  // (ensureWorktree's own default, and agent/tools.ts's run_in_sandbox,
+  // which re-resolves a repo from its slug independently and hardcodes
+  // "HEAD") -- correct for a remote-mode repo too, without needing every
+  // caller to know or care whether a given repo is in remote or local
+  // mode before picking a ref. Harmless to run redundantly for a local-
+  // mode repo (this function is never called for one -- ensureCloned
+  // only calls it when a remoteUrl was given).
+  execFileSync("git", ["-C", repo.repoDir, "update-ref", "refs/heads/main", "refs/remotes/origin/main"], { stdio: "inherit" });
 }
 
 /**
@@ -202,6 +230,64 @@ export function removeWorktree(base: ResolvedRepo, worktree: ResolvedRepo): void
     // best-effort -- `worktree remove` above already deletes the directory
     // on success; this only matters if that failed and left it behind.
   }
+}
+
+/**
+ * Runs `fn` against an isolated git worktree of `repo` checked out at
+ * `ref`, always removing the worktree afterward -- success, thrown error,
+ * doesn't matter. The one place anything in this codebase gets a safe,
+ * ephemeral, isolated checkout for a claimed-ask-shaped operation whose
+ * working tree nobody needs to look at once `fn` returns.
+ *
+ * Deliberately just `ensureWorktree` + `removeWorktree` wrapped around a
+ * callback -- every caller that used to hand-roll its own worktree-create-
+ * then-cleanup dance (work.ts's workClaimed, ladder-sync.ts's ladderSync,
+ * scriptedWork.ts's proposeReview) goes through this one function instead
+ * of repeating the same three-line pattern a third and fourth time.
+ * Principle #5, invent as little as possible, applied to this codebase's
+ * own internals, not just external standards.
+ *
+ * NOT what you want if the caller needs the checkout to still exist after
+ * this returns -- a human inspecting a proposed changeset's real files
+ * (prepareReviewWorkspace, below) calls `ensureWorktree` directly instead,
+ * on purpose, and is responsible for its own, later cleanup.
+ *
+ * Callers are still responsible for fetching first if they need to
+ * (fetchClone for an already-cloned repo, ensureCloned if it might not
+ * exist locally at all yet) -- that decision genuinely differs per caller,
+ * so this only owns the isolation, not the refresh policy.
+ */
+export async function withIsolatedRepo<T>(repo: ResolvedRepo, ref: string, fn: (isolated: ResolvedRepo) => Promise<T>): Promise<T> {
+  const isolated = ensureWorktree(repo, ref);
+  try {
+    return await fn(isolated);
+  } finally {
+    removeWorktree(repo, isolated);
+  }
+}
+
+/**
+ * Like `ensureWorktree`, but at a deterministic path keyed by `name`
+ * instead of a fresh one every call -- reused (fast-forwarded to `ref`) on
+ * a second call with the same name, rather than creating a second worktree
+ * alongside the first. For the one real case that needs a worktree to
+ * still be there, unchanged, after the call returns, and across any number
+ * of repeat calls: a changeset_review's workspace (`prepareReviewWorkspace`,
+ * agent/scriptedWork.ts), which a human needs to `cd` into and inspect,
+ * possibly across more than one --assist turn on the same ask. Caller owns
+ * cleanup -- there's no automatic removal here the way `withIsolatedRepo`
+ * has; removing this early would delete the thing the caller exists to
+ * produce.
+ */
+export function ensureNamedWorktree(repo: ResolvedRepo, name: string, ref: string): ResolvedRepo {
+  const worktreeDir = join(zzHome(), "worktrees", "named", name);
+  if (existsSync(worktreeDir)) {
+    execFileSync("git", ["-C", worktreeDir, "reset", "--quiet", "--hard", ref], { stdio: ["ignore", "ignore", "ignore"] });
+  } else {
+    mkdirSync(dirname(worktreeDir), { recursive: true });
+    execFileSync("git", ["-C", repo.repoDir, "worktree", "add", "--detach", "--quiet", worktreeDir, ref], { stdio: ["ignore", "ignore", "ignore"] });
+  }
+  return { ...repo, repoDir: worktreeDir };
 }
 
 /** Same definition `zz ladder build` itself uses to decide whether the file tree already got onboarded (cli/commands/ladder-build.ts's own isPresent check on REPO_RUNG_PATH) -- not a new check, just this one reused so `zz top --local`'s discovery agrees with onboarding about what "onboarded" means. No existsSync short-circuit on stateDir: confirmed live that readAnchor finds real content (it's a git note on repoDir's own clone) even when stateDir doesn't exist on disk at all, so a "does the directory exist" guard here only produces false negatives. */

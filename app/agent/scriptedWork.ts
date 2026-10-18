@@ -25,7 +25,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
-import { resolveRepo, ensureCloned, type ResolvedRepo } from "../cli/lib/repo.js";
+import { resolveRepo, ensureCloned, ensureNamedWorktree, type ResolvedRepo } from "../cli/lib/repo.js";
 import { apiFetch } from "../cli/lib/api.js";
 import type { AskEntry, RepoPolicy } from "../engine/types.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -930,15 +930,32 @@ export interface ReviewWorkspace {
   diff: string;
 }
 
-/** Prepares a changeset_review ask for a human to actually look at: writes its proposed files into a real local clone -- the same task shard the contributor worked in, when the ask's payload names one (source_repo) and we're in remote mode (cloning/syncing it if needed), falling back to the review's own parent repo otherwise -- and computes a real diff against baseCommit, so a Maintainer can `cd` in and run the code, not just read a model's decision. Calls no model and claims nothing; proposeReview/acceptReview (below) own the protocol side. Safe to call more than once (idempotent: ensureCloned no-ops if already cloned, the file write just overwrites with the same content). */
+/**
+ * Resolves which repo a changeset_review's files actually belong to -- the
+ * task shard the contributor worked in, when the ask names one
+ * (source_repo) and a clone-URL function is available (remote mode),
+ * falling back to the review's own parent repo otherwise. Ensures it's
+ * cloned (or just fetched, if already present -- see ensureCloned's own
+ * comment; never resets its working tree) before returning. Shared by
+ * prepareReviewWorkspace and proposeReview below, which previously each
+ * re-derived this independently -- one real path for "which repo is this
+ * review actually about," not two.
+ */
+function resolveReviewTarget(resolved: ResolvedRepo, payload: ChangesetReviewPayload, authedCloneUrlFor?: (slug: string) => string): ResolvedRepo {
+  if (payload.source_repo && authedCloneUrlFor) {
+    const target = resolveRepo(payload.source_repo);
+    ensureCloned(target, authedCloneUrlFor(payload.source_repo));
+    return target;
+  }
+  return resolved;
+}
+
+/** Prepares a changeset_review ask for a human to actually look at: writes its proposed files into a real local clone -- the same task shard the contributor worked in, when the ask's payload names one (source_repo) and we're in remote mode (cloning/syncing it if needed), falling back to the review's own parent repo otherwise -- and computes a real diff against baseCommit, so a Maintainer can `cd` in and run the code, not just read a model's decision. Calls no model and claims nothing; proposeReview/acceptReview (below) own the protocol side. Safe to call more than once (idempotent: a second call reuses and fast-forwards the same named worktree rather than creating a second one, and the file write just overwrites with the same content). A *named*, persistent worktree (ensureNamedWorktree), not an ephemeral one -- this exists specifically so a human can `cd` in and run the code after this returns, possibly across more than one --assist turn on the same ask; an auto-removed worktree would delete the thing this function exists to produce. */
 export async function prepareReviewWorkspace(opts: ScriptedFlowOptions): Promise<ReviewWorkspace> {
   const { resolved, theAsk, authedCloneUrlFor } = opts;
   const payload = theAsk.payload as ChangesetReviewPayload;
-  let target = resolved;
-  if (payload.source_repo && authedCloneUrlFor) {
-    target = resolveRepo(payload.source_repo);
-    ensureCloned(target, authedCloneUrlFor(payload.source_repo));
-  }
+  const repo = resolveReviewTarget(resolved, payload, authedCloneUrlFor);
+  const target = ensureNamedWorktree(repo, `review-${theAsk.id}`, "HEAD");
   writeFilesToWorkingTree(target, payload.files);
   const diff = payload.baseCommit
     ? diffFileSets(
@@ -969,13 +986,14 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   // ask carrying this exact failure as feedback, so the retry loop
   // closes automatically on zz work's very next poll, no restart or
   // human intervention needed. Same source_repo/shard resolution
-  // prepareReviewWorkspace uses, since a sharded task's proposed files
-  // assume that shard's own base, not the parent repo's.
-  let target = resolved;
-  if (payload.source_repo && authedCloneUrlFor) {
-    target = resolveRepo(payload.source_repo);
-    ensureCloned(target, authedCloneUrlFor(payload.source_repo));
-  }
+  // prepareReviewWorkspace uses (resolveReviewTarget, above), since a
+  // sharded task's proposed files assume that shard's own base, not the
+  // parent repo's. No worktree wrap needed here, unlike that function --
+  // verifyProposal only ever reads `target.slug`, never `target.repoDir`
+  // as a path; the actual isolated checkout happens inside
+  // run_in_sandbox (agent/tools.ts), which already resolves and isolates
+  // its own worktree off that slug.
+  const target = resolveReviewTarget(resolved, payload, authedCloneUrlFor);
   const sandboxResult = await verifyProposal(target, payload.files);
   if (sandboxResult.exitCode !== 0) {
     return {
