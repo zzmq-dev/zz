@@ -130,6 +130,34 @@ function payloadEmbedsFiles(payload: unknown): boolean {
   return files.every((f) => typeof f === "object" && f !== null && typeof (f as { path?: unknown }).path === "string" && typeof (f as { content?: unknown }).content === "string");
 }
 
+/**
+ * Who currently holds the claim on an ask, if anyone. A claim_request
+ * targeting this ask, once granted, makes its `from` the holder; a later
+ * granted claim_request on the same target (e.g. the same actor resuming
+ * after a failed attempt) replaces the holder. A later granted
+ * claim_release (ask_release, agent/tools.ts) clears it back to null
+ * instead -- giving up a claim without answering the claimed ask itself,
+ * so it goes back to being claimable by anyone, including the same actor
+ * later. lane.history is already in the order these were posted, so the
+ * last granted claim/release event targeting this ask wins.
+ *
+ * Lives here, not in workqueue.ts (which re-exports it for every existing
+ * caller) -- answer() below needs to call this from *inside* its own
+ * atomic transaction, and workqueue.ts already imports from this file, so
+ * importing the other way would be a cycle.
+ */
+export function claimHolder(lane: Lane, askId: string): string | null {
+  let holder: string | null = null;
+  for (const e of lane.history) {
+    if (e.type !== "ASK" || (e.kind !== "claim_request" && e.kind !== "claim_release")) continue;
+    if ((e.payload as { target?: string } | undefined)?.target !== askId) continue;
+    const granted = lane.history.some((a) => a.type === "ANSWER" && a.ask === e.id && a.action === "grant");
+    if (!granted) continue;
+    holder = e.kind === "claim_request" ? e.from : null;
+  }
+  return holder;
+}
+
 export async function answer(repo: string, laneId: string, theAsk: AskEntry, input: { from: string; action: AnswerEntry["action"]; payload?: unknown }): Promise<AnswerEntry> {
   const entry: AnswerEntry = { id: randomId("answer"), type: "ANSWER", ask: theAsk.id, from: input.from, action: input.action, payload: input.payload, at: nowIso() };
   // Read outside withLane -- its own mutate callback stays synchronous
@@ -175,6 +203,29 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
         // repeatedly); the loop itself ends on this signal instead of
         // depending on the model reading and acting on the text correctly.
         throw Object.assign(new Error(`ask ${theAsk.id} was already answered (action "${existing.action}" at ${existing.at}) -- no need to answer it again. If you're checking whether it's resolved, this error IS that confirmation: it is.`), { resolved: true });
+      }
+    }
+    // The actual claim-exclusivity check -- found missing live: two
+    // different real actors ("dev1" and "dev3"), each with their own
+    // genuinely-unclaimed read of the same target ask, both posted
+    // their own distinct claim_request and both got granted. The
+    // "already answered" check just above only protects THIS
+    // claim_request ask from being double-answered; it says nothing
+    // about a second, different claim_request racing to grant itself
+    // on the same target. Checked here, inside the same atomic
+    // transaction the duplicate-answer check already runs in
+    // (Backend.withLane serializes every answer() call against this
+    // Lane), so whichever grant call actually reaches this point first
+    // wins; the second one now sees the first's effect already applied
+    // and is rejected, instead of both succeeding because both read
+    // "unclaimed" before either had written anything.
+    if (theAsk.kind === "claim_request" && input.action === "grant") {
+      const target = (theAsk.payload as { target?: string } | undefined)?.target;
+      const holder = target ? claimHolder(lane, target) : null;
+      if (holder !== null && holder !== theAsk.from) {
+        throw new Error(
+          `ask ${theAsk.id} (claim_request, target "${target}") can't be granted -- "${holder}" already holds a granted claim on that target. Two actors raced to claim the same ask; this one lost. Check claimableAsks again before retrying.`,
+        );
       }
     }
     // RBAC enforcement: a coordinator-scope ask (ASK_SCOPE below) may

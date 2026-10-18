@@ -3,9 +3,11 @@
 // loop. Built so a later backend swap (a real shared queue, multiple
 // concurrent actors) changes where claimableAsks reads from, not the
 // shape of the loop itself.
-import { ask, answer, ASK_SCOPE } from "./lane.js";
+import { ask, answer, ASK_SCOPE, claimHolder } from "./lane.js";
 import { resolveBackend } from "./backend.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane } from "./types.js";
+
+export { claimHolder };
 
 function isAnswer(entry: Lane["history"][number]): entry is AnswerEntry {
   return entry.type === "ANSWER";
@@ -17,30 +19,6 @@ function isAsk(entry: Lane["history"][number]): entry is AskEntry {
 
 export function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "complete">): boolean {
   return lane.history.some((e) => isAnswer(e) && e.ask === askId && actions.includes(e.action as "grant" | "complete"));
-}
-
-/**
- * Who currently holds the claim on an ask, if anyone -- the actual
- * lease this project didn't have until now. A claim_request targeting
- * this ask, once granted, makes its `from` the holder; a later granted
- * claim_request on the same target (e.g. the same actor resuming after
- * a failed attempt) replaces the holder. A later granted claim_release
- * (ask_release, agent/tools.ts) clears it back to null instead --
- * giving up a claim without answering the claimed ask itself, so it
- * goes back to being claimable by anyone, including the same actor
- * later. lane.history is already in the order these were posted, so
- * the last granted claim/release event targeting this ask wins.
- */
-export function claimHolder(lane: Lane, askId: string): string | null {
-  let holder: string | null = null;
-  for (const e of lane.history) {
-    if (e.type !== "ASK" || (e.kind !== "claim_request" && e.kind !== "claim_release")) continue;
-    if ((e.payload as { target?: string } | undefined)?.target !== askId) continue;
-    const granted = lane.history.some((a) => a.type === "ANSWER" && a.ask === e.id && a.action === "grant");
-    if (!granted) continue;
-    holder = e.kind === "claim_request" ? e.from : null;
-  }
-  return holder;
 }
 
 /**

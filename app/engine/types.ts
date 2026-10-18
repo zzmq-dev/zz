@@ -73,9 +73,11 @@ export type AskKind =
   // answering the claimed ask itself -- it goes back to being
   // claimable by anyone (including the same actor again later), unlike
   // "deny" (terminal) or just walking away (claim stays held forever,
-  // invisible to claimableAsks). See engine/workqueue.ts's claimHolder,
-  // which treats the latest granted claim_request/claim_release event
-  // for a given target ask as authoritative.
+  // invisible to claimableAsks). See engine/lane.ts's claimHolder
+  // (re-exported from engine/workqueue.ts for existing callers), which
+  // treats the latest granted claim_request/claim_release event for a
+  // given target ask as authoritative -- and which answer() itself now
+  // also checks at grant time, not just at query time.
   | "claim_release"
   | "review_request"
   | "change_request"
