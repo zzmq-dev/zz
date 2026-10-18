@@ -129,6 +129,8 @@ interface ParsedFileProposal {
   summary: string;
   message: string;
   files: { path: string; content: string }[];
+  /** A drive-by contribution the model noticed while working this task but that isn't part of it -- optional, legitimate, no special scrutiny beyond ordinary review (site/content/docs/charter/#drive-by-contributions). Posted as a fresh, independent work ask once this task's own submission lands, never silently folded into it. */
+  driveBy?: string;
 }
 
 // Deterministic, not another model call: SUMMARY:/MESSAGE: header
@@ -139,6 +141,7 @@ interface ParsedFileProposal {
 function parseFileProposal(text: string): ParsedFileProposal {
   const summaryMatch = text.match(/^SUMMARY:\s*(.+)$/m);
   const messageMatch = text.match(/^MESSAGE:\s*(.+)$/m);
+  const driveByMatch = text.match(/^DRIVE_BY:\s*(.+)$/m);
   const files: { path: string; content: string }[] = [];
   const fileRe = /^FILE:\s*(.+?)\s*\r?\n```[a-zA-Z0-9]*\r?\n([\s\S]*?)\r?\n```/gm;
   let m: RegExpExecArray | null;
@@ -152,6 +155,7 @@ function parseFileProposal(text: string): ParsedFileProposal {
     summary: summaryMatch?.[1]?.trim() ?? "",
     message: messageMatch?.[1]?.trim() ?? files.map((f) => f.path).join(", "),
     files,
+    driveBy: driveByMatch?.[1]?.trim() || undefined,
   };
 }
 
@@ -253,8 +257,11 @@ FILE: <another path, if you're touching more than one file>
 \`\`\`
 <its full content>
 \`\`\`
+DRIVE_BY: <optional -- one sentence, only if you noticed something else worth fixing while working this task>
 
 List one FILE block per file you're adding or changing. Nothing else -- no prose outside these lines, no explanation, no tool calls.
+
+If, while working this task, you notice something else genuinely worth doing -- a bug, a missing test, a stale doc, anything unrelated to what you were actually asked -- include one DRIVE_BY line describing it. This is a real, legitimate thing to do, not a distraction: it gets posted as its own independent ask once your actual task lands, for anyone (you or someone else) to pick up separately. Don't act on it yourself right now, and don't let it change anything in the FILE blocks above -- just name it. Omit the line entirely if nothing comes to mind; most tasks won't have one.
 
 When adding a brand-new function (not editing an existing one), give it its own new file under \`src/\` (e.g. \`src/isPrime.js\`, exporting just that function and its own tests alongside), and wire it into the project's main entry file with a single added re-export line (e.g. \`export { isPrime } from "./src/isPrime.js";\`) -- never restate that entry file's other existing exports or function bodies just to add one more. Several of these can run at once on the same repo: keeping each new function in its own file is what keeps them from colliding when they land, and keeps every file small enough for a reviewer to check quickly.
 
@@ -541,6 +548,27 @@ export async function acceptContributorWork(opts: ScriptedFlowOptions, proposed:
     payload: { summary: proposal.summary },
   });
   onLog(`[scripted] posted for review and answered ${theAsk.id} complete`);
+  // A drive-by contribution the model noticed while working this task
+  // but that isn't part of it -- posted only after this task's own
+  // submission lands, as its own independent ask (never silently
+  // folded into this one), and only once the task actually succeeds:
+  // a sandbox-failed/denied attempt never reaches this point at all.
+  // Deliberately no distinct scope or review path -- site/content/
+  // docs/charter/#drive-by-contributions: posting an ask has never
+  // needed anyone's prior approval, so a self-noticed one isn't
+  // structurally weaker than any other.
+  if (proposal.driveBy) {
+    await callTool("ask_post", {
+      repo: parentResolved.slug,
+      lane_id: parentLaneId,
+      kind: "work",
+      from: agent,
+      payload: { description: proposal.driveBy },
+    }).then(
+      (driveByAsk) => onLog(`[scripted] posted drive-by ask ${(driveByAsk as { id?: string })?.id ?? "?"}: ${proposal.driveBy}`),
+      (err) => onLog(`[scripted] drive-by ask post failed (non-fatal, the real task above already completed): ${err instanceof Error ? err.message : String(err)}`),
+    );
+  }
 }
 
 /** Just the final deny call -- split out so both the autonomous wrapper below and --assist's own "reject" path (cli/commands/work.ts) can use it without duplicating the payload shape. */
@@ -1101,18 +1129,27 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // loop, --assist) picks it up with no special-casing.
   const payload = theAsk.payload as ChangesetReviewPayload;
 
-  // A real cap, not an assumed-fine-forever loop. Found live: with no
-  // check anywhere for "does this already exist" and no limit on how
-  // many times a rejected task can be reposted, a review that keeps
-  // requesting changes on an already-fine implementation (plain model
-  // non-determinism is enough to trigger this, not a real bug in the
-  // code) cycles forever -- confirmed live, the same function
-  // ("clamp", "mean", "median", "roundTo"...) committed four separate
-  // times in a row, open-ask count climbing instead of draining. Counts
-  // prior "work" asks in this Lane with the exact same description
-  // (lane history, not a payload-threaded counter -- robust to any
-  // call path that reaches this point, not just this one) rather than
-  // trusting a field to have been carried forward correctly every hop.
+  // A safety-valve backstop now, not the primary mechanism -- reclassified
+  // once Charter and Insights (both landed the same night as this
+  // comment) gave grooming/review the actual tools to make most repeated
+  // failures avoidable before they ever reach this cap (see Design:
+  // directed selection, "the retry cap" -- a count-based intervention
+  // standing in for a fitness dynamic). Originally found live with no
+  // such tools available at all: with no check anywhere for "does this
+  // already exist" and no limit on how many times a rejected task could
+  // be reposted, a review that kept requesting changes on an
+  // already-fine implementation cycled forever -- confirmed live, the
+  // same function ("clamp", "mean", "median", "roundTo"...) committed
+  // four separate times in a row, open-ask count climbing instead of
+  // draining. Keep this cap regardless -- it's still the thing that
+  // guarantees termination if grooming/Charter miss a case -- but if
+  // needsTriage events stop trending toward zero as those actually get
+  // used, that's a real signal the fitness mechanism isn't working yet,
+  // not a reason to lower the cap further. Counts prior "work" asks in
+  // this Lane with the exact same description (lane history, not a
+  // payload-threaded counter -- robust to any call path that reaches
+  // this point, not just this one) rather than trusting a field to have
+  // been carried forward correctly every hop.
   //
   // Computed BEFORE the deny below (not after) specifically so a
   // capped-out denial can carry its own triage flag directly on the
