@@ -479,7 +479,27 @@ export async function work(options: WorkOptions): Promise<void> {
       lastIdleLogged = null;
       const next = claimable[0];
       const resolved = watched.find((r) => r.slug === next.repo)!;
-      await workClaimed(resolved, next);
+      try {
+        await workClaimed(resolved, next);
+      } catch (err) {
+        // mainLoop specifically, not oneOffAsk below -- a one-off `--ask
+        // <id>` invocation is a single, deliberate command that should
+        // fail loudly and visibly if it fails. This is the opposite
+        // case: an unattended, long-running poll, where one ask's
+        // failure (network blip, a model error, anything not already
+        // caught more specifically inside workClaimed) shouldn't take
+        // the entire process down -- confirmed live, a transient fetch
+        // timeout during a model call did exactly that. Logged clearly
+        // (visible in --stdio output either way) and moved past, the
+        // same resilience posture this loop already has for "nothing
+        // claimable right now." Doesn't retry or release this specific
+        // ask -- it may sit claimed-but-unfinished until something else
+        // acts on it, the same open gap #30 already tracks for a
+        // different trigger (conflict-resolution exhaustion); this just
+        // keeps the worker process itself alive to keep serving
+        // everything else claimable in the meantime.
+        onLog(`[${next.ask.id}] failed, not crashing the run: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   };
 

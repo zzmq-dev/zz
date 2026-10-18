@@ -53,16 +53,37 @@ async function localCallTool(name: string, args: Record<string, unknown>): Promi
 // "omit tools when empty" fix in each backend file) not to offer any
 // tool-calling at all, so there's no tool-call JSON to get wrong --
 // the model can only produce prose/code as its message content.
-async function generateText(backend: ChatBackend, systemPrompt: string, userPrompt: string, onPartial?: (textSoFar: string) => void): Promise<string> {
-  const message = await backend.chat(
-    [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    [],
-    onPartial,
-  );
-  return message.content;
+// Model calls hit a real network every time, regardless of backend
+// (OpenAI/Anthropic/Ollama/whatever -- see engine/model.ts) -- a
+// transient failure there (a connect timeout, a dropped connection, a
+// momentary 5xx) is routine, not a sign anything is actually wrong,
+// the same way a flaky HTTP call anywhere else gets retried rather
+// than treated as fatal on the first attempt. Confirmed live: an
+// uncaught "fetch failed / Connect Timeout Error" here propagated
+// all the way up through workClaimed and killed a whole --stdio run,
+// the same shape of problem as the already-answered signal fixed
+// just before this -- one transient, single-ask failure taking down
+// an entire unattended run instead of being retried or at least
+// logged and moved past.
+const MAX_GENERATE_ATTEMPTS = 3;
+
+async function generateText(backend: ChatBackend, systemPrompt: string, userPrompt: string, onLog: (line: string) => void, onPartial?: (textSoFar: string) => void): Promise<string> {
+  const messages = [
+    { role: "system" as const, content: systemPrompt },
+    { role: "user" as const, content: userPrompt },
+  ];
+  for (let attempt = 1; attempt <= MAX_GENERATE_ATTEMPTS; attempt++) {
+    try {
+      const message = await backend.chat(messages, [], onPartial);
+      return message.content;
+    } catch (err) {
+      if (attempt === MAX_GENERATE_ATTEMPTS) throw err;
+      const delayMs = 1000 * 2 ** (attempt - 1); // 1s, then 2s
+      onLog(`[scripted] model call failed (attempt ${attempt}/${MAX_GENERATE_ATTEMPTS}): ${err instanceof Error ? err.message : String(err)} -- retrying in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw new Error("unreachable"); // the loop above always either returns or throws on its last attempt
 }
 
 // Reads HEAD directly (`git ls-tree` + `git show`), never the working
@@ -284,7 +305,7 @@ async function generateVerifiedProposal(opts: {
     const baseCommit = currentHeadSha(resolved);
     const userPrompt = buildUserPrompt(attempt, lastFailure);
     onLog(`[scripted] generating proposed files (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
-    const text = await generateText(backend, systemPrompt, userPrompt, onPartial);
+    const text = await generateText(backend, systemPrompt, userPrompt, onLog, onPartial);
     const proposal = parseFileProposal(text);
     onLog(`[scripted] proposed ${proposal.files.map((f) => f.path).join(", ")} -- verifying`);
     const result = await verifyProposal(resolved, proposal.files);
@@ -586,7 +607,7 @@ export async function runDecomposeWorkAsk(opts: ScriptedFlowOptions): Promise<vo
   const description = payload?.description ?? JSON.stringify(theAsk.payload);
 
   onLog(`[scripted] decomposing: ${description.slice(0, 120)}`);
-  const text = await generateText(backend, DECOMPOSE_SYSTEM_PROMPT, `Task to split into independent sub-tasks:\n${description}`, onPartial);
+  const text = await generateText(backend, DECOMPOSE_SYSTEM_PROMPT, `Task to split into independent sub-tasks:\n${description}`, onLog, onPartial);
   const subtasks = parseSubtasks(text);
   onLog(`[scripted] split into ${subtasks.length} sub-task(s): ${subtasks.map((s) => s.name).join(", ")}`);
 
@@ -660,7 +681,7 @@ export async function runWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
     return;
   }
   const description = payload?.description ?? JSON.stringify(theAsk.payload);
-  const text = await generateText(backend, SHOULD_DECOMPOSE_SYSTEM_PROMPT, `Task:\n${description}`, onPartial);
+  const text = await generateText(backend, SHOULD_DECOMPOSE_SYSTEM_PROMPT, `Task:\n${description}`, onLog, onPartial);
   const decompose = parseShouldDecompose(text);
   onLog(`[scripted] ${decompose ? "decided to decompose this task into sub-tasks" : "decided this task is small enough to implement directly"}`);
   await (decompose ? runDecomposeWorkAsk(opts) : runContributorWorkAsk(opts));
@@ -757,7 +778,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
     const commitOid = commitResult.commitOid;
 
     const prompt = `Repo: ${resolved.slug}\nCommit: ${commitOid}\nCommit message: ${payload.message}\nChange summary (from the contributor): ${payload.summary}\n\nFiles:\n${files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`;
-    const text = await generateText(backend, SUMMARIZE_SYSTEM_PROMPT, prompt);
+    const text = await generateText(backend, SUMMARIZE_SYSTEM_PROMPT, prompt, onLog);
     const { perFile, changeset } = parseSummaries(text);
 
     const now = new Date().toISOString();
@@ -850,7 +871,7 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
   for (let attempt = 1; attempt <= MAX_SANDBOX_ATTEMPTS; attempt++) {
     const promptForAttempt = attempt === 1 ? userPrompt : `${userPrompt}\n\nYour previous resolution's test run failed:\n${lastFailure}`;
     onLog(`[scripted] resolving ${payload.conflicts.length} conflict(s) (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS})`);
-    const text = await generateText(backend, RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT, promptForAttempt);
+    const text = await generateText(backend, RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT, promptForAttempt, onLog);
     const resolvedConflicts = parseFileProposal(text);
     const allFiles = [...payload.cleanFiles, ...resolvedConflicts.files];
     onLog(`[scripted] resolved ${resolvedConflicts.files.map((f) => f.path).join(", ")} -- verifying full set`);
@@ -968,7 +989,7 @@ export async function prepareReviewWorkspace(opts: ScriptedFlowOptions): Promise
 
 /** Claim (if needed) and draft a decision -- doesn't post anything. --assist (cli/commands/work.ts) shows `decision`/`reason` to a human, who may accept as-is or override either field, then calls acceptReview; runChangesetReview (below) just calls both back to back, unchanged behavior from before this split. */
 export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewProposal> {
-  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onPartial, callTool = localCallTool, authedCloneUrlFor } = opts;
+  const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, onPartial, callTool = localCallTool, authedCloneUrlFor } = opts;
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
@@ -1004,7 +1025,7 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
 
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
-  const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onPartial);
+  const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onLog, onPartial);
   return parseReviewDecision(text);
 }
 
@@ -1012,12 +1033,12 @@ const CHANGESET_DISCUSS_SYSTEM_PROMPT = `You are an agent in the zz coordination
 
 /** Free-form Q&A about a changeset_review before the human finalizes it -- unlike proposeReview, this doesn't produce a DECISION:/REASON: pair, just an answer to append to the chat transcript. `conversation` is the prior turns (proposeReview's own initial recommendation counts as the first assistant turn) so follow-up questions have context. */
 export async function discussReview(opts: ScriptedFlowOptions, conversation: { role: "assistant" | "user"; content: string }[], question: string): Promise<string> {
-  const { theAsk, backend, onPartial } = opts;
+  const { theAsk, backend, onLog, onPartial } = opts;
   const payload = theAsk.payload as ChangesetReviewPayload;
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
   const history = conversation.map((t) => `${t.role === "assistant" ? "You" : "Human"}: ${t.content}`).join("\n\n");
   const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary: ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}\n\nConversation so far:\n${history}\n\nHuman: ${question}`;
-  return generateText(backend, CHANGESET_DISCUSS_SYSTEM_PROMPT, prompt, onPartial);
+  return generateText(backend, CHANGESET_DISCUSS_SYSTEM_PROMPT, prompt, onLog, onPartial);
 }
 
 /** Posts the grant/deny this review's decision calls for -- a (possibly human-overridden) ReviewProposal, not necessarily the exact one proposeReview drafted. */
