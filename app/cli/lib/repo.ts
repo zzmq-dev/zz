@@ -244,6 +244,30 @@ export function fetchClone(repo: ResolvedRepo): void {
 }
 
 /**
+ * Reads CHARTER.md off the repo's `zz-meta` branch, or null if it
+ * doesn't exist. Deliberately plain git (`git fetch` + `git show`),
+ * not a dedicated tool or API surface -- the explicit decision for
+ * Charter's storage (see site/content/docs/charter/): editing it is
+ * ordinary git against zz-meta, so reading it should be too. `main`'s
+ * own fetch (fetchClone, above) never touches zz-meta, so this does
+ * its own small, ref-only fetch first -- cheap (one tiny branch's
+ * history, not the whole repo) and keeps a Charter edit pickup-able
+ * without needing a full re-clone.
+ */
+export function readCharter(repo: ResolvedRepo): string | null {
+  try {
+    execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "zz-meta"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    return null; // no zz-meta branch at all yet (repo never had one created) -- not an error, just nothing to read
+  }
+  try {
+    return execFileSync("git", ["-C", repo.repoDir, "show", "FETCH_HEAD:CHARTER.md"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    return null; // zz-meta exists but has no CHARTER.md yet
+  }
+}
+
+/**
  * Creates an isolated git worktree off `repo`'s own shared base clone,
  * detached at `ref`. Returns a ResolvedRepo-shaped object whose `repoDir`
  * points at the worktree instead of the shared clone -- every existing

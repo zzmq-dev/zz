@@ -25,7 +25,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
-import { resolveRepo, ensureCloned, ensureNamedWorktree, type ResolvedRepo } from "../cli/lib/repo.js";
+import { resolveRepo, ensureCloned, ensureNamedWorktree, readCharter, type ResolvedRepo } from "../cli/lib/repo.js";
 import { apiFetch } from "../cli/lib/api.js";
 import type { AskEntry, RepoPolicy } from "../engine/types.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -938,7 +938,7 @@ interface ChangesetReviewPayload {
 // this step exists specifically so that check is never skipped
 // regardless of who's performing it, not folded silently into the
 // mechanical merge.
-const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your only job: does this change actually match what was asked, does it stay in scope, does it do anything that wasn't requested. Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
+const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your job has two parts, both real rejection reasons, not variations on the same one: does this change actually match what was asked and stay in scope (request changes if not), and separately, if a Charter is given below, does this change belong in this project at all (request changes if it doesn't, even if it's valid, well-tested code -- a repo's Charter states what it will never accept, and "doesn't belong" is a different reason than "isn't done yet"). Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
 
 You never call tools or write JSON here -- you only write plain text in the exact format below.
 
@@ -1043,7 +1043,16 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   }
 
   const diffBlob = payload.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
-  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}`;
+  // Read fresh on every review, not cached -- ambient consultation,
+  // not a planning input one role reads once (site/content/docs/
+  // charter/, the corrected design: any agent checks the Charter when
+  // relevant, nobody executes a plan on everyone else's behalf). A
+  // missing Charter is the common case (most repos don't have one
+  // yet) and isn't an error -- the prompt below just omits the
+  // section entirely, same as any other optional context.
+  const charter = readCharter(target);
+  const charterSection = charter ? `\n\nThis repo's Charter (its stated purpose and non-goals -- check whether this change belongs here, not just whether it matches the task):\n${charter}` : "";
+  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}${charterSection}`;
   const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onLog, onPartial);
   return parseReviewDecision(text);
 }
