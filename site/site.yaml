@@ -57,6 +57,8 @@ nav:
       url: /docs/lanes-asks-and-roles/
     - title: "Cost tracking (sketch)"
       url: /docs/cost-tracking/
+    - title: "Ladder as a RAG knowledge graph"
+      url: /docs/ladder-rag/
     - title: "Contributors guide (sketch)"
       url: /docs/contributors-guide/
     - title: "Demos"
