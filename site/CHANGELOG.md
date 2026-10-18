@@ -6,6 +6,9 @@ Building (`hyperctl build complete -c site.yaml`) and deploying (`wrangler deplo
 
 ## [Unreleased]
 
+### Changed
+- **Split the sidebar into user docs and a new [Planning and design](https://zzmq.dev/docs/planning-and-design/) section.** The main nav was one flat list mixing "how to use zz today" (CLI, Protocol, Governance) with "designed, not built" engineering content (Trust model, did:zz, Mediated conflict resolution, and everything from tonight's directed-selection pass) -- a reader had no way to tell which kind of page they'd clicked into before reading the status line. Seventeen docs moved into a new `design_nav` sidebar block, rendered the same way the existing Demos/Case studies blocks already are (`themes/zz-docs/fragments/nav.html`), with its own index page summarizing what's there and why it's separate. The main nav keeps everything that's actually real and working today.
+
 ### Added
 - **A full documentation pass establishing "directed selection" as zz's actual design standard**, prompted by critically re-examining [Charter](/docs/charter/)'s first draft against [the real Hugging Face incident primary source](https://zzmq.dev/docs/hugging-face-incident/) instead of a secondhand AI summary, several of whose specific claims turned out to be fabricated. Five pieces:
   - [Design: directed selection](https://zzmq.dev/docs/design-process-charter/) -- the checkable standard itself: variation stays open, selection carries real human-authored values, humans control what persists rather than what any agent may attempt. A narrower, more operationally-checkable companion to [Principles](https://zzmq.dev/docs/principles/).

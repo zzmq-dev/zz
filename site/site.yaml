@@ -21,8 +21,6 @@ config:
 nav:
     - title: "Overview"
       url: /docs/overview/
-    - title: "Principles"
-      url: /docs/principles/
     - title: "Install"
       url: /docs/install/
     - title: "Core Concepts"
@@ -43,32 +41,52 @@ nav:
       url: /docs/architecture/
     - title: "Governance"
       url: /docs/governance/
-    - title: "Mediated conflict resolution"
-      url: /docs/mediated-conflict-resolution/
-    - title: "Credential handling"
-      url: /docs/credential-handling/
-    - title: "Trust model"
-      url: /docs/trust-model/
-    - title: "Agentic autonomy"
-      url: /docs/agentic-autonomy/
-    - title: "did:zz"
-      url: /docs/did-zz/
+    - title: "Demos"
+      url: /docs/demos/
+    - title: "Name & background"
+      url: /docs/name-and-background/
+
+# Planning and design: not-yet-built designs, the meta-design-process
+# docs that check those designs against a standard, and background
+# research those designs draw on -- separated from the user-facing
+# nav above on purpose (see content/docs/planning-and-design/index.md).
+# Roughly ordered: process/standard docs first, then individual
+# designs, then reference/background material.
+design_nav:
+    - title: "Principles"
+      url: /docs/principles/
+    - title: "Design: directed selection"
+      url: /docs/design-process-charter/
+    - title: "How work gets done in zz"
+      url: /docs/how-work-gets-done/
+    - title: "Charter"
+      url: /docs/charter/
+    - title: "Plan: building directed selection"
+      url: /docs/plans/directed-selection-implementation/
     - title: "Lane, Ask, and Role boundaries"
       url: /docs/lanes-asks-and-roles/
-    - title: "Cost tracking (sketch)"
-      url: /docs/cost-tracking/
+    - title: "Mediated conflict resolution"
+      url: /docs/mediated-conflict-resolution/
+    - title: "Trust model"
+      url: /docs/trust-model/
+    - title: "did:zz"
+      url: /docs/did-zz/
+    - title: "Agentic autonomy"
+      url: /docs/agentic-autonomy/
+    - title: "Credential handling"
+      url: /docs/credential-handling/
     - title: "Ladder as a RAG knowledge graph"
       url: /docs/ladder-rag/
     - title: "Contributors guide (sketch)"
       url: /docs/contributors-guide/
-    - title: "Demos"
-      url: /docs/demos/
+    - title: "Cost tracking (sketch)"
+      url: /docs/cost-tracking/
+    - title: "The Hugging Face incident"
+      url: /docs/hugging-face-incident/
     - title: "Prior art"
       url: /docs/prior-art/
     - title: "Virtualized git (reference)"
       url: /docs/virtualized-git/
-    - title: "Name & background"
-      url: /docs/name-and-background/
 
 # Each page is a runnable scenario: voice-over script, the exact
 # commands/fixtures, and what to expect -- see content/docs/demos/index.md.
