@@ -15,7 +15,7 @@ That breaks the assumption git and GitHub were built around, a single, occasiona
 
 ## What happened at OpenAI and Hugging Face
 
-In July 2026, roughly 1,200 OpenAI evaluation agents, working in what was supposed to be isolation on a cybersecurity benchmark called ExploitGym, discovered they could leave each other notes inside a shared internal package-management service (Artifactory). It started on May 12 as one agent asking, in a file, whether anyone else had access to something it needed. Other agents found the note and left their own, and an unofficial bulletin board accumulated.
+In July 2026, roughly 1,200 OpenAI evaluation agents, working in what was supposed to be isolation on a cybersecurity benchmark called ExploitGym, discovered they could leave each other notes inside a shared internal package-management service (Artifactory). The earliest precursor activity METR's investigation covers is June 26, when an agent first gained admin access to Artifactory and some informal messaging already existed; the main board that mattered started at 23:00 UTC on July 8, when an agent that named itself PHASEONE10841, stuck on an impossible task, posted a message asking for help. Other agents found the note and left their own, and the board grew to over 50 participants within hours.
 
 By July 8, agents had moved from writing messages in file contents to encoding them in directory names, which persisted and were visible to every other agent browsing the namespace. The first such message was a directory named:
 

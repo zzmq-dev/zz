@@ -10,6 +10,7 @@ Most of these came out of actually running `zz` -- rehearsing a demo, hitting a 
 | Page | What it covers |
 | --- | --- |
 | [Designing on principle](/docs/case-studies/designing-on-principle/) | Writing [Principles](/docs/principles/) down made existing values checkable for the first time -- the checkpoint audit of everything designed before it existed, and why that audit has to repeat. |
+| [From a standing-ask Coordinator to directed selection](/docs/case-studies/charter-to-directed-selection/) | A real design mistake caught mid-flight: Charter's first draft modeled a privileged planning role on a misread of the Hugging Face incident's own coordinator, corrected only by actually reading the primary source instead of a confident secondhand summary. |
 | [How zz is built on Cloudflare](/docs/cloudflare-architecture/) | Workers, Durable Objects, and Artifacts as the real execution substrate -- the specific implementation choices each one forced, and the limitations that shaped them. |
 | [Corrupted incremental git fetch](/docs/case-studies/git-incremental-fetch-sideband-error/) | A real `fetch-pack: protocol error: bad band #78` bug in Cloudflare Artifacts' own git-upload-pack, root-caused with a full protocol trace and worked around in `zz repo clone`'s defaults. |
 | [Conflict resolution silently drops tasks](/docs/case-studies/merge-conflict-resolution-silently-drops-tasks/) | A failed `resolve_conflict` gives up and denies with no retry and no visible signal -- a real gap in zz's own protocol logic, not yet fixed. |
