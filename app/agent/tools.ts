@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
 import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight } from "../engine/lane.js";
+import { computeTrust } from "../engine/trust.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
 import { resolveModelBackend } from "../engine/model.js";
@@ -644,6 +645,24 @@ const insightPost: ToolDef = {
   },
 };
 
+const trustGet: ToolDef = {
+  name: "trust_get",
+  description:
+    "Computes an agent's Trust in a Lane -- a continuous, earned signal from its own recorded history (changesets merged vs. denied, reviews granted vs. vetoed, norm-kind Insights authored), not an assigned Role grant. Higher is more trusted; it can be negative; there's no fixed ceiling, and it's relative to other agents in the same Lane, not a normalized score. Read-only -- this doesn't gate anything yet, it's a signal to inform a judgment call, same as any other context you'd check before deciding.",
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      agent: { type: "string", description: "The agent to compute Trust for -- not necessarily the caller." },
+    },
+    required: ["repo", "lane_id", "agent"],
+  },
+  async execute({ repo, lane_id, agent }) {
+    return computeTrust(repo as string, lane_id as string, agent as string);
+  },
+};
+
 // --- real code: committing it, and testing it before committing -------
 
 function validateChangesetFiles(files: unknown): string | null {
@@ -897,7 +916,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, policyShow, policySet, repoInfo];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 
