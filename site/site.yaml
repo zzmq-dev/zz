@@ -53,6 +53,8 @@ nav:
       url: /docs/agentic-autonomy/
     - title: "did:zz"
       url: /docs/did-zz/
+    - title: "Lane, Ask, and Role boundaries"
+      url: /docs/lanes-asks-and-roles/
     - title: "Contributors guide (sketch)"
       url: /docs/contributors-guide/
     - title: "Demos"
