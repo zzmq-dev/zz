@@ -733,7 +733,12 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   // the first one's objects happened to already be reachable from a
   // prior fetch, the second one's weren't.
   if (payload.source_repo && authedCloneUrlFor) {
-    execFileSync("git", ["-C", resolved.repoDir, "fetch", "--quiet", authedCloneUrlFor(payload.source_repo), "main"], { stdio: "inherit" });
+    // Fully suppressed, not inherited -- git's own fetch progress on
+    // stderr corrupts a live TUI's alternate-screen frame (confirmed
+    // live, intermittently, running several real workers); piped rather
+    // than ignored so a real fetch failure's actual git error text still
+    // reaches the thrown error's own .stderr.
+    execFileSync("git", ["-C", resolved.repoDir, "fetch", "--quiet", authedCloneUrlFor(payload.source_repo), "main"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   }
 
   // A real line-level 3-way merge first (git's own merge-file), not

@@ -95,7 +95,11 @@ export function createLocalBackend(): Backend {
     async ensureCloned(repo) {
       const repoDir = repoDirOf(repo);
       if (existsSync(repoDir)) return;
-      execFileSync("git", ["clone", "--quiet", `https://github.com/${repo}.git`, repoDir], { stdio: "inherit" });
+      // Fully suppressed, not inherited -- same reasoning as
+      // cli/lib/repo.ts's own ensureCloned: this can run mid-session
+      // during a live TUI, and git's own clone progress on stderr
+      // corrupts its alternate-screen frame.
+      execFileSync("git", ["clone", "--quiet", `https://github.com/${repo}.git`, repoDir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     },
 
     async listCommits(repo): Promise<CommitRow[]> {

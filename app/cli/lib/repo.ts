@@ -94,7 +94,7 @@ export function resolveRepo(slug: string): ResolvedRepo {
 // this is also the one thing that retroactively protects a clone
 // that was already sitting in ~/.zz/repos/ before this existed.
 function disableFetchNegotiation(repoDir: string): void {
-  execFileSync("git", ["-C", repoDir, "config", "fetch.negotiationAlgorithm", "noop"], { stdio: "inherit" });
+  execFileSync("git", ["-C", repoDir, "config", "fetch.negotiationAlgorithm", "noop"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /** `remoteUrl`, when given, is a real git URL with credentials already embedded (cli/lib/credentials.ts's authedCloneUrl) -- the zz Worker's own git smart-HTTP proxy, cloned exactly like any other git remote. Omit it for the original GitHub-based local/demo path, unchanged. */
@@ -113,7 +113,16 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
     return;
   }
   console.error(`cloning ${repo.slug}...`);
-  execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, repo.repoDir], { stdio: "inherit" });
+  // Fully suppressed, not inherited -- git's own clone progress on stderr
+  // is exactly the kind of raw terminal write that corrupts a live TUI's
+  // alternate-screen frame (confirmed live, intermittently, running
+  // several real workers -- the same reason agent/tools.ts's
+  // run_in_sandbox already suppresses its own git calls this way). Piped
+  // rather than ignored on all three streams so a real clone failure's
+  // actual git error text still ends up on the thrown error's own
+  // .stderr, not lost -- it just never gets a chance to hit the terminal
+  // directly.
+  execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, repo.repoDir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (remoteUrl) disableFetchNegotiation(repo.repoDir);
 }
 
@@ -152,7 +161,11 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
  */
 export function fetchClone(repo: ResolvedRepo): void {
   disableFetchNegotiation(repo.repoDir);
-  execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { stdio: "inherit" });
+  // Fully suppressed, not inherited -- see ensureCloned's own comment on
+  // the clone call above; this one runs on every claimed ask in remote
+  // mode, so it's the single most frequent source of exactly this kind
+  // of TUI corruption, confirmed live.
+  execFileSync("git", ["-C", repo.repoDir, "fetch", "--quiet", "origin", "main"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   // Ref-only, like the fetch above -- moves the LOCAL `main` branch to
   // point at whatever origin/main now does, without touching the working
   // tree, the index, or HEAD's own symbolic-ref target at all (unlike
@@ -168,7 +181,7 @@ export function fetchClone(repo: ResolvedRepo): void {
   // mode before picking a ref. Harmless to run redundantly for a local-
   // mode repo (this function is never called for one -- ensureCloned
   // only calls it when a remoteUrl was given).
-  execFileSync("git", ["-C", repo.repoDir, "update-ref", "refs/heads/main", "refs/remotes/origin/main"], { stdio: "inherit" });
+  execFileSync("git", ["-C", repo.repoDir, "update-ref", "refs/heads/main", "refs/remotes/origin/main"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /**
