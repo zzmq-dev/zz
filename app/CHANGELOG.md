@@ -5,6 +5,7 @@ All notable changes to the `zzmq` package (the `zz` CLI) are recorded here. Form
 ## [Unreleased]
 
 ### Added
+- A real cap on changeset_review's deny-then-repost cycle: `acceptReview` now counts prior "work" asks in the Lane with the exact same task description (walked from Lane history, not a payload-threaded counter, so it's robust regardless of call path) and stops reposting after 3 attempts, leaving the task denied/blocked for a human to look at instead of retrying forever. Found live: with no check anywhere for whether a task is already satisfied and no limit on repost count, plain model non-determinism in review (not a real bug in the proposed code) was enough to cycle indefinitely -- confirmed live, the same function ("clamp", "mean", "median", "roundTo"...) committed four separate times in a row, open-ask count climbing instead of draining rather than converging. This caps the damage; a smarter fix (checking whether the task is already satisfied before reposting at all) is designed separately as "ask grooming" in [the Ladder-RAG doc](https://zzmq.dev/docs/ladder-rag/).
 - `zz login --whoami`: prints the currently logged-in account and the API base it's logged into, without starting a new login. Throws the same "not logged in" error every other credential-requiring command already does if there's nothing to report, rather than printing a soft message and exiting 0 -- a script checking login state via exit code gets the same behavior as any other zz command would.
 
 ### Fixed

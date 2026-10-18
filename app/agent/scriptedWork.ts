@@ -1077,6 +1077,29 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // path that already knows how to handle one (zz work's autonomous
   // loop, --assist) picks it up with no special-casing.
   const payload = theAsk.payload as ChangesetReviewPayload;
+
+  // A real cap, not an assumed-fine-forever loop. Found live: with no
+  // check anywhere for "does this already exist" and no limit on how
+  // many times a rejected task can be reposted, a review that keeps
+  // requesting changes on an already-fine implementation (plain model
+  // non-determinism is enough to trigger this, not a real bug in the
+  // code) cycles forever -- confirmed live, the same function
+  // ("clamp", "mean", "median", "roundTo"...) committed four separate
+  // times in a row, open-ask count climbing instead of draining. Counts
+  // prior "work" asks in this Lane with the exact same description
+  // (lane history, not a payload-threaded counter -- robust to any
+  // call path that reaches this point, not just this one) rather than
+  // trusting a field to have been carried forward correctly every hop.
+  const MAX_REVIEW_RETRIES = 3;
+  const lane = await resolveBackend().readLane(resolved.slug, laneId);
+  const priorAttempts = (lane?.history ?? []).filter(
+    (e): e is AskEntry => e.type === "ASK" && e.kind === "work" && (e.payload as { description?: string } | undefined)?.description === payload.taskDescription,
+  ).length;
+  if (priorAttempts >= MAX_REVIEW_RETRIES) {
+    onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- NOT reposting again, this task has already been attempted ${priorAttempts} times (cap: ${MAX_REVIEW_RETRIES}). Its submit_changeset and this review both stay permanently denied/blocked -- needs a human to look at why this keeps failing, not another automatic retry.`);
+    return;
+  }
+
   // description stays short and clean (the UI's own describeAsk, plus
   // proposeContributorWork's shard-naming/Ladder-search, all read this
   // field expecting a one-line task summary, not a wall of code) --
@@ -1094,7 +1117,7 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
     },
     depends_on: [],
   })) as AskEntry;
-  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked; posted a new work ask (${followup.id}) with the feedback for whoever picks it up next`);
+  onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- its submit_changeset stays permanently blocked; posted a new work ask (${followup.id}, attempt ${priorAttempts + 1}/${MAX_REVIEW_RETRIES}) with the feedback for whoever picks it up next`);
 }
 
 export async function runChangesetReview(opts: ScriptedFlowOptions): Promise<void> {
