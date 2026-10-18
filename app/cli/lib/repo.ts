@@ -4,7 +4,7 @@
 // reason not to use the fastest tool available for this one step; only the
 // Ladder's own reads/writes go through the Workers-compatible engine).
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { readAnchor } from "../../engine/ladderNotes.js";
@@ -93,8 +93,31 @@ export function resolveRepo(slug: string): ResolvedRepo {
 // tradeoff. Set unconditionally, every call, cheap and idempotent --
 // this is also the one thing that retroactively protects a clone
 // that was already sitting in ~/.zz/repos/ before this existed.
+// `git config` takes its own lockfile (`.git/config.lock`) and fails
+// fast rather than waiting if a second caller hits it mid-write --
+// confirmed live, re-verifying #28's isolation fix: two `zz work`
+// processes both starting against the same already-cloned repo at
+// once both landed here and one got "could not lock config file:
+// File exists". A few short, synchronous retries is enough -- this
+// is a single-line config write finishing in milliseconds, not a
+// long-held lock -- without needing a real mutex for something this
+// brief.
 function disableFetchNegotiation(repoDir: string): void {
-  execFileSync("git", ["-C", repoDir, "config", "fetch.negotiationAlgorithm", "noop"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      execFileSync("git", ["-C", repoDir, "config", "fetch.negotiationAlgorithm", "noop"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return;
+    } catch (err) {
+      const message = err instanceof Error ? String((err as { stderr?: string }).stderr ?? err.message) : String(err);
+      if (attempt === 5 || !/could not lock config file/.test(message)) throw err;
+      // A real, portable synchronous sleep -- this function has no
+      // async call path available to it (every caller is itself
+      // synchronous), so `Atomics.wait` on a throwaway shared buffer is
+      // the standard way to block the current thread briefly without
+      // spawning a subprocess just to wait a few milliseconds.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20 * attempt);
+    }
+  }
 }
 
 /** `remoteUrl`, when given, is a real git URL with credentials already embedded (cli/lib/credentials.ts's authedCloneUrl) -- the zz Worker's own git smart-HTTP proxy, cloned exactly like any other git remote. Omit it for the original GitHub-based local/demo path, unchanged. */
@@ -113,6 +136,20 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
     return;
   }
   console.error(`cloning ${repo.slug}...`);
+  // Clone into a uniquely-named temp dir alongside the real target, then
+  // atomically rename into place -- found live, re-verifying this exact
+  // function for #28: several `zz work` processes starting around the
+  // same time against a repo neither has locally yet all see
+  // !existsSync at once, and all ran `git clone` straight into
+  // `repo.repoDir`. Only the first one can actually create that
+  // directory; every other one hard-failed with "could not create work
+  // tree dir: File exists" instead of just using the clone that won.
+  // `mkdtempSync`'s target has to already exist (it only creates the
+  // final unique leaf, not missing parents), and the rename has to land
+  // on the same filesystem as `repo.repoDir` to stay atomic, hence
+  // creating it as a sibling rather than in the OS temp dir.
+  mkdirSync(dirname(repo.repoDir), { recursive: true });
+  const tmpDir = mkdtempSync(join(dirname(repo.repoDir), ".clone-tmp-"));
   // Fully suppressed, not inherited -- git's own clone progress on stderr
   // is exactly the kind of raw terminal write that corrupts a live TUI's
   // alternate-screen frame (confirmed live, intermittently, running
@@ -122,8 +159,30 @@ export function ensureCloned(repo: ResolvedRepo, remoteUrl?: string): void {
   // actual git error text still ends up on the thrown error's own
   // .stderr, not lost -- it just never gets a chance to hit the terminal
   // directly.
-  execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, repo.repoDir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  if (remoteUrl) disableFetchNegotiation(repo.repoDir);
+  try {
+    execFileSync("git", ["clone", "--quiet", remoteUrl ?? `https://github.com/${repo.slug}.git`, tmpDir], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    // Set on the still-exclusive tmpDir, before the rename below, not on
+    // repo.repoDir after -- every concurrent caller (not just whichever
+    // one wins the rename) would otherwise run `git config` against the
+    // same shared path at once and race on git's own config lockfile.
+    // Each caller's own tmpDir has no concurrent writer, so this never
+    // contends, and it travels with whichever clone the rename keeps.
+    if (remoteUrl) disableFetchNegotiation(tmpDir);
+  } catch (err) {
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw err;
+  }
+  try {
+    renameSync(tmpDir, repo.repoDir);
+  } catch (err) {
+    // Only swallow this if it's actually the race: some concurrent
+    // caller's clone landed at repo.repoDir first, which makes our own
+    // (fully valid, just unlucky) clone redundant, not wrong -- discard
+    // it and use theirs. Anything else (a real filesystem error) still
+    // needs to surface.
+    if (!existsSync(repo.repoDir)) throw err;
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 /**
