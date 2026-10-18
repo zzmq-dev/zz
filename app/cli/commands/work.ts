@@ -413,7 +413,30 @@ export async function work(options: WorkOptions): Promise<void> {
     await withIsolatedRepo(resolved, "HEAD", async (working) => {
       statusRef.current = `working ${next.ask.id} (${next.ask.kind}) in ${next.repo}/${next.laneId}`;
       onLog(statusRef.current);
-      await runClaimedAsk(working, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+      try {
+        await runClaimedAsk(working, next.laneId, next.ask, config.agent, next.alreadyClaimed, onLog, maxTurns, backend, statusRef, useRemote, identity, watch);
+      } catch (err) {
+        // The same structural "already resolved" signal agent/loop.ts's
+        // generic tool-calling loop already catches internally (see its
+        // own comment) -- but "work"/"submit_changeset" are driven by
+        // code instead of that loop (agent/scriptedWork.ts's
+        // runWorkAsk/runCoordinatorSubmitChangeset call answer()
+        // directly, in a fixed sequence), so nothing was catching it for
+        // those two ask kinds. With separate real identities now racing
+        // legitimately (one answers/completes something a parallel
+        // actor already resolved a moment earlier), this stopped being
+        // rare -- confirmed live, this exact error killing a whole
+        // --stdio run instead of just skipping on to the next claimable
+        // ask, which is what it was always supposed to mean. Caught
+        // once here, at the one place every ask kind already funnels
+        // through, rather than scattered into every individual scripted
+        // flow that calls answer() directly.
+        if (err instanceof Error && (err as { resolved?: boolean }).resolved === true) {
+          onLog(`[${next.ask.id}] already resolved by someone else -- moving on (${err.message})`);
+          return;
+        }
+        throw err;
+      }
     });
   };
 
