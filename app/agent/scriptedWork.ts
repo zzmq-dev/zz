@@ -67,6 +67,18 @@ async function localCallTool(name: string, args: Record<string, unknown>): Promi
 // logged and moved past.
 const MAX_GENERATE_ATTEMPTS = 3;
 
+// A 429 (or any error whose text says so -- providers vary on whether
+// this shows up as a status code, a message, or both) needs a
+// genuinely different backoff than an ordinary dropped connection.
+// 1-2 seconds does nothing against a per-minute quota; it just burns
+// the same short window again. Picked 10s as a floor specifically for
+// this case -- long enough to plausibly clear a per-minute limit,
+// short enough not to stall a whole run over one rate-limited call.
+function isRateLimited(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b429\b|rate.?limit/i.test(message);
+}
+
 async function generateText(backend: ChatBackend, systemPrompt: string, userPrompt: string, onLog: (line: string) => void, onPartial?: (textSoFar: string) => void): Promise<string> {
   const messages = [
     { role: "system" as const, content: systemPrompt },
@@ -78,7 +90,7 @@ async function generateText(backend: ChatBackend, systemPrompt: string, userProm
       return message.content;
     } catch (err) {
       if (attempt === MAX_GENERATE_ATTEMPTS) throw err;
-      const delayMs = 1000 * 2 ** (attempt - 1); // 1s, then 2s
+      const delayMs = isRateLimited(err) ? 10_000 * attempt : 1000 * 2 ** (attempt - 1); // rate limit: 10s, 20s; otherwise 1s, 2s
       onLog(`[scripted] model call failed (attempt ${attempt}/${MAX_GENERATE_ATTEMPTS}): ${err instanceof Error ? err.message : String(err)} -- retrying in ${delayMs}ms`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }

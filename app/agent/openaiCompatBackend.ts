@@ -101,6 +101,18 @@ export function createOpenAiCompatBackend(opts: { name: string; url: string; mod
       let content = "";
       const toolCallsByIndex = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
       let buffer = "";
+      // Tracked explicitly -- found live, likely the real explanation for
+      // a pattern of submissions that only ever included tests, never the
+      // implementation, across many retries: if the underlying connection
+      // drops mid-stream (a rate limit killing an in-progress response is
+      // exactly this shape, not just rejecting new requests), the `for
+      // await` loop just ends with whatever partial `content` had
+      // accumulated so far -- indistinguishable, before this, from a
+      // genuinely complete response that happened to finish early. A
+      // model generating "first the tests, then the implementation" and
+      // getting cut off after the tests would silently look like a
+      // complete, if wrong, submission every single time.
+      let sawDone = false;
       for await (const rawChunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         buffer += Buffer.from(rawChunk).toString("utf8");
         let newlineAt: number;
@@ -109,7 +121,11 @@ export function createOpenAiCompatBackend(opts: { name: string; url: string; mod
           buffer = buffer.slice(newlineAt + 1);
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            sawDone = true;
+            continue;
+          }
+          if (!data) continue;
           let chunk: { choices?: { delta?: { content?: string; tool_calls?: StreamedToolCallDelta[] } }[] };
           try {
             chunk = JSON.parse(data);
@@ -129,6 +145,9 @@ export function createOpenAiCompatBackend(opts: { name: string; url: string; mod
             toolCallsByIndex.set(tc.index, existing);
           }
         }
+      }
+      if (!sawDone) {
+        throw new Error(`${opts.name} chat stream ended without a [DONE] sentinel -- the connection was likely dropped or rate-limited mid-generation, not a genuinely complete response. ${content.length} chars of partial content discarded rather than silently treated as the real answer.`);
       }
       const toolCalls = [...toolCallsByIndex.entries()].sort(([a], [b]) => a - b).map(([, v]) => v);
       return fromOpenAiResponse({ choices: [{ message: { content, tool_calls: toolCalls.length ? toolCalls : undefined } }] });

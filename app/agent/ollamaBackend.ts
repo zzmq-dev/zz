@@ -40,6 +40,15 @@ export function createOllamaBackend(model: string, baseUrl: string): ChatBackend
       let content = "";
       let toolCalls: ChatMessage["tool_calls"];
       let buffer = "";
+      // Same gap found live in openaiCompatBackend.ts's own stream loop,
+      // confirmed here too: Ollama's NDJSON protocol puts `done: true` on
+      // the final chunk specifically so a caller can tell a real
+      // completion apart from a stream that just stopped (the local
+      // Ollama process restarting mid-generation, a dropped connection to
+      // a remote ZZ_OLLAMA_HOST) -- never checked before this, so a
+      // truncated stream silently returned as if it were the real,
+      // complete answer.
+      let sawDone = false;
       for await (const rawChunk of res.body as unknown as AsyncIterable<Uint8Array>) {
         buffer += Buffer.from(rawChunk).toString("utf8");
         let newlineAt: number;
@@ -47,13 +56,17 @@ export function createOllamaBackend(model: string, baseUrl: string): ChatBackend
           const line = buffer.slice(0, newlineAt).trim();
           buffer = buffer.slice(newlineAt + 1);
           if (!line) continue;
-          const chunk = JSON.parse(line) as { message?: { content?: string; tool_calls?: ChatMessage["tool_calls"] } };
+          const chunk = JSON.parse(line) as { message?: { content?: string; tool_calls?: ChatMessage["tool_calls"] }; done?: boolean };
           if (chunk.message?.content) {
             content += chunk.message.content;
             onPartial?.(content);
           }
           if (chunk.message?.tool_calls) toolCalls = chunk.message.tool_calls;
+          if (chunk.done) sawDone = true;
         }
+      }
+      if (!sawDone) {
+        throw new Error(`ollama chat stream ended without done:true -- the connection was likely dropped mid-generation, not a genuinely complete response. ${content.length} chars of partial content discarded rather than silently treated as the real answer.`);
       }
       return { role: "assistant", content, tool_calls: toolCalls };
     },
