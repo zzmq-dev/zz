@@ -57,9 +57,12 @@ The server rejects any request whose `actor` or `from` field names someone other
 
 ```
 zz login [--api-base <url>]
+zz login --whoami
 ```
 
 Opens a browser to sign in with Cloudflare or Google, waits up to five minutes for the flow to finish, and saves a token to `~/.zz/credentials.json`. If the browser doesn't open, paste the printed URL into one. `--api-base` points at a different server.
+
+`--whoami` prints the currently logged-in account and which API base it's logged into, without starting a new login -- for checking who you're acting as, or which backend a session is actually pointed at, before a command surprises you with the answer. Throws (exits non-zero) if nothing's logged in, same as every other credential-requiring command here.
 
 ### zz logout
 

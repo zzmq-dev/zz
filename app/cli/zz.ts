@@ -20,7 +20,7 @@ import { workAssist } from "./commands/workAssist.js";
 import { top } from "./commands/top.js";
 import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
-import { login } from "./commands/login.js";
+import { login, whoami } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
@@ -323,7 +323,12 @@ program
   .command("login")
   .description("log in to the remote (Cloudflare) backend -- opens a browser, waits for you to finish, saves a token to ~/.zz/credentials.json. Same identity model either way: a human login and an agent's bearer token are both just an Agent's credential.")
   .option("--api-base <url>", "override the Worker URL (default: ~/.zz/credentials.json's, or the built-in default)")
-  .action(async (opts: { apiBase?: string }) => {
+  .option("--whoami", "print the currently logged-in account and exit, without starting a new login")
+  .action(async (opts: { apiBase?: string; whoami?: boolean }) => {
+    if (opts.whoami) {
+      whoami();
+      return;
+    }
     await login({ apiBase: opts.apiBase });
   });
 

@@ -5,7 +5,7 @@
 // embedding a Google/Cloudflare client secret in a distributed CLI
 // (which shouldn't happen -- those secrets belong server-side only).
 import { exec } from "node:child_process";
-import { apiBase, writeCredentials } from "../lib/credentials.js";
+import { apiBase, readCredentials, writeCredentials } from "../lib/credentials.js";
 
 interface LoginStartResponse {
   nonce: string;
@@ -59,4 +59,11 @@ export async function login(opts: { apiBase?: string; timeoutMs?: number; quiet?
     }
   }
   throw new Error("timed out waiting for login to complete -- run `zz login` again");
+}
+
+/** `zz login --whoami`: prints the currently logged-in account, if any, without starting a new login. Also shows the API base it's logged into, not just the username -- `--api-base`/ZZ_API_BASE can point a session at a non-default Worker, and that's exactly the kind of thing worth surfacing explicitly rather than leaving someone to guess why a command is behaving as a different account or backend than they expected. Throws (same message style as credentials.ts's own requireCredentials) rather than printing a soft "not logged in" and returning normally -- the same convention every other credential-requiring command here already follows, so a script checking login state via exit code gets the same behavior as every other zz command would. */
+export function whoami(): void {
+  const creds = readCredentials();
+  if (!creds) throw new Error("not logged in -- run `zz login` first.");
+  console.log(`${creds.username} (${creds.apiBase})`);
 }
