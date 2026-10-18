@@ -391,10 +391,12 @@ Writes one [rung](/docs/nouns/#rung) to a repo's Ladder by hand, for example aft
 ### zz lane log
 
 ```
-zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--full] [--local]
+zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--full] [--local] [--needs-triage]
 ```
 
 Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` limits it to one Lane. In `--format text` (the default), a payload longer than 80 chars is truncated; `--full` shows it in full instead. `--format json` always shows everything regardless.
+
+`--needs-triage` shows only denials flagged `needsTriage: true` -- a `changeset_review` that hit its retry cap (3 attempts, `agent/scriptedWork.ts`'s `acceptReview`) and stopped reposting, rather than an ordinary single-pass rejection. The flagged denial's own payload carries `retryChain`, every prior attempt's rejection reason in order, so triaging doesn't require manually walking the Lane history by hand.
 
 ### zz lane propose
 

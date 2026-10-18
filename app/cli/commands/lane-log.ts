@@ -20,6 +20,8 @@ export interface LaneLogOptions {
   local?: boolean;
   /** Don't truncate a payload's JSON fallback at 80 chars -- the text format is meant for a quick scan, but a kind with no dedicated summarizePayload case (a new AskKind, an unusual payload shape) otherwise cuts off mid-object with no way to see the rest short of --format json. */
   full?: boolean;
+  /** Only ANSWER entries whose payload carries `needsTriage: true` -- acceptReview's own flag (agent/scriptedWork.ts) for a changeset_review denied because it hit the retry cap, not an ordinary single-pass rejection. Without this, finding one meant scrolling the full log or grepping raw JSON by hand. */
+  needsTriage?: boolean;
 }
 
 interface LogRow {
@@ -96,7 +98,10 @@ export async function laneLog(slug: string, options: LaneLogOptions): Promise<vo
   // `zz login` session, same as `zz top`'s own reads.
   let lanes = options.local ? listLanes(resolveRepo(slug).stateDir) : ((await callRemoteTool(slug, "lane_list", {}, true)) as Lane[]);
   if (options.lane) lanes = lanes.filter((l) => l.id === options.lane);
-  const rows = flatten(lanes);
+  let rows = flatten(lanes);
+  if (options.needsTriage) {
+    rows = rows.filter((r) => r.entry.type === "ANSWER" && (r.entry.payload as { needsTriage?: boolean } | undefined)?.needsTriage === true);
+  }
 
   const format = options.format ?? "text";
   const output = format === "json" ? JSON.stringify({ repo: slug, lanes, events: rows }, null, 2) : renderText(lanes, rows, options.full ?? false);

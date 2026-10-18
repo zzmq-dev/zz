@@ -1057,7 +1057,6 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
     return;
   }
 
-  await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: proposal.reason } });
   // The gated submit_changeset is now permanently unclaimable (its
   // depends_on will never resolve) -- a real, visible terminal state
   // in the lane log, not denied outright here: denying it is a
@@ -1092,15 +1091,51 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // (lane history, not a payload-threaded counter -- robust to any
   // call path that reaches this point, not just this one) rather than
   // trusting a field to have been carried forward correctly every hop.
+  //
+  // Computed BEFORE the deny below (not after) specifically so a
+  // capped-out denial can carry its own triage flag directly on the
+  // answer that actually closes it out, rather than the deny going out
+  // first with no trace of why this one's different from an ordinary
+  // single-pass rejection.
   const MAX_REVIEW_RETRIES = 3;
   const lane = await resolveBackend().readLane(resolved.slug, laneId);
-  const priorAttempts = (lane?.history ?? []).filter(
+  const priorAttemptAsks = (lane?.history ?? []).filter(
     (e): e is AskEntry => e.type === "ASK" && e.kind === "work" && (e.payload as { description?: string } | undefined)?.description === payload.taskDescription,
-  ).length;
-  if (priorAttempts >= MAX_REVIEW_RETRIES) {
-    onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- NOT reposting again, this task has already been attempted ${priorAttempts} times (cap: ${MAX_REVIEW_RETRIES}). Its submit_changeset and this review both stay permanently denied/blocked -- needs a human to look at why this keeps failing, not another automatic retry.`);
+  );
+  const priorAttempts = priorAttemptAsks.length;
+  const capped = priorAttempts >= MAX_REVIEW_RETRIES;
+
+  if (capped) {
+    // A real, queryable flag -- not just a log line, which is easy to
+    // scroll past and impossible to filter for. needsTriage/retryChain
+    // live on the deny ANSWER itself (zz lane log --format json, grep
+    // for needsTriage), carrying every prior rejection reason this task
+    // has already collected (walked from the same lane history used
+    // for the count above, each attempt's own priorAttempt.reason) so
+    // whoever triages this doesn't have to manually reconstruct the
+    // chain by hand first. Same underlying need Tripwire's own "forces
+    // a review when a standing condition trips" is designed for
+    // (site/content/docs/protocol/#tripwires) -- Tripwire itself isn't
+    // built yet, so this is the concrete, shippable version of that
+    // idea for this one specific condition, not a reason to wait for it.
+    const retryChain = priorAttemptAsks.map((a, i) => ({
+      attempt: i + 1,
+      askId: a.id,
+      reason: (a.payload as { priorAttempt?: { reason: string } } | undefined)?.priorAttempt?.reason,
+    }));
+    await callTool("ask_answer", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      ask_id: theAsk.id,
+      actor: agent,
+      action: "deny",
+      payload: { reason: proposal.reason, needsTriage: true, attempts: priorAttempts, retryChain },
+    });
+    onLog(`[scripted] requested changes on changeset_review ${theAsk.id}: ${proposal.reason} -- NOT reposting again, this task has already been attempted ${priorAttempts} times (cap: ${MAX_REVIEW_RETRIES}). Flagged needsTriage: true on the denial -- a human needs to look at why this keeps failing, not another automatic retry.`);
     return;
   }
+
+  await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: proposal.reason } });
 
   // description stays short and clean, UNCHANGED from the original task
   // text -- the UI's own describeAsk, proposeContributorWork's

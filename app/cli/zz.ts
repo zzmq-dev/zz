@@ -129,14 +129,15 @@ lane
   .option("--out <path>", "write to a file instead of stdout")
   .option("--local", "read the original local/demo backend instead of the default: the deployed Worker's real protocol state")
   .option("--full", "don't truncate a payload's JSON at 80 chars in text format -- --format json always shows everything regardless")
-  .action(async (repo: string, opts: { format: string; lane?: string; out?: string; local?: boolean; full?: boolean }) => {
+  .option("--needs-triage", "only denials flagged needsTriage: true -- a changeset_review that hit its retry cap and stopped reposting, not an ordinary single-pass rejection")
+  .action(async (repo: string, opts: { format: string; lane?: string; out?: string; local?: boolean; full?: boolean; needsTriage?: boolean }) => {
     const format = opts.format as LaneLogFormat;
     if (format !== "text" && format !== "json") {
       console.error(`unknown format "${opts.format}"; expected text or json`);
       process.exitCode = 1;
       return;
     }
-    await laneLog(repo, { format, lane: opts.lane, out: opts.out, local: opts.local, full: opts.full });
+    await laneLog(repo, { format, lane: opts.lane, out: opts.out, local: opts.local, full: opts.full, needsTriage: opts.needsTriage });
   });
 
 lane
