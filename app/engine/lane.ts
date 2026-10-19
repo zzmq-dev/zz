@@ -426,15 +426,20 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       // indistinguishable from any other generic completion, both
       // falling into the same "active" bucket just below.
       lane.status = "merged";
-    } else if (theAsk.kind === "changeset_review" && input.action === "deny" && (input.payload as { needsTriage?: boolean } | undefined)?.needsTriage) {
-      // The retry cap's own terminal state (agent/scriptedWork.ts's
-      // MAX_REVIEW_RETRIES, Tier 0) -- this work Lane isn't merging
-      // and isn't going to keep being retried automatically, but it
-      // also wasn't vetoed (no design/priority disagreement, just
-      // repeated failure a human needs to look at). "closed", not
-      // "active": the generic bucket just below would otherwise claim
-      // this Lane is still actively progressing when it demonstrably
-      // isn't.
+    } else if (
+      (theAsk.kind === "changeset_review" || theAsk.kind === "resolve_conflict") &&
+      input.action === "deny" &&
+      (input.payload as { needsTriage?: boolean } | undefined)?.needsTriage
+    ) {
+      // The retry cap's own terminal state -- changeset_review's own
+      // MAX_REVIEW_RETRIES (Tier 0), and resolve_conflict's matching
+      // MAX_CONFLICT_RETRIES (#30, same shared mechanism, not a
+      // second one). This work Lane isn't merging and isn't going to
+      // keep being retried automatically, but it also wasn't vetoed
+      // (no design/priority disagreement, just repeated failure a
+      // human needs to look at). "closed", not "active": the generic
+      // bucket just below would otherwise claim this Lane is still
+      // actively progressing when it demonstrably isn't.
       lane.status = "closed";
     } else if (input.action === "vote") {
       // Non-terminal (tallyVotes posts the real, terminal "complete"

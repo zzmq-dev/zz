@@ -27,8 +27,8 @@ import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import { resolveRepo, ensureCloned, ensureNamedWorktree, readCharter, type ResolvedRepo } from "../cli/lib/repo.js";
 import { apiFetch } from "../cli/lib/api.js";
-import type { AskEntry, RepoPolicy } from "../engine/types.js";
-import { resolveBackend } from "../engine/backend.js";
+import type { AskEntry, Lane, RepoPolicy } from "../engine/types.js";
+import type { LadderSearchHit } from "../engine/backend.js";
 import { resolvePolicyMode } from "../engine/policy.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
 import { threeWayMerge } from "./threeWayMerge.js";
@@ -423,14 +423,18 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
   // instead of left to the model to decide. Without this, Ladder
   // content is written every time but never read back into a
   // decision anywhere -- "ecosystem-wide intelligence" that's
-  // generated but never consulted. Goes through resolveBackend(), not
-  // a direct API call -- works in both modes this way: remote mode
-  // resolves to remoteBackend (a real cross-repo D1 search), local
-  // mode to LocalBackend's own real search over whatever's cloned
-  // under demo-repos/, not just remote.
+  // generated but never consulted. Through callTool's own ladder_search
+  // (not resolveBackend().searchLadder directly -- found live while
+  // verifying #30: a direct call here always stayed on the LOCAL
+  // backend regardless of mode, an older comment's claim that remote
+  // mode somehow resolved to a real cross-repo D1 search this way was
+  // simply wrong -- nothing ever wires resolveBackend() to anything
+  // remote outside a Worker/DO's own withBackend() scope). callTool
+  // correctly reaches the server-side D1 search in remote mode, since
+  // the DO's own callTool wraps every tool execution in withBackend().
   let relevantBlock = "";
   try {
-    const hits = await resolveBackend().searchLadder(description, 5);
+    const hits = (await callTool("ladder_search", { query: description, limit: 5 })) as LadderSearchHit[];
     if (hits.length) {
       relevantBlock = `\n\nPotentially relevant existing code elsewhere in the ecosystem -- consider depending on one of these instead of reimplementing it (add it to this repo's dependencies and import/reference it in your FILE output):\n${hits.map((h) => `- ${h.repo} ${h.path} (${h.kind}): ${h.summary}`).join("\n")}`;
     }
@@ -802,7 +806,15 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
     // The original "work" ask's own description (not just the
     // rejected diff) -- lets the resolver treat this as a normal
     // additive task for whatever wasn't already resolved by the merge.
-    const originLane = await resolveBackend().readLane(resolved.slug, laneId);
+    // Through callTool, not resolveBackend() directly -- found live
+    // while verifying #30: resolveBackend() outside a Worker/DO's own
+    // withBackend() scope always resolves to the LOCAL backend
+    // (engine/backend.ts's own doc comment confirms only "local"
+    // exists there), regardless of whether this call is actually
+    // running in remote mode against a real hosted repo. A direct
+    // read here silently saw an empty/nonexistent local Lane every
+    // time, not this repo's real one.
+    const originLane = (await callTool("lane_get", { repo: resolved.slug, lane_id: laneId })) as Lane | null;
     const originAskId = theAsk.depends_on?.[0];
     const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
     const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
@@ -940,15 +952,68 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
     onLog(`[scripted] resolution failed (attempt ${attempt}/${MAX_SANDBOX_ATTEMPTS}): ${lastFailure.slice(0, 300)}`);
   }
 
-  await callTool("ask_answer", {
+  // #30's own two gaps, fixed the same shared way acceptReview's own
+  // MAX_REVIEW_RETRIES cap already handles a repeatedly-failing
+  // changeset_review (see that function's comment for the full
+  // reasoning) -- found live as a silent task drop: resolve_conflict
+  // exhausting MAX_SANDBOX_ATTEMPTS just denied and stopped, with
+  // nothing reposting the original task and nothing a human would
+  // ever see distinguishing "permanently failed" from "never posted".
+  // Counts prior "work" asks in this Lane with the exact same
+  // description -- the same lane-history counting mechanism, not a
+  // second one -- so a task that keeps colliding across several
+  // separate conflict-resolution attempts is capped by the same
+  // budget a review-retry loop is, not an independent, uncapped one.
+  // Through callTool, not resolveBackend() directly -- see the
+  // comment above the line-level-merge-conflict path's own origin-
+  // description lookup earlier in this file for why a direct read
+  // here is wrong in remote mode specifically (confirmed live: with
+  // the direct read, this count stayed 0 on every single call against
+  // a real hosted repo, so the cap below never actually fired).
+  const MAX_CONFLICT_RETRIES = 3;
+  const laneForCount = (await callTool("lane_get", { repo: resolved.slug, lane_id: laneId })) as Lane | null;
+  const priorAttemptAsks = (laneForCount?.history ?? []).filter(
+    (e): e is AskEntry => e.type === "ASK" && e.kind === "work" && (e.payload as { description?: string } | undefined)?.description === payload.originalDescription,
+  );
+  const priorAttempts = priorAttemptAsks.length;
+  const denyReason = `conflict resolution failed verification after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}`;
+
+  if (priorAttempts >= MAX_CONFLICT_RETRIES) {
+    await callTool("ask_answer", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      ask_id: theAsk.id,
+      actor: agent,
+      action: "deny",
+      payload: { reason: denyReason, needsTriage: true, attempts: priorAttempts },
+    });
+    await callTool("insight_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "trap",
+      text: `Task "${payload.originalDescription}" hit a conflict that failed resolution ${priorAttempts} times, capped without resolving -- most recent failure: ${lastFailure.slice(0, 300)}. Check whether the conflicting changes are actually compatible before attempting this again.`,
+      actor: agent,
+    }).catch((err) => onLog(`[scripted] insight_post failed (non-fatal, the denial above already landed): ${err instanceof Error ? err.message : String(err)}`));
+    onLog(`[scripted] gave up resolving conflict after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}, NOT reposting again (already attempted ${priorAttempts} times, cap: ${MAX_CONFLICT_RETRIES}). Flagged needsTriage: true -- a human needs to look at why this keeps failing.`);
+    return;
+  }
+
+  await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: denyReason } });
+  // Re-posts the original task as a fresh "work" ask, same reasoning
+  // acceptReview's own deny-and-repost already uses: a denial alone is
+  // a dead end nothing claimable ever reflects, so this is what
+  // actually gets it back in front of someone (the same agent or a
+  // different one) to attempt again, with the conflict's own failure
+  // folded in as context rather than looking like a blind retry.
+  const followup = (await callTool("ask_post", {
     repo: resolved.slug,
     lane_id: laneId,
-    ask_id: theAsk.id,
-    actor: agent,
-    action: "deny",
-    payload: { reason: `conflict resolution failed verification after ${MAX_SANDBOX_ATTEMPTS} attempts: ${lastFailure.slice(0, 500)}` },
-  });
-  onLog(`[scripted] gave up resolving conflict after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}`);
+    kind: "work",
+    from: agent,
+    payload: { description: payload.originalDescription, revises: theAsk.id, attempt: priorAttempts + 1, priorAttempt: { reason: denyReason, files: payload.cleanFiles } },
+    depends_on: [],
+  })) as AskEntry;
+  onLog(`[scripted] gave up resolving conflict after ${MAX_SANDBOX_ATTEMPTS} failed attempts -- denied ${theAsk.id}, posted a new work ask (${followup.id}, attempt ${priorAttempts + 1}/${MAX_CONFLICT_RETRIES}, revises ${theAsk.id})`);
 }
 
 interface ChangesetReviewPayload {
@@ -1164,8 +1229,16 @@ export async function acceptReview(opts: ScriptedFlowOptions, proposal: ReviewPr
   // answer that actually closes it out, rather than the deny going out
   // first with no trace of why this one's different from an ordinary
   // single-pass rejection.
+  // Through callTool, not resolveBackend() directly -- found live
+  // while verifying #30's own matching cap (resolve_conflict's, same
+  // mechanism): resolveBackend() outside a Worker/DO's own
+  // withBackend() scope always resolves to the LOCAL backend, never
+  // whatever repo this call is actually targeting, so a direct read
+  // here silently saw an empty Lane on every call against a real
+  // hosted repo -- this cap never actually fired in real remote-mode
+  // `zz work` usage before this fix, only in local/demo mode.
   const MAX_REVIEW_RETRIES = 3;
-  const lane = await resolveBackend().readLane(resolved.slug, laneId);
+  const lane = (await callTool("lane_get", { repo: resolved.slug, lane_id: laneId })) as Lane | null;
   const priorAttemptAsks = (lane?.history ?? []).filter(
     (e): e is AskEntry => e.type === "ASK" && e.kind === "work" && (e.payload as { description?: string } | undefined)?.description === payload.taskDescription,
   );
