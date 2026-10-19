@@ -336,6 +336,24 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       // LaneStatus already had "vetoed" in its union, unused, before
       // this -- the first thing to actually set it.
       lane.status = "vetoed";
+    } else if (theAsk.kind === "submit_changeset" && input.action === "complete") {
+      // The real "this work Lane's own change actually landed" signal
+      // -- #38, found dead the same as "closed" below: a work Lane
+      // (one Ask, a real beginning and end, as distinct from the
+      // origin Lane, which never completes) merging was previously
+      // indistinguishable from any other generic completion, both
+      // falling into the same "active" bucket just below.
+      lane.status = "merged";
+    } else if (theAsk.kind === "changeset_review" && input.action === "deny" && (input.payload as { needsTriage?: boolean } | undefined)?.needsTriage) {
+      // The retry cap's own terminal state (agent/scriptedWork.ts's
+      // MAX_REVIEW_RETRIES, Tier 0) -- this work Lane isn't merging
+      // and isn't going to keep being retried automatically, but it
+      // also wasn't vetoed (no design/priority disagreement, just
+      // repeated failure a human needs to look at). "closed", not
+      // "active": the generic bucket just below would otherwise claim
+      // this Lane is still actively progressing when it demonstrably
+      // isn't.
+      lane.status = "closed";
     } else if (input.action === "vote") {
       // Non-terminal (tallyVotes posts the real, terminal "complete"
       // once every expected Committee member has voted) -- a single
