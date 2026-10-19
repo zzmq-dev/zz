@@ -430,7 +430,7 @@ const repoPolicyCmd = repoCmd.command("policy").description("read or change a re
 
 repoPolicyCmd
   .command("show <owner/repo>")
-  .description("print the repo's current Policy document (\"policy_change\"'s own rule, plus every path-scoped rule under \"policies\")")
+  .description("print the repo's current Policy document (\"policy_change\"'s own rule, every path-scoped rule under \"policies\", and \"claim_mode\")")
   .action(async (slug: string) => {
     await repoPolicyShow(slug);
   });
@@ -444,8 +444,10 @@ repoPolicyCmd
   .option("--path <glob>", "with --mode: upserts one \"policies\" entry for this path glob")
   .option("--mode <mode>", "the mode for --path -- direct, self_review, other_approver, vote_quorum, or vote_expiring")
   .option("--expiry-hours <n>", "vote_expiring only -- how long the vote stays open before lazy consensus can close it (default: 72)")
+  .option("--claim-mode-manual <mode>", 'with --claim-mode-autonomous: sets "claim_mode" -- which claim path `zz ask claim` takes -- "in_place" or "shard"')
+  .option("--claim-mode-autonomous <mode>", 'with --claim-mode-manual: sets "claim_mode" -- which claim path the autonomous work loop takes -- "in_place" or "shard"')
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
-  .action(async (slug: string, opts: { repoRule?: string; path?: string; mode?: string; expiryHours?: string; as?: string }) => {
+  .action(async (slug: string, opts: { repoRule?: string; path?: string; mode?: string; expiryHours?: string; claimModeManual?: string; claimModeAutonomous?: string; as?: string }) => {
     await repoPolicySet(slug, opts);
   });
 

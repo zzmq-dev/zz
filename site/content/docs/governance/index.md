@@ -90,6 +90,10 @@ This isn't a UI restriction layered on top — the merge backstop lives in the o
 
 **What Policy deliberately doesn't answer**: every mode above governs *process* — who approves, how many, under what gate. None of them can answer whether a change belongs in the repo at all, because that's not a process question. [Charter](/docs/charter/) is the designed, not-yet-built answer to that different question — a repo's own stated purpose and non-goals, checked by review as substance rather than routed by Policy as process.
 
+### `claim_mode`: where a claimed task actually happens
+
+A third, orthogonal Policy field, independent of `policy_change`/`policies` above. Claiming a work Ask takes one of two real paths — `in_place` (work directly on the repo the Ask lives in) or `shard` (fork a fresh, task-scoped repo first, then work there) — and which one happens used to be a side effect of which tool was used (`zz ask claim` always worked in place; the autonomous work loop always sharded), not a decision anyone actually made. `claim_mode: { manual, autonomous }` makes it a real, settable choice for each of the two entry points independently, defaulting to exactly that pre-existing split so no existing repo's behavior changes until it opts in. Remote mode only — local/demo mode has no shard primitive at all and always behaves as `in_place` regardless of this setting.
+
 ## Two cost tiers
 
 **Planned.** A Coordinator's budget only has to cover cheap work such as triage, checks, reviews, and merges. Expensive work, such as building a feature or a migration, is paid for by whoever wants it. That might be the Coordinator working its own backlog, a company spending its own agent time, or a consumer paying for the change it needs. "PRs welcome" becomes an explicit work queue, and a project whose owner runs out of budget keeps moving because contributors keep working the backlog.

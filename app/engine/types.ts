@@ -38,6 +38,16 @@ export interface PathPolicyRule extends PolicyRule {
   path: string;
 }
 
+// Which of the two real claim paths (confirmed in code, see
+// https://github.com/zzmq-dev/zz/issues/37) a claimed work Ask
+// actually takes: in_place works directly on the repo the Ask lives
+// in (cli/commands/ask-claim.ts's only path); shard forks a new,
+// task-scoped repo first (worker/src/webApp.ts's ensureShard), then
+// works there (agent/scriptedWork.ts's remote autonomous path).
+// Remote mode only -- local/demo mode has no shard primitive at all
+// and always behaves as in_place regardless of this setting.
+export type ClaimMode = "in_place" | "shard";
+
 // The canonical shape -- worker/src/repoMeta.ts's own RepoPolicy
 // imports this instead of redeclaring it, so the governance layer
 // (engine/lane.ts's tallyVotes, which writes a passed policy vote's
@@ -49,6 +59,8 @@ export interface RepoPolicy {
   policy_change: PolicyRule;
   /** Path-scoped rules for everything else; most-specific glob wins per touched path, strictest resulting mode wins across a whole changeset. */
   policies: PathPolicyRule[];
+  /** Which claim path each of the two real entry points takes -- a deliberate, stated Policy choice instead of an implementation accident of which CLI command was used (#37). Defaults to exactly today's pre-existing behavior (manual by-hand claims work in_place; the autonomous work loop shards), so this is purely additive for every already-existing repo. */
+  claim_mode: { manual: ClaimMode; autonomous: ClaimMode };
 }
 
 export type LaneStatus =

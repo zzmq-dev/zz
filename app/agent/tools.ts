@@ -888,7 +888,7 @@ const policyShow: ToolDef = {
 const policySet: ToolDef = {
   name: "policy_set",
   description:
-    'Writes a direct change to Policy: either `repo_rule` (replaces `policy_change`) or `path_rule` (upserts one entry of `policies`, matched by its exact `path`). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
+    'Writes a direct change to Policy: `repo_rule` (replaces `policy_change`), `path_rule` (upserts one entry of `policies`, matched by its exact `path`), or `claim_mode` (replaces it wholesale -- {manual, autonomous}, see #37). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
   parameters: {
     type: "object",
     properties: {
@@ -896,10 +896,11 @@ const policySet: ToolDef = {
       actor: { type: "string" },
       repo_rule: { type: "object", properties: { mode: { type: "string" }, expiry_hours: { type: "number" } }, required: ["mode"] },
       path_rule: { type: "object", properties: { path: { type: "string" }, mode: { type: "string" }, expiry_hours: { type: "number" } }, required: ["path", "mode"] },
+      claim_mode: { type: "object", properties: { manual: { type: "string" }, autonomous: { type: "string" } }, required: ["manual", "autonomous"] },
     },
     required: ["repo", "actor"],
   },
-  async execute({ repo, repo_rule, path_rule }) {
+  async execute({ repo, repo_rule, path_rule, claim_mode }) {
     const backend = resolveBackend();
     const current = await backend.readPolicy(repo as string);
     if (repo_rule) {
@@ -908,8 +909,10 @@ const policySet: ToolDef = {
       const rule = path_rule as RepoPolicy["policies"][number];
       const policies = [...current.policies.filter((r) => r.path !== rule.path), rule];
       await backend.writePolicy(repo as string, { ...current, policies });
+    } else if (claim_mode) {
+      await backend.writePolicy(repo as string, { ...current, claim_mode: claim_mode as RepoPolicy["claim_mode"] });
     } else {
-      throw new Error('policy_set needs either "repo_rule" or "path_rule"');
+      throw new Error('policy_set needs one of "repo_rule", "path_rule", or "claim_mode"');
     }
     return backend.readPolicy(repo as string);
   },

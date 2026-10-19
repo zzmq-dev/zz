@@ -371,37 +371,45 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
     ? `\n\nA reviewer requested changes on a previous submission for this task: ${payload.priorAttempt.reason}\n\nThe previous (rejected) draft, for reference -- revise it to address the feedback rather than starting over from scratch:\n${payload.priorAttempt.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n")}`
     : "";
 
-  // Remote contributor work always happens in a task shard: a real
-  // forked repo scoped to this one task, owned by this agent (see
+  // Remote contributor work shards by default -- a real forked repo
+  // scoped to this one task, owned by this agent (see
   // worker/src/webApp.ts's ensureShard) -- never directly on
   // parentResolved, which this agent doesn't own. `parentResolved`
   // here may itself already be a shard (a sub-agent picking up a
   // delegated piece of an already-sharded task), which is exactly what
   // makes sharding a shard work with no special-casing: ensureShard
   // only ever looks at whatever repo the ask's own Lane lives in.
+  // Whether this actually happens is Policy's own claim_mode.autonomous
+  // call (#37), not a hardcoded assumption -- defaults to "shard", so
+  // nothing changes for a repo that's never touched this setting.
   // Local/demo mode (authedCloneUrlFor omitted -- no Worker, no
   // Artifacts, no D1 to shard against) keeps working directly on
-  // parentResolved, unchanged from before this feature existed.
+  // parentResolved regardless of Policy, unchanged from before this
+  // feature existed -- there's no shard primitive to honor "shard"
+  // with outside remote mode at all.
   let resolved = parentResolved;
   let laneId = parentLaneId;
   let shardSource: { repo: string; lane: string; commitOid: string } | undefined;
   if (authedCloneUrlFor) {
-    const shardRow = await apiFetch<{ slug: string }>("POST", `/api/repos/${parentResolved.slug}/shard`, { task: description });
-    resolved = resolveRepo(shardRow.slug);
-    ensureCloned(resolved, authedCloneUrlFor(shardRow.slug));
-    onShardReady?.(resolved);
-    onLog(`[scripted] working in shard ${shardRow.slug}`);
+    const policy = (await callTool("policy_show", { repo: parentResolved.slug })) as RepoPolicy;
+    if (policy.claim_mode.autonomous === "shard") {
+      const shardRow = await apiFetch<{ slug: string }>("POST", `/api/repos/${parentResolved.slug}/shard`, { task: description });
+      resolved = resolveRepo(shardRow.slug);
+      ensureCloned(resolved, authedCloneUrlFor(shardRow.slug));
+      onShardReady?.(resolved);
+      onLog(`[scripted] working in shard ${shardRow.slug}`);
 
-    const shardLane = (await callTool("lane_propose", {
-      repo: shardRow.slug,
-      name: description.slice(0, 60),
-      objective: description,
-      scope: ["**"],
-      actor: agent,
-      origin_lane: parentLaneId,
-      origin_repo: parentResolved.slug,
-    })) as { id: string };
-    laneId = shardLane.id;
+      const shardLane = (await callTool("lane_propose", {
+        repo: shardRow.slug,
+        name: description.slice(0, 60),
+        objective: description,
+        scope: ["**"],
+        actor: agent,
+        origin_lane: parentLaneId,
+        origin_repo: parentResolved.slug,
+      })) as { id: string };
+      laneId = shardLane.id;
+    }
   }
 
   // Searched once, not re-run per sandbox attempt -- the task

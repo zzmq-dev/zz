@@ -13,12 +13,17 @@
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import type { PolicyMode, RepoPolicy } from "../../engine/types.js";
+import type { ClaimMode, PolicyMode, RepoPolicy } from "../../engine/types.js";
 
 const VALID_MODES = ["direct", "self_review", "other_approver", "vote_quorum", "vote_expiring"];
+const VALID_CLAIM_MODES = ["in_place", "shard"];
 
 function validateMode(mode: string): asserts mode is PolicyMode {
   if (!VALID_MODES.includes(mode)) throw new Error(`--mode must be one of ${VALID_MODES.join(", ")} -- got "${mode}".`);
+}
+
+function validateClaimMode(mode: string): asserts mode is ClaimMode {
+  if (!VALID_CLAIM_MODES.includes(mode)) throw new Error(`claim mode must be one of ${VALID_CLAIM_MODES.join(", ")} -- got "${mode}".`);
 }
 
 export async function repoPolicyShow(slug: string): Promise<void> {
@@ -31,12 +36,20 @@ export interface RepoPolicySetOptions {
   path?: string;
   mode?: string;
   expiryHours?: string;
+  claimModeManual?: string;
+  claimModeAutonomous?: string;
   as?: string;
 }
 
 export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): Promise<void> {
-  if (!opts.repoRule && !(opts.path && opts.mode)) {
-    throw new Error('Either --repo-rule <mode> (sets "policy_change"), or --path <glob> --mode <mode> (upserts one "policies" entry), is required.');
+  const settingClaimMode = opts.claimModeManual || opts.claimModeAutonomous;
+  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode) {
+    throw new Error(
+      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), or --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), is required.',
+    );
+  }
+  if (settingClaimMode && !(opts.claimModeManual && opts.claimModeAutonomous)) {
+    throw new Error("--claim-mode-manual and --claim-mode-autonomous must be set together -- claim_mode is replaced wholesale, not merged.");
   }
   const expiryHours = opts.expiryHours ? Number(opts.expiryHours) : undefined;
 
@@ -57,6 +70,15 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
       validateMode(opts.repoRule);
       const policy = (await callRemoteTool(slug, "policy_set", { actor: identity.username, repo_rule: { mode: opts.repoRule, expiry_hours: expiryHours } })) as RepoPolicy;
       console.log(`Set ${slug}'s "policy_change" rule to "${opts.repoRule}".`);
+      console.log(JSON.stringify(policy, null, 2));
+    } else if (settingClaimMode) {
+      validateClaimMode(opts.claimModeManual!);
+      validateClaimMode(opts.claimModeAutonomous!);
+      const policy = (await callRemoteTool(slug, "policy_set", {
+        actor: identity.username,
+        claim_mode: { manual: opts.claimModeManual, autonomous: opts.claimModeAutonomous },
+      })) as RepoPolicy;
+      console.log(`Set ${slug}'s "claim_mode" to {manual: "${opts.claimModeManual}", autonomous: "${opts.claimModeAutonomous}"}.`);
       console.log(JSON.stringify(policy, null, 2));
     } else {
       validateMode(opts.mode!);

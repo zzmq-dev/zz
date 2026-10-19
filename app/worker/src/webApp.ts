@@ -540,7 +540,8 @@ function policyModeCode(rule: { mode: string; expiry_hours?: number }): string {
 function policyPanelHtml(policy: RepoPolicy): string {
   const repoRow = `<li class="row"><span class="rung">policy_change</span> ${policyModeCode(policy.policy_change)}</li>`;
   const pathRows = policy.policies.map((r) => `<li class="row"><span class="rung">${esc(r.path)}</span> ${policyModeCode(r)}</li>`).join("");
-  return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}</ul></details>`;
+  const claimRow = `<li class="row"><span class="rung">claim_mode</span> <span class="scope">manual: ${esc(policy.claim_mode.manual)}</span> <span class="scope">autonomous: ${esc(policy.claim_mode.autonomous)}</span></li>`;
+  return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}${claimRow}</ul></details>`;
 }
 
 /** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */

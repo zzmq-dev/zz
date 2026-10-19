@@ -17,6 +17,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   visibility: "public",
   policy_change: { mode: "vote_quorum" },
   policies: [{ path: "**", mode: "self_review" }],
+  claim_mode: { manual: "in_place", autonomous: "shard" },
 };
 
 // Loosest to strictest -- resolveMode across several touched paths
@@ -36,24 +37,28 @@ export function stricterMode(a: PolicyMode, b: PolicyMode): PolicyMode {
 
 /**
  * Normalizes a raw, persisted Policy document into the current shape.
- * Handles two generations of drift, both read-time-only (nothing is
+ * Handles three generations of drift, all read-time-only (nothing is
  * rewritten in storage until the next real write):
  *  - Pre-path-scoped-modes documents (just `{visibility,
- *    require_changeset_review}`) read back with `policy_change` and
- *    `policies` both missing -- treated exactly like a new repo's
- *    default rather than crashing resolvePolicyMode on an undefined
- *    `.policies`.
+ *    require_changeset_review}`) read back with `policy_change`,
+ *    `policies`, and `claim_mode` all missing -- treated exactly like
+ *    a new repo's default rather than crashing resolvePolicyMode on
+ *    an undefined `.policies`.
  *  - Documents written between this feature's introduction and #35's
  *    rename, which used the now-retired key `_repo` for what's now
  *    `policy_change` (collided with the Lane id and Ladder rung path
  *    of the same literal string -- see engine/types.ts's RepoPolicy).
  *    A legacy `_repo` is honored if present and `policy_change` isn't.
+ *  - Documents written before `claim_mode` existed (#37) -- read back
+ *    missing that key entirely, defaulting to exactly the pre-#37
+ *    behavior (manual in_place, autonomous shard).
  */
 export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"]; _repo?: PolicyRule }): RepoPolicy {
   return {
     visibility: raw.visibility,
     policy_change: raw.policy_change ?? raw._repo ?? DEFAULT_REPO_POLICY.policy_change,
     policies: raw.policies ?? DEFAULT_REPO_POLICY.policies,
+    claim_mode: raw.claim_mode ?? DEFAULT_REPO_POLICY.claim_mode,
   };
 }
 
