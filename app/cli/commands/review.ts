@@ -23,6 +23,7 @@ import { authedCloneUrl } from "../lib/credentials.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import { resolveCliBackendMode } from "../lib/backendMode.js";
 import { registerRunningProcess, unregisterRunningProcess } from "../lib/processRegistry.js";
+import { computeProposedOverride, type ResolveConflictPayload } from "../../agent/scriptedWork.js";
 
 export interface ReviewOptions {
   agent?: string;
@@ -49,8 +50,35 @@ function sleep(ms: number): Promise<void> {
 }
 
 function printReview(resolved: ResolvedRepo, laneId: string, theAsk: AskEntry): void {
-  const payload = theAsk.payload as ChangesetReviewPayload;
   console.log(`\n${"=".repeat(72)}`);
+  if (theAsk.kind === "resolve_conflict") {
+    // #7 escalate_human: the window already closed by the time this
+    // is claimable (filtered below) -- the human picks between the
+    // existing merged content and the one concrete candidate
+    // computeProposedOverride settles on, same shape a Committee
+    // Vote decides between for the "vote" mode.
+    const payload = theAsk.payload as ResolveConflictPayload;
+    const override = computeProposedOverride(payload);
+    console.log(`resolve_conflict ${theAsk.id} -- ${resolved.slug}/${laneId} (conflict_policy: escalate_human)`);
+    console.log(`${"=".repeat(72)}`);
+    console.log(`Task:    ${payload.originalDescription}`);
+    console.log(`Proposed override: ${override.from}'s submission`);
+    for (const f of override.files) {
+      console.log(`\n--- ${f.path} (proposed override) ---`);
+      console.log(f.content);
+    }
+    console.log(`\n--- what's conflicting against ---`);
+    for (const c of payload.conflicts) {
+      console.log(`\n--- ${c.path} ---`);
+      console.log(c.markedContent);
+    }
+    if (payload.attachedSubmissions && payload.attachedSubmissions.length > 0) {
+      console.log(`\n(${payload.attachedSubmissions.length} further submission(s) also collided on this while the window was open -- the proposed override above is the latest of them.)`);
+    }
+    console.log(`${"=".repeat(72)}`);
+    return;
+  }
+  const payload = theAsk.payload as ChangesetReviewPayload;
   console.log(`changeset_review ${theAsk.id} -- ${resolved.slug}/${laneId}`);
   console.log(`${"=".repeat(72)}`);
   console.log(`Task:    ${payload.taskDescription}`);
@@ -127,6 +155,23 @@ export async function review(options: ReviewOptions): Promise<void> {
     }
 
     if (choice === "a") {
+      if (next.ask.kind === "resolve_conflict") {
+        // #7 escalate_human: "approve" here means actually landing the
+        // proposed override -- a real commit+Ladder, not a plain
+        // grant with nothing downstream waiting on it the way
+        // changeset_review's grant has a dependent submit_changeset.
+        const payload = next.ask.payload as ResolveConflictPayload;
+        const override = computeProposedOverride(payload);
+        const resolutionNote = `conflict resolved by a human (escalate_human): accepted ${override.from}'s submission over the existing merged content (${payload.originalDescription})`;
+        if (useRemote) {
+          await callRemoteTool(resolved.slug, "conflict_resolve", { lane_id: next.laneId, resolve_conflict_ask_id: next.ask.id, files: override.files, actor: config.agent, resolution_note: resolutionNote });
+        } else {
+          const { applyConflictResolution } = await import("../../engine/lane.js");
+          await applyConflictResolution(resolved.slug, next.laneId, next.ask.id, override.files, config.agent, resolutionNote);
+        }
+        console.log(`resolved ${next.ask.id} -- accepted ${override.from}'s submission`);
+        return "approved";
+      }
       if (useRemote) await callRemoteTool(resolved.slug, "ask_answer", { lane_id: next.laneId, ask_id: next.ask.id, actor: config.agent, action: "grant", payload: { reason: "approved by human review" } });
       else await answer(resolved.slug, next.laneId, next.ask, { from: config.agent, action: "grant", payload: { reason: "approved by human review" } });
       console.log(`approved ${next.ask.id}`);
@@ -145,7 +190,17 @@ export async function review(options: ReviewOptions): Promise<void> {
         resolvedRepos.map((r) => ({ repo: r.slug })),
         config.agent,
       )
-    ).filter((c) => c.ask.kind === "changeset_review");
+    ).filter(
+      (c) =>
+        c.ask.kind === "changeset_review" ||
+        // #7 escalate_human: only once its own window (#5) has
+        // closed -- surfacing it to a human earlier would invite
+        // resolving it before a further colliding submission had its
+        // chance to attach, defeating the window's whole purpose.
+        (c.ask.kind === "resolve_conflict" &&
+          (c.ask.payload as ResolveConflictPayload).conflictMode === "escalate_human" &&
+          (!c.ask.deadline || new Date(c.ask.deadline).getTime() <= Date.now())),
+    );
 
   // --ask <id>: do that one review and exit, instead of the wait loop
   // below -- the one-off command-line step this option exists for
@@ -175,7 +230,7 @@ export async function review(options: ReviewOptions): Promise<void> {
   };
 
   const mainLoop = async (): Promise<void> => {
-    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${resolvedRepos.map((r) => r.slug).join(", ")} -- watching for changeset_review asks you can approve`);
+    console.log(`zz review: agent="${config.agent}" mode=${useRemote ? "remote" : "local"} repos=${resolvedRepos.map((r) => r.slug).join(", ")} -- watching for changeset_review asks and escalate_human conflicts you can approve`);
     for (;;) {
       const claimable = await claimableChangesetReviews();
       if (claimable.length === 0) {

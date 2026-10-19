@@ -624,11 +624,37 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
 
   await answer(repo, laneId, theAsk, { from: closedBy, action: "complete", payload: { approved, ballots, ...(lazyConsensus ? { lazyConsensus: true } : {}) } });
 
+  const decision = (theAsk.payload ?? {}) as {
+    decisionKind?: string;
+    proposal?: Partial<import("./types.js").RepoPolicy>;
+    resolveConflictAskId?: string;
+    overrideFiles?: { path: string; content: string }[];
+    resolutionNote?: string;
+  };
+
   if (approved) {
-    const decision = (theAsk.payload ?? {}) as { decisionKind?: string; proposal?: Partial<import("./types.js").RepoPolicy> };
     if (decision.decisionKind === "policy" && decision.proposal) {
       const current = await backend.readPolicy(repo);
       await backend.writePolicy(repo, { ...current, ...decision.proposal });
+    } else if (decision.decisionKind === "conflict" && decision.resolveConflictAskId && decision.overrideFiles) {
+      // #7: the Committee voted to accept the proposed override --
+      // land it for real through the same path a human's escalate_human
+      // grant uses (applyConflictResolution), not a second copy of the
+      // commit+Ladder+complete sequence.
+      await applyConflictResolution(repo, laneId, decision.resolveConflictAskId, decision.overrideFiles, closedBy, decision.resolutionNote ?? "conflict resolved by vote");
+    }
+  } else if (decision.decisionKind === "conflict" && decision.resolveConflictAskId) {
+    // Rejected, or missed quorum by the deadline with no lazy
+    // consensus (a conflict vote_request is never lazyEligible --
+    // #7's own design: a stalled vote shouldn't silently default to
+    // "accept the override"). Final, no retry -- same "unilateral,
+    // no additional process" semantics coordinator_decides's own
+    // keep_existing already uses; whoever wants this redone posts a
+    // fresh ask themselves.
+    const originalLane = await backend.readLane(repo, laneId);
+    const resolveConflictAsk = originalLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === decision.resolveConflictAskId);
+    if (resolveConflictAsk && !originalLane!.history.some((e) => e.type === "ANSWER" && e.ask === resolveConflictAsk.id)) {
+      await answer(repo, laneId, resolveConflictAsk, { from: closedBy, action: "deny", payload: { reason: "conflict_policy vote: rejected or missed quorum -- kept the existing merged content, final, no retry" } });
     }
   }
 
@@ -696,6 +722,53 @@ export async function attachConflictSubmission(
     const payload = theAsk.payload as { attachedSubmissions?: unknown[] };
     payload.attachedSubmissions = [...(payload.attachedSubmissions ?? []), { ...submission, at: nowIso() }];
   });
+}
+
+/**
+ * #7: applies a windowed conflict's resolution -- a Committee Vote's
+ * own approval (tallyVotes's "conflict" decisionKind below) or a
+ * human's escalate_human grant (cli/commands/review.ts) both land
+ * here, same real commit+Ladder+complete shape
+ * runCoordinatorSubmitChangeset's own clean-merge path already
+ * produces for an ordinary changeset -- just with a plain,
+ * deterministic summary instead of a model-generated one, since
+ * engine/ has no model access to call for one. Throws if the Ask
+ * isn't a still-open resolve_conflict -- the caller already found it
+ * by id, so this is a staleness guard, not the primary check.
+ */
+export async function applyConflictResolution(
+  repo: string,
+  laneId: string,
+  resolveConflictAskId: string,
+  files: { path: string; content: string }[],
+  closedBy: string,
+  resolutionNote: string,
+): Promise<{ commitOid: string }> {
+  const backend = resolveBackend();
+  const lane = await backend.readLane(repo, laneId);
+  if (!lane) throw new Error(`no such lane "${laneId}" in ${repo}`);
+  const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === resolveConflictAskId);
+  if (!theAsk || theAsk.kind !== "resolve_conflict") throw new Error(`"${resolveConflictAskId}" is not a "resolve_conflict" ask in ${repo}/${laneId}`);
+  if (lane.history.some((e) => e.type === "ANSWER" && e.ask === resolveConflictAskId)) {
+    throw new Error(`"${resolveConflictAskId}" is already answered -- nothing left to apply.`);
+  }
+
+  const commitOid = await backend.commitChangeset(repo, { files, message: resolutionNote, author: { name: closedBy, email: `${closedBy}@local` } });
+  const now = nowIso();
+  const source = [{ kind: "commit" as const, ref: commitOid, title: resolutionNote, author: closedBy, at: now }];
+  const rungs: Rung[] = [
+    ...files.map((f) => ({ path: f.path, kind: "file" as RungKind, summary: resolutionNote, sources: source, children: [] })),
+    {
+      path: `changesets/${commitOid}`,
+      kind: "changeset" as RungKind,
+      summary: resolutionNote,
+      sources: source,
+      children: files.map((f) => ({ path: `changesets/${commitOid}/${f.path}`, kind: "filechange" as RungKind, summary: resolutionNote, sources: source, children: [] })),
+    },
+  ];
+  await mergeLaneLadder(repo, rungs);
+  await answer(repo, laneId, theAsk, { from: closedBy, action: "complete", payload: { commitOid, resolutionNote } });
+  return { commitOid };
 }
 
 /**

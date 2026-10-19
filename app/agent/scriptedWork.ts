@@ -861,6 +861,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
       const originAskId = theAsk.depends_on?.[0];
       const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
       const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
+      const originalFiles = payload.files.filter((f) => merge.conflicts.some((c) => c.path === f.path));
 
       // #5: vote/escalate_human/mediate get a real window instead of
       // resolving the instant this conflict was found -- a further
@@ -902,7 +903,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
           lane_id: laneId,
           kind: "resolve_conflict",
           from: agent,
-          payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode, attachedSubmissions: [] },
+          payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, originalFiles, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode, attachedSubmissions: [] },
           depends_on: [],
           deadline,
         });
@@ -915,7 +916,7 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
         lane_id: laneId,
         kind: "resolve_conflict",
         from: agent,
-        payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode },
+        payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, originalFiles, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode },
         depends_on: [],
       });
       onLog(`[scripted] ${reason} -- denied ${theAsk.id}, posted resolve_conflict (conflict_policy: ${conflictRule.mode})`);
@@ -980,12 +981,14 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   }
 }
 
-interface ResolveConflictPayload {
+export interface ResolveConflictPayload {
   originalDescription: string;
   /** Files the 3-way merge already resolved cleanly -- unchanged, just need to ride along in the eventual commit. */
   cleanFiles: { path: string; content: string }[];
   /** Files with a genuine line-level overlap -- markedContent has git's own <<<<<<</=======/>>>>>>> (and ||||||| base, via --diff3) markers. */
   conflicts: { path: string; markedContent: string }[];
+  /** The original submission's own plain (unmarked) content for just the conflicting paths -- #7's vote/escalate_human need a plain candidate to propose/vote on, and threeWayMerge's own conflicts[] only ever keeps the diff3-marked version, not this. */
+  originalFiles: { path: string; content: string }[];
   message: string;
   summary: string;
   /** Which conflict_policy mode resolved this (#6) -- first_wins/coordinator_decides, the only modes actually implemented, both skip the window below entirely and resolve the instant this is posted. */
@@ -1052,6 +1055,23 @@ FILE: <path, relative to the repo root>
 
 Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
 
+/**
+ * #7: picks ONE plain, concrete candidate to propose/vote on out of
+ * everything that collided on this conflict's contested paths --
+ * deterministic (latest timestamp wins), not a model judgment call,
+ * since vote's whole point is the Committee (not a model) makes the
+ * real call, and escalate_human's is that a human does. The
+ * chronologically last attached submission (#5) if anything attached
+ * while the window was open, else the original submission that
+ * triggered this resolve_conflict in the first place.
+ */
+export function computeProposedOverride(payload: ResolveConflictPayload): { files: { path: string; content: string }[]; from: string } {
+  const attached = payload.attachedSubmissions ?? [];
+  if (attached.length === 0) return { files: payload.originalFiles, from: "the original submission" };
+  const latest = attached.reduce((a, b) => (new Date(b.at).getTime() > new Date(a.at).getTime() ? b : a));
+  return { files: latest.files, from: latest.from };
+}
+
 export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<void> {
   const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
 
@@ -1068,6 +1088,41 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
   // plain no-op log line here.
   if (theAsk.deadline && new Date(theAsk.deadline).getTime() > Date.now()) {
     onLog(`[scripted] resolve_conflict ${theAsk.id} still has an open window (deadline ${theAsk.deadline}) -- not resolving yet, waiting for it to close`);
+    return;
+  }
+
+  // #7: the window just closed (or there never was one -- first_wins/
+  // coordinator_decides resolve elsewhere and never reach here at
+  // all). vote and escalate_human each have a real decision-maker
+  // other than this function's own model call -- a Committee, or a
+  // human through `zz review` -- so neither falls through to the
+  // generic model-based reconciliation below. Nothing here claims the
+  // Ask for either branch: a vote_request is its own separate Ask a
+  // human/model answers through normal ballot casting, and
+  // escalate_human is picked up by `zz review`'s own claim, not this
+  // autonomous path's.
+  const windowedPayload = theAsk.payload as ResolveConflictPayload;
+  if (windowedPayload.conflictMode === "vote" || windowedPayload.conflictMode === "escalate_human") {
+    if (windowedPayload.conflictMode === "escalate_human") {
+      onLog(`[scripted] resolve_conflict ${theAsk.id}'s window closed -- conflict_policy escalate_human, waiting for a human decision through "zz review" (not auto-resolving)`);
+      return;
+    }
+    const override = computeProposedOverride(windowedPayload);
+    await callTool("ask_post", {
+      repo: resolved.slug,
+      lane_id: laneId,
+      kind: "vote_request",
+      from: agent,
+      payload: {
+        decisionKind: "conflict",
+        resolveConflictAskId: theAsk.id,
+        overrideFiles: override.files,
+        resolutionNote: `conflict resolved by vote: accept ${override.from}'s submission over the existing merged content (${windowedPayload.originalDescription})`,
+        taskDescription: windowedPayload.originalDescription,
+      },
+      depends_on: [],
+    });
+    onLog(`[scripted] resolve_conflict ${theAsk.id}'s window closed -- conflict_policy vote, posted a vote_request proposing ${override.from}'s submission as the override`);
     return;
   }
 

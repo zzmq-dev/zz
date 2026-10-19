@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight, attachConflictSubmission } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight, attachConflictSubmission, applyConflictResolution } from "../engine/lane.js";
 import { computeTrust } from "../engine/trust.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -659,6 +659,34 @@ const conflictAttach: ToolDef = {
   },
 };
 
+const conflictResolve: ToolDef = {
+  name: "conflict_resolve",
+  description:
+    '#7: applies a windowed "resolve_conflict" Ask\'s resolution for real -- commits the given files and completes the Ask, same commit+Ladder shape an ordinary changeset gets. Used by a human\'s escalate_human grant (`zz review`); a Committee Vote\'s own approval reaches the same underlying engine function directly through vote_tally instead of this tool.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      resolve_conflict_ask_id: { type: "string" },
+      files: { type: "array", items: { type: "object" } },
+      actor: { type: "string" },
+      resolution_note: { type: "string" },
+    },
+    required: ["repo", "lane_id", "resolve_conflict_ask_id", "files", "actor", "resolution_note"],
+  },
+  async execute({ repo, lane_id, resolve_conflict_ask_id, files, actor, resolution_note }) {
+    return applyConflictResolution(
+      repo as string,
+      lane_id as string,
+      resolve_conflict_ask_id as string,
+      files as { path: string; content: string }[],
+      actor as string,
+      resolution_note as string,
+    );
+  },
+};
+
 const whistleblowResolve: ToolDef = {
   name: "whistleblow_resolve",
   description:
@@ -986,7 +1014,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneRevoke, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, conflictAttach, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneRevoke, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, conflictAttach, conflictResolve, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 
