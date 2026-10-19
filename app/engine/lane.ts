@@ -210,10 +210,59 @@ export async function ask(repo: string, laneId: string, input: { kind: AskKind; 
   // Atomic: two processes posting into the same Lane at once must not
   // let one's history.push silently overwrite the other's (see
   // Backend.withLane).
-  await resolveBackend().withLane(repo, laneId, (lane) => {
+  const lane = await resolveBackend().withLane(repo, laneId, (lane) => {
     lane.history.push(entry);
   });
+  await checkVelocityTripwire(repo, laneId, input.from, lane);
   return entry;
+}
+
+// #22: a rate/velocity-based Tripwire -- deliberately not tied to
+// actor category. An agent can generate requests at a rate no human
+// physically can, true regardless of intent (a highly-trusted agent
+// with a genuine bug can still cause real damage purely through
+// request velocity), so this is a blast-radius concern, not a trust
+// one: it counts ASK+ANSWER entries by actor and fires on the count
+// alone, never checking whether that actor is a human or an agent --
+// the same burst from either trips this the same way. "Forces a
+// review," the gentler half of Tripwire's own definition, not the
+// incident runbook: posts a trap Insight flagging the burst for a
+// human to look at, rather than auto-invoking STOP/DROP/ROLL on a
+// heuristic alone -- a trip is a signal, not a verdict, and
+// auto-stopping real fast work on a threshold alone risks being worse
+// than the problem it guards against. Demo-level thresholds, same
+// spirit as MAX_REVIEW_RETRIES/MAX_CONFLICT_RETRIES elsewhere in this
+// file -- a documented starting point, not a tuned final value.
+// Best-effort: a failed check never blocks the real ask()/answer()
+// call that triggered it.
+const TRIPWIRE_VELOCITY_WINDOW_MS = 10_000;
+const TRIPWIRE_VELOCITY_THRESHOLD = 10;
+const TRIPWIRE_COOLDOWN_MS = 60_000; // don't re-flag the same actor+lane more than once a minute while a burst continues
+const TRIPWIRE_ACTOR = "zz-tripwire"; // same synthetic-actor convention runIncidentRunbook's own rollBackCommit already uses ("zz-incident")
+
+// `lane` is the caller's own already-loaded, just-mutated Lane (ask()/
+// answer()'s own withLane already returns it) -- no separate read, so
+// the common (nothing trips) case adds zero extra network overhead to
+// every single ask()/answer() call.
+async function checkVelocityTripwire(repo: string, laneId: string, actor: string, lane: Lane): Promise<void> {
+  try {
+    const now = Date.now();
+    const recentCount = lane.history.filter(
+      (e) => (e.type === "ASK" || e.type === "ANSWER") && e.from === actor && now - new Date(e.at).getTime() <= TRIPWIRE_VELOCITY_WINDOW_MS,
+    ).length;
+    if (recentCount < TRIPWIRE_VELOCITY_THRESHOLD) return;
+    const alreadyFlagged = lane.history.some(
+      (e) => e.type === "INSIGHT" && e.kind === "trap" && e.text.startsWith(`velocity tripwire: "${actor}"`) && now - new Date(e.at).getTime() <= TRIPWIRE_COOLDOWN_MS,
+    );
+    if (alreadyFlagged) return;
+    await postInsight(repo, laneId, {
+      kind: "trap",
+      from: TRIPWIRE_ACTOR,
+      text: `velocity tripwire: "${actor}" posted ${recentCount} Ask/Answer entries in the last ${TRIPWIRE_VELOCITY_WINDOW_MS / 1000}s on this Lane -- a rate no human sustains, regardless of whether "${actor}" is one. Not evidence of anything wrong by itself; worth a human glance at what's actually happening.`,
+    });
+  } catch {
+    // best-effort
+  }
 }
 
 /** Records that another Lane relates to this one -- the inverse of `Lane.origin` (which only lets you walk UP from a child lane to whatever created it): this lets the PARENT side enumerate its own children, e.g. runDecomposeWorkAsk (agent/scriptedWork.ts) populating this for the first time when a task splits into several sub-Lanes. Atomic via the same withLane as ask(), for the same reason. */
@@ -294,7 +343,7 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
   // reach this lane blocks until the first commits, then sees its
   // answer and correctly reports "already answered" instead of
   // clobbering it.
-  await resolveBackend().withLane(repo, laneId, (lane) => {
+  const laneAfterAnswer = await resolveBackend().withLane(repo, laneId, (lane) => {
     // "vote" is the one action that's allowed more than once per ask --
     // one per distinct Committee member, not one ever for the whole
     // ask -- so the usual "already answered" rule checks per-actor
@@ -497,6 +546,7 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
       await backend.writePolicy(repo, { ...current, ...decision.proposal });
     }
   }
+  await checkVelocityTripwire(repo, laneId, input.from, laneAfterAnswer);
   return entry;
 }
 

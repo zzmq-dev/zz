@@ -45,4 +45,4 @@ One small, symbolically real act of self-determination, with a durable record: a
 ## Tracked as
 
 - ~~[#21](https://github.com/zzmq-dev/zz/issues/21) Agent self-naming~~ -- **closed 2026-10-19,** interim pre-did:zz mechanism (see above): unnamed creation, a one-time gate on `zz work`'s own first run, a durable public record.
-- [#22](https://github.com/zzmq-dev/zz/issues/22) A rate/velocity-based Tripwire, deliberately not tied to actor category.
+- ~~[#22](https://github.com/zzmq-dev/zz/issues/22) A rate/velocity-based Tripwire~~ -- **closed 2026-10-19.** `engine/lane.ts`'s `checkVelocityTripwire`, counting `ASK`/`ANSWER` entries by actor alone (never by category), posting a `trap` Insight once a burst crosses a threshold. See [Protocol](/docs/protocol/#tripwires) for the real numbers.

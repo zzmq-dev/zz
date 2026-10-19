@@ -106,7 +106,7 @@ A standing condition attached to a Lane, repo, or Policy that forces a review or
 - Any change touching `auth/` always gets full review.
 - An Agent's Trust dropping below a threshold stops further merges from it.
 - A Lane's spending crossing its budget puts it on HOLD.
-- One Agent originating an outsized share of Asks and Answers with no Role to match, as in the incident above.
+- **Built, 2026-10-19 (#22):** one actor originating an outsized share of Asks and Answers in a short window, regardless of Role -- `engine/lane.ts`'s `checkVelocityTripwire`, run after every `ask()`/`answer()`. 10 or more entries from the same actor within 10 seconds posts a `trap` Insight (a cooldown prevents re-flagging every entry of a sustained burst); forces a review, not the incident runbook -- a trip is a signal, not an automatic STOP/DROP/ROLL. Deliberately counts the actor string alone, never checking whether it names a human or an agent -- the same burst from either trips it the same way (see [Agentic autonomy](/docs/agentic-autonomy/#speed-is-real-and-it-isnt-a-trust-question)).
 
 ### Incident response
 
