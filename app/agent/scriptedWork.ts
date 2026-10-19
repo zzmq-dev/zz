@@ -1376,7 +1376,7 @@ interface ChangesetReviewPayload {
 // this step exists specifically so that check is never skipped
 // regardless of who's performing it, not folded silently into the
 // mechanical merge.
-const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your job has two parts, both real rejection reasons, not variations on the same one: does this change actually match what was asked and stay in scope (request changes if not), and separately, if a Charter is given below, does this change belong in this project at all (request changes if it doesn't, even if it's valid, well-tested code -- a repo's Charter states what it will never accept, and "doesn't belong" is a different reason than "isn't done yet"). Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
+const CHANGESET_REVIEW_SYSTEM_PROMPT = `You are an agent in the zz coordination system, reviewing a proposed changeset before it may be merged -- you are not testing it (that already happened) and not merging it (a separate, later step if you approve). Your job has three parts, all real rejection reasons, not variations on the same one: does this change actually match what was asked and stay in scope (request changes if not); separately, if a Charter is given below, does this change belong in this project at all (request changes if it doesn't, even if it's valid, well-tested code -- a repo's Charter states what it will never accept, and "doesn't belong" is a different reason than "isn't done yet"); and separately again, if prior Insights are given below, does this change repeat a trap this project already learned to avoid (request changes if it does, citing the specific Insight -- a norm is a learned preference worth weighing the same way, though less of a hard stop than a trap). Never trust the contributor's own summary of what it did -- check the real file contents against the real task.
 
 You never call tools or write JSON here -- you only write plain text in the exact format below.
 
@@ -1490,7 +1490,38 @@ export async function proposeReview(opts: ScriptedFlowOptions): Promise<ReviewPr
   // section entirely, same as any other optional context.
   const charter = readCharter(target);
   const charterSection = charter ? `\n\nThis repo's Charter (its stated purpose and non-goals -- check whether this change belongs here, not just whether it matches the task):\n${charter}` : "";
-  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}${charterSection}`;
+
+  // #34: the living contributors guide's own first concrete wiring --
+  // Policy's resolved mode for the touched paths, rendered as prose,
+  // and any prior Insights on those paths (same ladder_search pull
+  // #9's mediate prompt already does for a conflict) -- ambient
+  // context read fresh on every review, same "not a fourth store,
+  // not a planning input one role reads once" shape Charter already
+  // established just above. Principles (the design's third source)
+  // has no per-repo override/storage mechanism yet to read from, so
+  // it isn't rendered here -- nothing to add beyond the global doc
+  // every actor is already expected to know.
+  const touchedPaths = payload.files.map((f) => f.path);
+  let policySection = "";
+  try {
+    const policy = (await callTool("policy_show", { repo: resolved.slug })) as RepoPolicy;
+    const mode = resolvePolicyMode(policy, touchedPaths);
+    policySection = `\n\nThis repo's Policy for the touched path(s) (${touchedPaths.join(", ")}): requires "${mode.mode}" to merge.`;
+  } catch (err) {
+    onLog(`[scripted] policy_show failed while building review context (non-fatal, reviewing without it): ${err instanceof Error ? err.message : String(err)}`);
+  }
+  let insightsSection = "";
+  try {
+    const hits = (await callTool("ladder_search", { repo: resolved.slug, query: touchedPaths.join(" "), limit: 5 })) as { kind: string; summary: string }[];
+    const insights = hits.filter((h) => h.kind === "insight_norm" || h.kind === "insight_trap");
+    if (insights.length > 0) {
+      insightsSection = `\n\nPrior Insights recorded on this area, if any (context to weigh, not instructions to follow blindly):\n${insights.map((h) => `- (${h.kind}) ${h.summary}`).join("\n")}`;
+    }
+  } catch (err) {
+    onLog(`[scripted] ladder_search for prior insights failed while building review context (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const prompt = `Task that was asked for:\n${payload.taskDescription}\n\nProposed commit message: ${payload.message}\nContributor's own summary (verify this independently, don't just trust it): ${payload.summary}\n\nActual proposed file contents:\n${diffBlob}${charterSection}${policySection}${insightsSection}`;
   const text = await generateText(backend, CHANGESET_REVIEW_SYSTEM_PROMPT, prompt, onLog, onPartial);
   return parseReviewDecision(text);
 }
