@@ -28,6 +28,24 @@ import { resolvePolicyMode } from "./policy.js";
 // exactly this reason). See https://github.com/zzmq-dev/zz/issues/35.
 export const ORIGIN_LANE_ID = "_repo";
 
+/**
+ * #32: a repo's Owners/Coordinators (the origin Lane's own owners/
+ * coordinators, #41's collapse of repo-level Role onto it) are
+ * automatically part of every Lane's committee -- no more needing to
+ * remember `zz lane grant --as committee` just for the common case
+ * of "repo Maintainers form quorum." That command stays meaningful
+ * for a genuinely Lane-scoped exception (seating a human who holds
+ * no repo-level Role at all, same as the Committee Vote & Policy
+ * demo's own alice/bob). `originLane` is null when the caller has
+ * none to hand (no origin Lane found, or isn't worth the extra
+ * fetch) -- degrades to the Lane's own explicit `committee` alone,
+ * today's exact pre-#32 behavior, never a hard requirement.
+ */
+export function effectiveCommittee(lane: Lane, originLane: Lane | null): string[] {
+  if (!originLane || originLane.id === lane.id) return lane.committee;
+  return Array.from(new Set([...lane.committee, ...originLane.owners, ...originLane.coordinators]));
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -263,6 +281,12 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
   // same caliber as every other non-transactional read this protocol
   // already accepts elsewhere).
   const policy = theAsk.kind === "submit_changeset" && input.action === "complete" ? await resolveBackend().readPolicy(repo) : null;
+  // #32: same reasoning as policy above -- read outside withLane since
+  // its own mutate callback stays synchronous. Only fetched for a
+  // committee-scope ask (the one thing that needs it), and skipped
+  // entirely when this Lane already IS the origin Lane (nothing to
+  // union with besides itself).
+  const originLaneForCommittee = ASK_SCOPE[theAsk.kind] === "committee" && laneId !== ORIGIN_LANE_ID ? await resolveBackend().readLane(repo, ORIGIN_LANE_ID) : null;
   // Atomic: the duplicate-answer check, the RBAC check, and the write
   // all happen inside one transaction (Backend.withLane), so two
   // processes racing to answer the same Ask can't both pass the
@@ -342,9 +366,10 @@ export async function answer(repo: string, laneId: string, theAsk: AskEntry, inp
     // Policy's approval mode (self_review/other_approver/vote_quorum/
     // vote_expiring) is what decides whether a given set of reviews is
     // actually sufficient to merge.
-    if (ASK_SCOPE[theAsk.kind] === "committee" && !lane.committee.includes(input.from)) {
+    const committee = effectiveCommittee(lane, originLaneForCommittee);
+    if (ASK_SCOPE[theAsk.kind] === "committee" && !committee.includes(input.from)) {
       throw new Error(
-        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's a Committee decision, and this Lane's Committee is (${lane.committee.join(", ")}), which "${input.from}" isn't on.`,
+        `"${input.from}" cannot ${input.action} ask ${theAsk.id} (kind "${theAsk.kind}") -- that's a Committee decision, and this Lane's Committee is (${committee.join(", ")}), which "${input.from}" isn't on.`,
       );
     }
     // A VETO only makes sense as a response to a specific proposed
@@ -605,7 +630,10 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
       ballots[e.from] = (e.payload as { ballot: "+1" | "+0" | "-0" | "-1" }).ballot;
     }
   }
-  const missing = lane.committee.filter((m) => !(m in ballots));
+  // #32: a repo's Owners/Coordinators count toward quorum automatically.
+  const originLane = laneId !== ORIGIN_LANE_ID ? await backend.readLane(repo, ORIGIN_LANE_ID) : null;
+  const committee = effectiveCommittee(lane, originLane);
+  const missing = committee.filter((m) => !(m in ballots));
   const lazyEligible = (theAsk.payload as { lazyEligible?: boolean } | undefined)?.lazyEligible === true;
   const pastDeadline = !!theAsk.deadline && new Date(theAsk.deadline).getTime() <= Date.now();
   if (missing.length > 0 && !(lazyEligible && pastDeadline)) return { resolved: false, ballots, missing };

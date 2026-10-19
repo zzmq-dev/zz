@@ -1727,8 +1727,11 @@ async function getClaimableForViewer(env: WebEnv, viewerUsername: string): Promi
   const out: ClaimableWorkItem[] = [];
   for (const repo of repos) {
     const lanes = await getAllLanes(env, repo.artifacts_name);
+    // #32: repo Owners/Coordinators count toward committee-scope asks
+    // automatically -- the origin Lane is already in this same batch.
+    const originLane = lanes.find((l) => l.id === ORIGIN_LANE_ID) ?? null;
     for (const lane of lanes) {
-      for (const ask of claimableAsks(lane, viewerUsername)) {
+      for (const ask of claimableAsks(lane, viewerUsername, originLane)) {
         out.push({ repoSlug: repo.slug, laneId: lane.id, ask });
       }
     }

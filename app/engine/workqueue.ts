@@ -3,7 +3,7 @@
 // loop. Built so a later backend swap (a real shared queue, multiple
 // concurrent actors) changes where claimableAsks reads from, not the
 // shape of the loop itself.
-import { ask, answer, ASK_SCOPE, claimHolder } from "./lane.js";
+import { ask, answer, ASK_SCOPE, claimHolder, effectiveCommittee, ORIGIN_LANE_ID } from "./lane.js";
 import { resolveBackend } from "./backend.js";
 import type { AnswerEntry, AskEntry, AskKind, Lane } from "./types.js";
 
@@ -29,15 +29,16 @@ export function isResolved(lane: Lane, askId: string, actions: Array<"grant" | "
  * unspecified on purpose -- this is the query a real concurrent actor
  * runs against a shared queue, not a scheduling promise.
  */
-export function claimableAsks(lane: Lane, actor: string): AskEntry[] {
+export function claimableAsks(lane: Lane, actor: string, originLane: Lane | null = null): AskEntry[] {
   const answeredAskIds = new Set(lane.history.filter(isAnswer).map((e) => e.ask));
+  const committee = effectiveCommittee(lane, originLane); // #32: repo Owners/Coordinators count automatically
   return lane.history
     .filter(isAsk)
     .filter((a) => !answeredAskIds.has(a.id))
     .filter((a) => (a.depends_on ?? []).every((depId) => isResolved(lane, depId, ["grant", "complete"])))
     .filter((a) => {
       const scope = ASK_SCOPE[a.kind];
-      return scope === "open" || (scope === "coordinator" && lane.coordinators.includes(actor)) || (scope === "committee" && lane.committee.includes(actor));
+      return scope === "open" || (scope === "coordinator" && lane.coordinators.includes(actor)) || (scope === "committee" && committee.includes(actor));
     })
     .filter((a) => {
       const holder = claimHolder(lane, a.id);
@@ -80,9 +81,16 @@ export async function claimableAcrossRepos(repos: { repo: string }[], actor: str
 
 /** The pure, synchronous half of claimableAcrossRepos -- split out so a caller that's already polling the same Lane snapshots for its own display (tui/useLaneSnapshots.ts) can derive the claimable list from data it already has in hand, instead of re-fetching the identical lane_list data over the network a second time (tui/AssistApp.tsx's own lane picker/unclaimed screen does exactly this). */
 export function claimableFromSnapshots(snapshots: { repo: string; lane: Lane }[], actor: string, scope: WorkScope = "all"): ClaimableEntry[] {
+  // #32: the origin Lane is already in this same batch (listLanes
+  // returns every Lane for a repo in one call) -- found here, not a
+  // second fetch, one per repo rather than one per Lane.
+  const originLaneByRepo = new Map<string, Lane>();
+  for (const { repo, lane } of snapshots) {
+    if (lane.id === ORIGIN_LANE_ID) originLaneByRepo.set(repo, lane);
+  }
   const out: ClaimableEntry[] = [];
   for (const { repo, lane } of snapshots) {
-    for (const a of claimableAsks(lane, actor)) {
+    for (const a of claimableAsks(lane, actor, originLaneByRepo.get(repo) ?? null)) {
       const askScope = ASK_SCOPE[a.kind];
       if (scope === "coordinator" && askScope !== "coordinator") continue;
       if (scope === "contributor" && askScope === "coordinator") continue;

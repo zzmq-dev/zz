@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight, attachConflictSubmission, applyConflictResolution } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight, attachConflictSubmission, applyConflictResolution, ORIGIN_LANE_ID } from "../engine/lane.js";
 import { computeTrust } from "../engine/trust.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -524,9 +524,12 @@ const askQueryClaimable: ToolDef = {
   description: "List every Ask in a Lane's queue that's unanswered, has all its dependencies met, and you're permitted to act on.",
   parameters: { type: "object", properties: { repo: { type: "string" }, lane_id: { type: "string" }, actor: { type: "string" } }, required: ["repo", "lane_id", "actor"] },
   async execute({ repo, lane_id, actor }) {
-    const lane = await resolveBackend().readLane(repo as string, lane_id as string);
+    const backend = resolveBackend();
+    const lane = await backend.readLane(repo as string, lane_id as string);
     if (!lane) throw new Error(`no such lane: ${lane_id}`);
-    return claimableAsks(lane, actor as string);
+    // #32: repo Owners/Coordinators count toward committee-scope asks automatically.
+    const originLane = lane_id !== ORIGIN_LANE_ID ? await backend.readLane(repo as string, ORIGIN_LANE_ID) : null;
+    return claimableAsks(lane, actor as string, originLane);
   },
 };
 
