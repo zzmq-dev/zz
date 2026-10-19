@@ -38,6 +38,28 @@ export interface PathPolicyRule extends PolicyRule {
   path: string;
 }
 
+// A second, orthogonal Policy axis (#4): not "what does it take to
+// approve a clean change" (PolicyMode above), but "what happens when
+// two changes collide." Ordered loosest-to-strictest the same way
+// PolicyMode is, by how much process/oversight each mode actually
+// requires -- first_wins needs none; coordinator_decides is a real
+// but unilateral call; vote needs a full Committee; mediate attempts
+// a structured reconciliation first; escalate_human is the strictest,
+// blocking entirely on a human. Not specified by #4 itself (schema
+// only); this is the first real ranking, open to revision once a mode
+// beyond first_wins actually ships and this ordering gets tested
+// against a real multi-path changeset.
+export type ConflictMode = "first_wins" | "coordinator_decides" | "vote" | "mediate" | "escalate_human";
+
+export interface ConflictPolicyRule {
+  mode: ConflictMode;
+}
+
+export interface PathConflictPolicyRule extends ConflictPolicyRule {
+  /** Same matching as PathPolicyRule's own `path` -- shares engine/policy.ts's glob matcher, not a second implementation. */
+  path: string;
+}
+
 // Which of the two real claim paths (confirmed in code, see
 // https://github.com/zzmq-dev/zz/issues/37) a claimed work Ask
 // actually takes: in_place works directly on the repo the Ask lives
@@ -86,6 +108,8 @@ export interface RepoPolicy {
   claim_mode: { manual: ClaimMode; autonomous: ClaimMode };
   /** What happens to a completed work Lane's own shard repo, once #38's real lifecycle gives this a terminal status to key off of (#39). Defaults to "keep" -- matches every repo's actual pre-existing behavior, since nothing was ever auto-deleted before this; "dispose" is a real, destructive opt-in. */
   retention: RetentionRule;
+  /** A second, orthogonal Policy axis (#4): path-scoped rules for what happens when two changes collide, independent of `policies` above (a repo can require `self_review` to approve a clean change on a path but `vote` to resolve a conflict on that same path, or any other combination). Same glob matching and most-specific-wins resolution as `policies`. Defaults to `[{path: "**", mode: "first_wins"}]` -- matches every repo's actual pre-existing behavior (deny the losing submit_changeset, repost against new HEAD), the only mode actually implemented as of #4 landing (schema only; the other four modes are separate, later issues). */
+  conflict_policies: PathConflictPolicyRule[];
 }
 
 export type LaneStatus =

@@ -425,7 +425,7 @@ const repoPolicyCmd = repoCmd.command("policy").description("read or change a re
 
 repoPolicyCmd
   .command("show <owner/repo>")
-  .description("print the repo's current Policy document (\"policy_change\"'s own rule, every path-scoped rule under \"policies\", and \"claim_mode\")")
+  .description("print the repo's current Policy document (\"policy_change\", \"policies\", \"claim_mode\", \"retention\", and \"conflict_policies\")")
   .action(async (slug: string) => {
     await repoPolicyShow(slug);
   });
@@ -443,6 +443,8 @@ repoPolicyCmd
   .option("--claim-mode-autonomous <mode>", 'with --claim-mode-manual: sets "claim_mode" -- which claim path the autonomous work loop takes -- "in_place" or "shard"')
   .option("--retention-mode <mode>", 'sets "retention" -- what happens to a completed work Lane\'s own shard once it goes terminal -- "keep" (default), "dispose" (DESTRUCTIVE: deletes it immediately), or "ttl" (schema only, not yet enforced -- behaves like "keep" today)')
   .option("--retention-ttl-hours <n>", "ttl only -- hours after the Lane goes terminal before disposal (not yet enforced)")
+  .option("--conflict-path <glob>", "with --conflict-mode: upserts one \"conflict_policies\" entry for this path glob -- what happens when two changes collide, independent of --path/--mode (which govern approving a clean change)")
+  .option("--conflict-mode <mode>", 'the mode for --conflict-path -- only "first_wins" (default) is actually implemented so far (#4 is schema only); coordinator_decides/vote/mediate/escalate_human are reserved for their own later issues')
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
   .action(
     async (
@@ -456,6 +458,8 @@ repoPolicyCmd
         claimModeAutonomous?: string;
         retentionMode?: string;
         retentionTtlHours?: string;
+        conflictPath?: string;
+        conflictMode?: string;
         as?: string;
       },
     ) => {

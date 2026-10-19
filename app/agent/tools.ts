@@ -903,7 +903,7 @@ const repoInfo: ToolDef = {
 
 const policyShow: ToolDef = {
   name: "policy_show",
-  description: 'Reads a repo\'s current Policy document: `policy_change` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
+  description: 'Reads a repo\'s current Policy document: `policy_change` (the rule for changing Policy itself), `policies` (path-glob rules for approving a clean change), and `conflict_policies` (path-glob rules for what happens when two changes collide, an orthogonal axis -- see #4). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
   parameters: {
     type: "object",
     properties: { repo: { type: "string" } },
@@ -917,7 +917,7 @@ const policyShow: ToolDef = {
 const policySet: ToolDef = {
   name: "policy_set",
   description:
-    'Writes a direct change to Policy: `repo_rule` (replaces `policy_change`), `path_rule` (upserts one entry of `policies`, matched by its exact `path`), `claim_mode` (replaces it wholesale -- {manual, autonomous}, see #37), or `retention_rule` (replaces it wholesale -- {mode, ttl_hours?}, see #39 -- "dispose" is real and destructive, deletes a completed work Lane\'s shard the moment its Lane goes terminal). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
+    'Writes a direct change to Policy: `repo_rule` (replaces `policy_change`), `path_rule` (upserts one entry of `policies`, matched by its exact `path`), `claim_mode` (replaces it wholesale -- {manual, autonomous}, see #37), `retention_rule` (replaces it wholesale -- {mode, ttl_hours?}, see #39 -- "dispose" is real and destructive, deletes a completed work Lane\'s shard the moment its Lane goes terminal), or `conflict_path_rule` (upserts one entry of `conflict_policies`, matched by its exact `path` -- a second, orthogonal axis from `path_rule`: what happens when two changes collide, not what it takes to approve a clean one, see #4). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
   parameters: {
     type: "object",
     properties: {
@@ -927,10 +927,11 @@ const policySet: ToolDef = {
       path_rule: { type: "object", properties: { path: { type: "string" }, mode: { type: "string" }, expiry_hours: { type: "number" } }, required: ["path", "mode"] },
       claim_mode: { type: "object", properties: { manual: { type: "string" }, autonomous: { type: "string" } }, required: ["manual", "autonomous"] },
       retention_rule: { type: "object", properties: { mode: { type: "string" }, ttl_hours: { type: "number" } }, required: ["mode"] },
+      conflict_path_rule: { type: "object", properties: { path: { type: "string" }, mode: { type: "string" } }, required: ["path", "mode"] },
     },
     required: ["repo", "actor"],
   },
-  async execute({ repo, repo_rule, path_rule, claim_mode, retention_rule }) {
+  async execute({ repo, repo_rule, path_rule, claim_mode, retention_rule, conflict_path_rule }) {
     const backend = resolveBackend();
     const current = await backend.readPolicy(repo as string);
     if (repo_rule) {
@@ -943,8 +944,12 @@ const policySet: ToolDef = {
       await backend.writePolicy(repo as string, { ...current, claim_mode: claim_mode as RepoPolicy["claim_mode"] });
     } else if (retention_rule) {
       await backend.writePolicy(repo as string, { ...current, retention: retention_rule as RepoPolicy["retention"] });
+    } else if (conflict_path_rule) {
+      const rule = conflict_path_rule as RepoPolicy["conflict_policies"][number];
+      const conflict_policies = [...current.conflict_policies.filter((r) => r.path !== rule.path), rule];
+      await backend.writePolicy(repo as string, { ...current, conflict_policies });
     } else {
-      throw new Error('policy_set needs one of "repo_rule", "path_rule", "claim_mode", or "retention_rule"');
+      throw new Error('policy_set needs one of "repo_rule", "path_rule", "claim_mode", "retention_rule", or "conflict_path_rule"');
     }
     return backend.readPolicy(repo as string);
   },

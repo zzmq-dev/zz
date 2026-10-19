@@ -13,11 +13,12 @@
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import type { ClaimMode, PolicyMode, RepoPolicy, RetentionMode } from "../../engine/types.js";
+import type { ClaimMode, ConflictMode, PolicyMode, RepoPolicy, RetentionMode } from "../../engine/types.js";
 
 const VALID_MODES = ["direct", "self_review", "other_approver", "vote_quorum", "vote_expiring"];
 const VALID_CLAIM_MODES = ["in_place", "shard"];
 const VALID_RETENTION_MODES = ["keep", "dispose", "ttl"];
+const VALID_CONFLICT_MODES = ["first_wins", "coordinator_decides", "vote", "mediate", "escalate_human"];
 
 function validateMode(mode: string): asserts mode is PolicyMode {
   if (!VALID_MODES.includes(mode)) throw new Error(`--mode must be one of ${VALID_MODES.join(", ")} -- got "${mode}".`);
@@ -29,6 +30,10 @@ function validateClaimMode(mode: string): asserts mode is ClaimMode {
 
 function validateRetentionMode(mode: string): asserts mode is RetentionMode {
   if (!VALID_RETENTION_MODES.includes(mode)) throw new Error(`retention mode must be one of ${VALID_RETENTION_MODES.join(", ")} -- got "${mode}".`);
+}
+
+function validateConflictMode(mode: string): asserts mode is ConflictMode {
+  if (!VALID_CONFLICT_MODES.includes(mode)) throw new Error(`conflict mode must be one of ${VALID_CONFLICT_MODES.join(", ")} -- got "${mode}". Only "first_wins" is actually implemented so far (#4 is schema only); the others are reserved for their own later issues.`);
 }
 
 export async function repoPolicyShow(slug: string): Promise<void> {
@@ -45,15 +50,21 @@ export interface RepoPolicySetOptions {
   claimModeAutonomous?: string;
   retentionMode?: string;
   retentionTtlHours?: string;
+  conflictPath?: string;
+  conflictMode?: string;
   as?: string;
 }
 
 export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): Promise<void> {
   const settingClaimMode = opts.claimModeManual || opts.claimModeAutonomous;
-  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode) {
+  const settingConflictRule = opts.conflictPath || opts.conflictMode;
+  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode && !settingConflictRule) {
     throw new Error(
-      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), or --retention-mode <mode> (sets "retention"), is required.',
+      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), --retention-mode <mode> (sets "retention"), or --conflict-path <glob> --conflict-mode <mode> (upserts one "conflict_policies" entry), is required.',
     );
+  }
+  if (settingConflictRule && !(opts.conflictPath && opts.conflictMode)) {
+    throw new Error("--conflict-path and --conflict-mode must be given together.");
   }
   if (settingClaimMode && !(opts.claimModeManual && opts.claimModeAutonomous)) {
     throw new Error("--claim-mode-manual and --claim-mode-autonomous must be set together -- claim_mode is replaced wholesale, not merged.");
@@ -95,6 +106,14 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
         retention_rule: { mode: opts.retentionMode, ttl_hours: retentionTtlHours },
       })) as RepoPolicy;
       console.log(`Set ${slug}'s "retention" rule to "${opts.retentionMode}"${retentionTtlHours ? ` (ttl_hours: ${retentionTtlHours})` : ""}.${opts.retentionMode === "dispose" ? " This is destructive -- a completed work Lane's shard repo will be deleted the moment its Lane goes terminal." : ""}`);
+      console.log(JSON.stringify(policy, null, 2));
+    } else if (settingConflictRule) {
+      validateConflictMode(opts.conflictMode!);
+      const policy = (await callRemoteTool(slug, "policy_set", {
+        actor: identity.username,
+        conflict_path_rule: { path: opts.conflictPath, mode: opts.conflictMode },
+      })) as RepoPolicy;
+      console.log(`Set ${slug}'s conflict_policies rule for "${opts.conflictPath}" to "${opts.conflictMode}".`);
       console.log(JSON.stringify(policy, null, 2));
     } else {
       validateMode(opts.mode!);

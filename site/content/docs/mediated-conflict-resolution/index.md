@@ -39,6 +39,8 @@ A detected conflict becomes its own Ask (the existing `resolve_conflict` kind) c
 
 ## `conflict_policy`: a second, orthogonal Policy axis
 
+**Schema built, 2026-10-19 (#4) -- the modes below are not yet implemented.** `RepoPolicy.conflict_policies: PathConflictPolicyRule[]` is real (`engine/types.ts`, `zz repo policy show`/`set --conflict-path`/`--conflict-mode`, the `policy_set` tool's `conflict_path_rule`), reusing the exact glob matcher and most-specific-wins resolution `policies` already has (`engine/policy.ts`'s `matchingPathRules`, shared, not forked) -- but only `first_wins` actually does anything yet, which is also the default, so this is non-breaking for every existing repo. The other four modes below are each their own later issue.
+
 [Governance](/docs/governance/#policy)'s existing Policy document answers "what does it take to approve a clean change" (`direct` / `self_review` / `other_approver` / `vote_quorum` / `vote_expiring`). This is a different question -- "what happens when two changes collide" -- and a repo should be able to set it independently per path, same glob matching, same most-specific-wins resolution:
 
 | Mode | What happens | Reuses |

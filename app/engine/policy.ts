@@ -4,7 +4,7 @@
 // cli/commands/repo-submit.ts, the policy_set tool) share, so "what
 // does touching these paths require" is computed exactly once, not
 // reimplemented at each call site with its own chance to drift.
-import type { PathPolicyRule, PolicyMode, PolicyRule, RepoPolicy } from "./types.js";
+import type { ConflictMode, PathConflictPolicyRule, PathPolicyRule, PolicyMode, PolicyRule, RepoPolicy } from "./types.js";
 
 // A repo with no policies set behaves exactly as before this feature
 // existed: any agent may have its own review approved under
@@ -19,6 +19,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   policies: [{ path: "**", mode: "self_review" }],
   claim_mode: { manual: "in_place", autonomous: "shard" },
   retention: { mode: "keep" },
+  conflict_policies: [{ path: "**", mode: "first_wins" }],
 };
 
 // Loosest to strictest -- resolveMode across several touched paths
@@ -34,6 +35,21 @@ const MODE_STRICTNESS: Record<PolicyMode, number> = {
 
 export function stricterMode(a: PolicyMode, b: PolicyMode): PolicyMode {
   return MODE_STRICTNESS[a] >= MODE_STRICTNESS[b] ? a : b;
+}
+
+// Same loosest-to-strictest spirit as MODE_STRICTNESS above, for the
+// orthogonal conflict-handling axis (#4) -- see ConflictMode's own doc
+// comment (engine/types.ts) for the reasoning behind this order.
+const CONFLICT_MODE_STRICTNESS: Record<ConflictMode, number> = {
+  first_wins: 0,
+  coordinator_decides: 1,
+  vote: 2,
+  mediate: 3,
+  escalate_human: 4,
+};
+
+export function stricterConflictMode(a: ConflictMode, b: ConflictMode): ConflictMode {
+  return CONFLICT_MODE_STRICTNESS[a] >= CONFLICT_MODE_STRICTNESS[b] ? a : b;
 }
 
 /**
@@ -57,6 +73,11 @@ export function stricterMode(a: PolicyMode, b: PolicyMode): PolicyMode {
  *    missing that key entirely, defaulting to "keep", the only mode
  *    that matches every repo's actual pre-#39 behavior (nothing was
  *    ever auto-deleted).
+ *  - Documents written before `conflict_policies` existed (#4) --
+ *    read back missing that key entirely, defaulting to
+ *    `[{path: "**", mode: "first_wins"}]`, the only mode that matches
+ *    every repo's actual pre-#4 behavior (deny the losing
+ *    submit_changeset, repost against new HEAD).
  */
 export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"]; _repo?: PolicyRule }): RepoPolicy {
   return {
@@ -65,6 +86,7 @@ export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPol
     policies: raw.policies ?? DEFAULT_REPO_POLICY.policies,
     claim_mode: raw.claim_mode ?? DEFAULT_REPO_POLICY.claim_mode,
     retention: raw.retention ?? DEFAULT_REPO_POLICY.retention,
+    conflict_policies: raw.conflict_policies ?? DEFAULT_REPO_POLICY.conflict_policies,
   };
 }
 
@@ -89,18 +111,29 @@ function specificity(glob: string): number {
   return glob.replace(/\*\*?/g, "").length;
 }
 
-/** Every rule in `policy.policies` whose glob matches `path`, most-specific first. Empty if nothing matches (callers fall back to `self_review`, matching a repo with no "**" rule of its own). */
-function matchingRules(policy: RepoPolicy, path: string): PathPolicyRule[] {
-  return policy.policies.filter((r) => globToRegExp(r.path).test(path)).sort((a, b) => specificity(b.path) - specificity(a.path));
+/** Every rule in `rules` whose glob matches `path`, most-specific first. Shared by both Policy axes (#4) -- one glob matcher, not two copies with their own chance to drift. */
+function matchingPathRules<T extends { path: string }>(rules: T[], path: string): T[] {
+  return rules.filter((r) => globToRegExp(r.path).test(path)).sort((a, b) => specificity(b.path) - specificity(a.path));
 }
 
 /** The one rule that governs a single touched path: its most specific matching glob, or a bare self_review default if nothing in `policies` matches at all (should only happen for a hand-edited policy document missing its own "**" fallback). */
 export function resolvePathRule(policy: RepoPolicy, path: string): PathPolicyRule {
-  return matchingRules(policy, path)[0] ?? { path: "**", mode: "self_review" };
+  return matchingPathRules(policy.policies, path)[0] ?? { path: "**", mode: "self_review" };
 }
 
 /** The rule that governs a whole changeset: the strictest of each touched path's own most-specific rule. A changeset with no files (shouldn't happen, but cheap to handle) resolves to `direct`, since there's nothing to gate. */
 export function resolvePolicyMode(policy: RepoPolicy, paths: string[]): PathPolicyRule {
   if (paths.length === 0) return { path: "**", mode: "direct" };
   return paths.map((p) => resolvePathRule(policy, p)).reduce((strictest, rule) => (stricterMode(strictest.mode, rule.mode) === rule.mode ? rule : strictest));
+}
+
+/** conflict_policies' own equivalent of resolvePathRule -- same matcher, this axis's own bare default (first_wins, matching a repo with no "**" rule of its own). */
+export function resolveConflictPathRule(policy: RepoPolicy, path: string): PathConflictPolicyRule {
+  return matchingPathRules(policy.conflict_policies, path)[0] ?? { path: "**", mode: "first_wins" };
+}
+
+/** conflict_policies' own equivalent of resolvePolicyMode: the strictest of each touched path's own most-specific conflict rule. A changeset with no files resolves to first_wins, since there's nothing to collide over. */
+export function resolveConflictMode(policy: RepoPolicy, paths: string[]): PathConflictPolicyRule {
+  if (paths.length === 0) return { path: "**", mode: "first_wins" };
+  return paths.map((p) => resolveConflictPathRule(policy, p)).reduce((strictest, rule) => (stricterConflictMode(strictest.mode, rule.mode) === rule.mode ? rule : strictest));
 }
