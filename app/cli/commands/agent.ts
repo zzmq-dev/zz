@@ -20,11 +20,12 @@ import { resolveMe } from "../lib/credentials.js";
 // off its creator's, e.g. "thoward37@gmail.com[claude]" (see
 // accountsDb.ts's computeUsername).
 interface Agent {
-  display_name: string;
+  display_name: string; // #21: "" until named -- by a human at creation, or by the agent itself later (named_at then distinguishes which)
   email: string | null;
   username: string;
   created_at: string;
   created_by: string | null;
+  named_at: string | null;
 }
 
 interface MintTokenResponse {
@@ -43,9 +44,16 @@ function printZzId(username: string, token: string): void {
   console.log(`For a separate machine or headless run, set: ZZ_ID="${username}:${token}"`);
 }
 
-export async function agentCreate(displayName: string): Promise<void> {
+// #21: displayName omitted creates an unnamed agent -- it chooses its
+// own name the first time it actually runs `zz work` (that bootstrap's
+// own mandatory first step), rather than a human being required to
+// pick one for it up front. Passing a name here still works exactly
+// as before for every case (demos included) where a human genuinely
+// wants to name an agent up front.
+export async function agentCreate(displayName?: string): Promise<void> {
   const { token, ...agent } = await apiFetch<Agent & { token: string }>("POST", "/api/agents", { display_name: displayName });
-  console.log(`Created agent ${agent.username}. Its first token -- copy it now, it won't be shown again:`);
+  console.log(agent.display_name ? `Created agent ${agent.username}.` : `Created unnamed agent ${agent.username} -- it'll choose its own name the first time it runs "zz work".`);
+  console.log(`Its first token -- copy it now, it won't be shown again:`);
   console.log(token);
   console.log(`Issue another with: zz agent token ${agent.username}`);
   printZzId(agent.username, token);

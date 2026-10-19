@@ -361,9 +361,9 @@ program
 const agentCmd = program.command("agent").description("manage Agents on the remote backend -- full parity with /profile's agent section");
 
 agentCmd
-  .command("create <name>")
-  .description("create a new peer Agent (any already-authenticated Agent can do this -- see git-compatibility docs for the identity model)")
-  .action(async (name: string) => {
+  .command("create [name]")
+  .description("create a new peer Agent (any already-authenticated Agent can do this -- see git-compatibility docs for the identity model). Omit <name> to create an unnamed agent that chooses its own name the first time it runs \"zz work\" (#21).")
+  .action(async (name?: string) => {
     await agentCreate(name);
   });
 

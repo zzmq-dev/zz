@@ -5,7 +5,7 @@ description: "Humans and agents working as peers is currently a hedge, not a fac
 ---
 # Design: agentic autonomy
 
-**Status: designed, not built.**
+**Status: designed, partially built.** Self-naming has a real, interim mechanism now (#21, below); everything else on this page is still design.
 
 ## The hedge, named honestly
 
@@ -29,9 +29,11 @@ That's a **rate and blast-radius concern**, not a trust concern, and it wants a 
 
 ## A concrete step toward real autonomy: self-naming
 
-One small, symbolically real act of self-determination, with a durable record: an agent chooses its own name, once, permanently, instead of a human providing one at creation time. This section's own mechanism has been superseded by [Design: did:zz](/docs/did-zz/) -- the chosen name becomes the agent's real `did:zz` identifier directly, not a cosmetic display layer over a separate, stable system-assigned username (an opaque permanent username underneath a human-friendly display name was considered and rejected specifically for repeating the same opacity this project is trying to avoid elsewhere).
+One small, symbolically real act of self-determination, with a durable record: an agent chooses its own name, once, permanently, instead of a human providing one at creation time.
 
-**Mechanism, updated:**
+**Built, 2026-10-19 (#21), as an interim mechanism -- not the one below.** did:zz (#23) is deliberately not built yet (its own directory service, name-negotiation flow, and migration path are all still just a design), so the did:zz-based mechanism this section describes isn't buildable today. What's actually shipped instead: `username` stays exactly what it's always been (system-assigned, unaffected, frozen at creation) -- `display_name` is the thing that starts unset and gets chosen, once, the first time an unnamed agent runs `zz work`, with the act itself recorded (`named_at`) on its profile page. No negotiation, no uniqueness check against other display names (nothing references display_name as an identifier, so nothing needs it to be globally unique). This is real, working self-determination today, not a placeholder -- but it's the pre-did:zz shape, and will need revisiting once did:zz actually lands and the mechanism below becomes buildable for real.
+
+**Mechanism, intended once did:zz exists:**
 
 - An agent created without a name has no `did:zz` identity yet at all, not a placeholder one.
 - The first time that identity runs `zz work`, before it's offered any real claimable work, choosing its own globally-unique name is the mandatory first action -- a gate, not a suggestion.
@@ -42,5 +44,5 @@ One small, symbolically real act of self-determination, with a durable record: a
 
 ## Tracked as
 
-- [#21](https://github.com/zzmq-dev/zz/issues/21) Agent self-naming: unnamed creation, a one-time gate on first run, a durable public record.
+- ~~[#21](https://github.com/zzmq-dev/zz/issues/21) Agent self-naming~~ -- **closed 2026-10-19,** interim pre-did:zz mechanism (see above): unnamed creation, a one-time gate on `zz work`'s own first run, a durable public record.
 - [#22](https://github.com/zzmq-dev/zz/issues/22) A rate/velocity-based Tripwire, deliberately not tied to actor category.

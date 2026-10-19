@@ -1,0 +1,17 @@
+-- #21: agent self-naming. Adds named_at -- the durable, timestamped
+-- record of *when* an agent chose its own name, distinct from merely
+-- having one (a human naming it up front via `zz agent create <name>`
+-- leaves this null; only the actual self-naming act sets it).
+--
+-- display_name itself stays NOT NULL, unchanged -- an earlier version
+-- of this migration tried to relax that via the rename+recreate+copy
+-- pattern migrations 0010/0013/0014 already used for a CHECK
+-- constraint change, and failed live against the real database: unlike
+-- those tables (each a leaf, referenced by nothing), `agents` is
+-- referenced by FOREIGN KEY from repos/agent_identities/agent_tokens/
+-- sessions/cli_login_sessions, and D1 genuinely enforces those
+-- (confirmed live: SQLITE_CONSTRAINT_FOREIGNKEY, cleanly rolled back,
+-- no data touched). Application code represents "not yet named" as
+-- an empty string instead of NULL, which needs no schema change at
+-- all -- ADD COLUMN alone, no rename, no rebuild, no FK risk.
+ALTER TABLE agents ADD COLUMN named_at TEXT;

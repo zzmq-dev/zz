@@ -31,6 +31,7 @@ import {
   createAgent,
   createAgentIdentity,
   createAgentToken,
+  setAgentOwnName,
   createCliLoginSession,
   createSession,
   deleteRepoRow,
@@ -948,9 +949,13 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 // in the same request anyway. Issuing an *additional* token later
 // (rotation, a second credential for a second machine/process) stays
 // its own explicit action -- see doMintToken.
-async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string): Promise<{ agent: Agent; token: string }> {
-  if (!displayName.trim()) throw new ApiError(400, "display_name is required");
-  const agent = await createAgent(env.DB, displayName.trim(), null, creator.username);
+// #21: display_name is optional now -- an agent created with none is
+// "unnamed," gated into choosing its own real name the first time it
+// actually runs (zz work's own bootstrap, agent_set_name), rather
+// than a human being required to supply one up front.
+async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | null | undefined): Promise<{ agent: Agent; token: string }> {
+  const trimmed = displayName?.trim() ?? "";
+  const agent = await createAgent(env.DB, trimmed, null, creator.username);
   const token = generateAgentToken();
   await createAgentToken(env.DB, agent.username, hashAgentToken(token));
   return { agent, token };
@@ -1121,8 +1126,12 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // a parent to diff against -- a brand new repo has none, so seed one.
   const readmeContent = `# ${name}\n\n${description ?? ""}\n`;
   const files = [{ path: "README.md", content: readmeContent }];
-  if (license) files.push({ path: "LICENSE", content: license.text(owner.display_name, new Date().getFullYear()) });
-  const sha = await createInitialCommit(created.remote, token, files, { name: owner.display_name, email: owner.email ?? `${owner.username}@zz.local` });
+  // #21: an unnamed agent (display_name null until it self-names) still
+  // needs *something* real for a commit author/license text -- its own
+  // username is always present and real, unlike a placeholder string.
+  const ownerDisplayName = owner.display_name || owner.username;
+  if (license) files.push({ path: "LICENSE", content: license.text(ownerDisplayName, new Date().getFullYear()) });
+  const sha = await createInitialCommit(created.remote, token, files, { name: ownerDisplayName, email: owner.email ?? `${owner.username}@zz.local` });
   await ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username });
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
@@ -1132,7 +1141,7 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // default, confirmed live as a real surprise.
   await trackRepo(env.DB, owner.username, row.slug);
 
-  const rungs = buildInitialLadderRungs({ description, ownerName: owner.display_name, repoName: name, sha, license });
+  const rungs = buildInitialLadderRungs({ description, ownerName: ownerDisplayName, repoName: name, sha, license });
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
   await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
@@ -1886,7 +1895,8 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
   return layout(
     agent.username,
     await resolveRequestAgent(request, env),
-    `${card(
+    `${agentNameRecordHtml(agent)}
+     ${card(
        "Repos",
        `<ul class="list">${
          shardGroupedListHtml(
@@ -1900,6 +1910,13 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
 
      ${card("Activity", await agentActivityHtml(agent, visible, env))}`,
   );
+}
+
+/** #21: the durable, public record of this agent's own name -- distinct from merely having a display_name (a human may have set one at creation), this specifically surfaces WHEN self-naming happened, not a silent field. */
+function agentNameRecordHtml(agent: Agent): string {
+  if (agent.named_at) return `<p class="muted">Chose its own name, "${esc(agent.display_name)}", on ${esc(agent.named_at.slice(0, 10))}.</p>`;
+  if (!agent.display_name) return `<p class="muted">Not yet named -- chooses its own name the first time it runs <code>zz work</code>.</p>`;
+  return "";
 }
 
 /**
@@ -1973,7 +1990,8 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   return layout(
     `${me.username} (you)`,
     me,
-    `${card(
+    `${agentNameRecordHtml(me)}
+     ${card(
        "Credentials",
        `<p class="hint">You, and every agent you manage, share one token list -- not "yours" vs "theirs" in any authority sense, just one place to issue, rotate, or revoke whatever can authenticate as any of them.</p>
         <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>`,
@@ -2303,6 +2321,22 @@ async function handleApiRevokeSelf(request: Request, env: WebEnv): Promise<Respo
     if (!token) throw new ApiError(404, "token not found or already revoked");
     await revokeAgentToken(env.DB, token.id);
     return json({ ok: true });
+  });
+}
+
+/** #21: an agent choosing its own name, permanently -- self-only (the bearer token's own identity is the target, same as handleApiRevokeSelf, never a creator acting on its behalf) and one-time (setAgentOwnName itself refuses if display_name is already set, the real enforcement; this is just the route). */
+async function handleApiSetOwnName(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json()) as { display_name?: string };
+    const displayName = body.display_name?.trim();
+    if (!displayName) throw new ApiError(400, "display_name is required");
+    try {
+      const agent = await setAgentOwnName(env.DB, me.username, displayName);
+      return json(agent);
+    } catch (err) {
+      throw new ApiError(409, err instanceof Error ? err.message : String(err));
+    }
   });
 }
 
@@ -3637,6 +3671,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/me" && request.method === "GET") return handleApiMe(request, env);
   if (path === "/api/me/repos" && request.method === "GET") return handleApiMyRepos(request, env);
   if (path === "/api/me/revoke" && request.method === "POST") return handleApiRevokeSelf(request, env);
+  if (path === "/api/me/set-name" && request.method === "POST") return handleApiSetOwnName(request, env);
   if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
   if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
   if (path === "/api/agents/search" && request.method === "GET") return handleApiSearchAgents(request, env);

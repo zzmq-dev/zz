@@ -12,10 +12,21 @@ import { RBAC_RANK, type RbacRole } from "./repoMeta.js";
 
 export interface Agent {
   username: string; // the real primary key -- a human's real email; a managed agent's "<creator's username>[<name>]" (see computeUsername)
+  // #21: "" (not NULL -- display_name stays NOT NULL at the schema
+  // level, see migration 0015's own header for why) for an agent
+  // created with no name (zz agent create, no <name> argument) -- an
+  // unnamed agent's own zz work bootstrap gates on this being falsy,
+  // making choosing one the mandatory first act of its own actual
+  // autonomy rather than a human picking one for it.
   display_name: string;
   email: string | null;
   created_at: string;
   created_by: string | null; // provenance only (another agent's username), never an authority relationship
+  // When this agent chose its own name, specifically -- not merely
+  // when display_name was set (a human naming it via `zz agent create
+  // <name>` leaves this null; only the actual self-naming act sets
+  // it, via agent_set_name).
+  named_at: string | null;
 }
 
 export interface AgentIdentity {
@@ -104,17 +115,18 @@ export async function getAgentByEmail(db: D1Database, email: string): Promise<Ag
   return db.prepare("SELECT * FROM agents WHERE email = ? LIMIT 1").bind(email).first<Agent>();
 }
 
-/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent that agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. */
+/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent that agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. #21: `displayName` "" (no name given at creation) uses a random, opaque slug instead of slugifying a name that doesn't exist yet -- the agent chooses its own real display_name later, via agent_set_name; the username itself (frozen at creation, same as every other agent) doesn't wait for that. */
 async function computeUsername(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<string> {
   if (email) return uniqueUsername(db, email);
   const creator = createdBy ? await getAgent(db, createdBy) : null;
-  const base = creator ? `${creator.username}[${usernameSlug(displayName)}]` : usernameSlug(displayName);
+  const slug = displayName ? usernameSlug(displayName) : shortId("agent");
+  const base = creator ? `${creator.username}[${slug}]` : slug;
   return uniqueUsername(db, base);
 }
 
 export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
   const username = await computeUsername(db, displayName, email, createdBy);
-  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy };
+  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy, named_at: null };
   await db
     .prepare("INSERT INTO agents (username, display_name, email, created_at, created_by) VALUES (?, ?, ?, ?, ?)")
     .bind(agent.username, agent.display_name, agent.email, agent.created_at, agent.created_by)
@@ -126,6 +138,16 @@ export async function createAgent(db: D1Database, displayName: string, email: st
 export async function refreshAgentProfile(db: D1Database, username: string, displayName: string, email: string | null): Promise<void> {
   if (email) await db.prepare("UPDATE agents SET display_name = ?, email = ? WHERE username = ?").bind(displayName, email, username).run();
   else await db.prepare("UPDATE agents SET display_name = ? WHERE username = ?").bind(displayName, username).run();
+}
+
+/** #21: the one-time, agent-only self-naming act -- refuses outright if display_name is already set (by a human at creation, by an earlier login's own profile refresh, or by a previous call to this), enforced here, not just a UI nicety, since the whole point is a durable, permanent choice. named_at (not just display_name) is what distinguishes this from an ordinary human-provided name. */
+export async function setAgentOwnName(db: D1Database, username: string, displayName: string): Promise<Agent> {
+  const agent = await getAgent(db, username);
+  if (!agent) throw new Error(`no such agent: ${username}`);
+  if (agent.display_name) throw new Error(`"${username}" already has a name ("${agent.display_name}") -- self-naming is permanent, once only.`);
+  const namedAt = new Date().toISOString();
+  await db.prepare("UPDATE agents SET display_name = ?, named_at = ? WHERE username = ?").bind(displayName, namedAt, username).run();
+  return { ...agent, display_name: displayName, named_at: namedAt };
 }
 
 export async function createAgentIdentity(db: D1Database, agentUsername: string, provider: string, providerSubject: string, tokens: { accessTokenEnc: string | null; refreshTokenEnc: string | null; expiresAt: string | null }): Promise<AgentIdentity> {

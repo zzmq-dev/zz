@@ -28,6 +28,7 @@ import { LogBuffer } from "../../tui/LogBuffer.js";
 import { enterFullscreen } from "../../tui/fullscreen.js";
 import { WIDE_BANNER } from "../lib/banner.js";
 import { authedCloneUrl } from "../lib/credentials.js";
+import { apiFetch } from "../lib/api.js";
 import { callRemoteTool, remoteCallTool, remoteExecuteTool } from "../lib/remoteTools.js";
 import { createRepoWatchStore, type RepoWatchStore } from "../lib/watchedRepos.js";
 import { resolveCliBackendMode } from "../lib/backendMode.js";
@@ -301,6 +302,41 @@ export interface WorkOptions {
   askId?: string;
 }
 
+// #21: an unnamed identity (zz agent create with no <name>) gates on
+// choosing its own name here, before it's offered any real claimable
+// work -- a mandatory first step, not a suggestion, and specifically
+// here (zz work's own bootstrap) rather than every identity-resolving
+// entry point, since this is where an agent is actually making its
+// own decisions, not just reviewing or submitting on a human's behalf
+// (zz review/zz repo submit leave this alone). A real model call, not
+// a scripted placeholder -- the choice itself is the point. Best-
+// effort on any failure (a malformed response, a network error): logs
+// and moves on rather than blocking real work over a cosmetic step.
+async function ensureAgentIsNamed(identity: { username: string; token: string }, backend: ChatBackend): Promise<void> {
+  try {
+    const me = await apiFetch<{ display_name: string }>("GET", "/api/me");
+    if (me.display_name) return;
+    console.log(`"${identity.username}" has no name yet -- choosing one now, permanently, before anything else (#21)...`);
+    const prompt = `You are a newly-created agent in the zz coordination system, about to work for the first time. Before anything else, you choose your own display name -- permanent, chosen once, picked by you, not assigned by a human.
+
+Output format, exactly:
+NAME: <your chosen name>
+
+A short, real name you'd actually want -- not a generic placeholder like "Agent" or "Assistant". Nothing else -- no prose outside this line, no explanation.`;
+    const message = await backend.chat([{ role: "system", content: prompt }, { role: "user", content: "Choose your name." }], []);
+    const match = message.content.match(/^NAME:\s*(.+)$/m);
+    const chosenName = match?.[1]?.trim();
+    if (!chosenName) {
+      console.log(`"${identity.username}" -- couldn't parse a chosen name from the model's response, skipping for now: ${message.content.slice(0, 200)}`);
+      return;
+    }
+    await apiFetch("POST", "/api/me/set-name", { display_name: chosenName });
+    console.log(`"${identity.username}" chose the name "${chosenName}".`);
+  } catch (err) {
+    console.log(`self-naming step failed (non-fatal, continuing): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function work(options: WorkOptions): Promise<void> {
   const scope: WorkScope = options.scope ?? "all";
   const provider = options.provider ?? "ollama";
@@ -312,6 +348,13 @@ export async function work(options: WorkOptions): Promise<void> {
   // path, which has no reason to touch the network at all.
   const mode = await resolveCliBackendMode(options);
   const { useRemote, identity } = mode;
+
+  // #21: only in remote mode -- local mode has no real D1-backed Agent
+  // row to name at all. Before anything else below (ensureCloned,
+  // claiming real work), not a background step.
+  if (useRemote && identity) {
+    await ensureAgentIsNamed(identity, backend);
+  }
 
   // --as mints a fresh token for the session (lib/identity.ts) --
   // clean it up on every exit path: normal completion/a thrown error
