@@ -53,6 +53,8 @@ export type ConflictMode = "first_wins" | "coordinator_decides" | "vote" | "medi
 
 export interface ConflictPolicyRule {
   mode: ConflictMode;
+  /** vote/escalate_human/mediate only (#5) -- how long the resolve_conflict Ask stays open, collecting any further submission against the same contested base, before whatever this mode resolves to actually runs. first_wins/coordinator_decides ignore this -- they skip the window entirely, resolving the instant a conflict is found, since neither needs to collect multiple perspectives. Same primitive PolicyRule's own expiry_hours already is for vote_expiring, reused, not reinvented. */
+  expiry_hours?: number;
 }
 
 export interface PathConflictPolicyRule extends ConflictPolicyRule {

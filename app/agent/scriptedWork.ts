@@ -27,7 +27,7 @@ import type { ChatBackend } from "./chatBackend.js";
 import { ALL_TOOLS, checkNoDroppedExports } from "./tools.js";
 import { resolveRepo, ensureCloned, ensureNamedWorktree, readCharter, type ResolvedRepo } from "../cli/lib/repo.js";
 import { apiFetch } from "../cli/lib/api.js";
-import type { AskEntry, Lane, RepoPolicy } from "../engine/types.js";
+import type { AskEntry, ConflictMode, Lane, RepoPolicy } from "../engine/types.js";
 import type { LadderSearchHit } from "../engine/backend.js";
 import { resolvePolicyMode, resolveConflictMode } from "../engine/policy.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
@@ -861,6 +861,55 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
       const originAskId = theAsk.depends_on?.[0];
       const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
       const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
+
+      // #5: vote/escalate_human/mediate get a real window instead of
+      // resolving the instant this conflict was found -- a further
+      // submit_changeset colliding on the SAME contested paths while
+      // that window is still open attaches to the existing
+      // resolve_conflict Ask instead of spawning an independent one
+      // (silently losing track of it) or being ignored. first_wins and
+      // any not-yet-built mode falling back to its behavior never
+      // reach this branch -- they resolve immediately, same as always,
+      // no deadline, nothing to attach to.
+      if (conflictRule.mode === "vote" || conflictRule.mode === "escalate_human" || conflictRule.mode === "mediate") {
+        const openConflict = originLane?.history.find(
+          (e): e is AskEntry =>
+            e.type === "ASK" &&
+            e.kind === "resolve_conflict" &&
+            !!e.deadline &&
+            new Date(e.deadline).getTime() > Date.now() &&
+            !originLane.history.some((a) => a.type === "ANSWER" && a.ask === e.id) &&
+            (e.payload as ResolveConflictPayload).conflicts.some((c) => merge.conflicts.some((mc) => mc.path === c.path)),
+        );
+        if (openConflict) {
+          await callTool("conflict_attach", {
+            repo: resolved.slug,
+            lane_id: laneId,
+            resolve_conflict_ask_id: openConflict.id,
+            files: payload.files,
+            message: payload.message,
+            summary: payload.summary,
+            base_commit: payload.baseCommit,
+            from: theAsk.from,
+          });
+          onLog(`[scripted] ${reason} -- denied ${theAsk.id}, attached to the still-open resolve_conflict ${openConflict.id} (conflict_policy: ${conflictRule.mode}) instead of spawning a second one`);
+          return;
+        }
+        const expiryHours = conflictRule.expiry_hours ?? 72; // same default vote_expiring's own PolicyRule uses
+        const deadline = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString();
+        await callTool("ask_post", {
+          repo: resolved.slug,
+          lane_id: laneId,
+          kind: "resolve_conflict",
+          from: agent,
+          payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode, attachedSubmissions: [] },
+          depends_on: [],
+          deadline,
+        });
+        onLog(`[scripted] ${reason} -- denied ${theAsk.id}, posted resolve_conflict with a ${expiryHours}h window (conflict_policy: ${conflictRule.mode})`);
+        return;
+      }
+
       await callTool("ask_post", {
         repo: resolved.slug,
         lane_id: laneId,
@@ -939,6 +988,10 @@ interface ResolveConflictPayload {
   conflicts: { path: string; markedContent: string }[];
   message: string;
   summary: string;
+  /** Which conflict_policy mode resolved this (#6) -- first_wins/coordinator_decides, the only modes actually implemented, both skip the window below entirely and resolve the instant this is posted. */
+  conflictMode?: ConflictMode;
+  /** #5: any further submit_changeset that collided with the SAME contested base while this Ask's deadline (its own AskEntry.deadline, not a payload field -- same place vote_request's own deadline lives) was still open -- attached here instead of spawning an independent resolve_conflict. Only ever populated for a windowed mode (vote/escalate_human/mediate); first_wins/coordinator_decides resolve before a second submission could ever arrive to attach. Empty array, not undefined, once a resolve_conflict ask actually has a deadline -- absence vs. an empty list both mean "nothing's attached yet", but an empty list is what every later push() expects to find. */
+  attachedSubmissions?: { files: { path: string; content: string }[]; message: string; summary: string; baseCommit: string; from: string; at: string }[];
 }
 
 // A narrow task -- resolve the few marked lines, not regenerate a
@@ -1001,11 +1054,34 @@ Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
 
 export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<void> {
   const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, callTool = localCallTool } = opts;
+
+  // #5: a windowed conflict_policy (vote/escalate_human/mediate) gave
+  // this Ask a real deadline specifically so a further colliding
+  // submission has time to attach (conflict_attach) before anything
+  // actually resolves -- claiming/resolving it early would defeat the
+  // entire point of the window. Not yet excluded from the claimable
+  // list itself (engine/workqueue.ts) -- this is the gate that matters
+  // for correctness; hiding it from a claim attempt that would just be
+  // refused here anyway is a smaller, separate follow-up, not done
+  // now. Deliberately doesn't claim first and bail -- a claim that
+  // immediately needs releasing again is more state change than a
+  // plain no-op log line here.
+  if (theAsk.deadline && new Date(theAsk.deadline).getTime() > Date.now()) {
+    onLog(`[scripted] resolve_conflict ${theAsk.id} still has an open window (deadline ${theAsk.deadline}) -- not resolving yet, waiting for it to close`);
+    return;
+  }
+
   if (!alreadyClaimed) {
     await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
   }
 
   const payload = theAsk.payload as ResolveConflictPayload;
+  // payload.attachedSubmissions (#5) isn't folded into the reconciliation
+  // prompt below -- tracked and visible (nothing's silently lost, no
+  // second independent resolve_conflict spawned), but actually weighing
+  // every attached side's own content against each other is a real
+  // vote/mediate mechanism, left for #7/#9 to build for real rather than
+  // approximated here.
   const conflictBlob = payload.conflicts.map((c) => `--- ${c.path} (has conflict markers) ---\n${c.markedContent}`).join("\n\n");
   const userPrompt = `Repo: ${resolved.slug}\nTask this change is part of: ${payload.originalDescription}\n\n${conflictBlob}`;
 

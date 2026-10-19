@@ -663,6 +663,42 @@ export async function checkLazyConsensus(repo: string, laneId: string, askId: st
 }
 
 /**
+ * #5: appends one more colliding submission onto an already-open
+ * `resolve_conflict` Ask's own `attachedSubmissions` (agent/
+ * scriptedWork.ts's `ResolveConflictPayload`, kept generic here --
+ * engine/ doesn't depend on agent/'s own payload types, same pattern
+ * every other kind-specific payload field here already reads through
+ * an inline cast rather than an import). The caller (runCoordinatorSubmitChangeset)
+ * already found this specific Ask by matching conflicting paths before
+ * calling this -- this function's own job is just the atomic append,
+ * plus the one invariant worth checking again here rather than
+ * trusting the caller's own read stayed fresh: still genuinely open
+ * (unanswered, deadline not passed), since a submission that arrives
+ * in the gap between the caller's own check and this call shouldn't
+ * attach to a window that already closed.
+ */
+export async function attachConflictSubmission(
+  repo: string,
+  laneId: string,
+  resolveConflictAskId: string,
+  submission: { files: { path: string; content: string }[]; message: string; summary: string; baseCommit: string; from: string },
+): Promise<void> {
+  await resolveBackend().withLane(repo, laneId, (lane) => {
+    const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === resolveConflictAskId);
+    if (!theAsk || theAsk.kind !== "resolve_conflict") {
+      throw new Error(`"${resolveConflictAskId}" is not a "resolve_conflict" ask in ${repo}/${laneId}.`);
+    }
+    const alreadyAnswered = lane.history.some((e) => e.type === "ANSWER" && e.ask === resolveConflictAskId);
+    if (alreadyAnswered) throw new Error(`"${resolveConflictAskId}"'s conflict window already closed -- it was answered before this attach landed.`);
+    if (theAsk.deadline && new Date(theAsk.deadline).getTime() <= Date.now()) {
+      throw new Error(`"${resolveConflictAskId}"'s conflict window already passed its deadline -- too late to attach.`);
+    }
+    const payload = theAsk.payload as { attachedSubmissions?: unknown[] };
+    payload.attachedSubmissions = [...(payload.attachedSubmissions ?? []), { ...submission, at: nowIso() }];
+  });
+}
+
+/**
  * ROLL: reverts an already-merged commit for real, by reusing
  * Backend.commitChangeset wholesale -- for each file that commit
  * touched, reads what it looked like at the commit's own parent and

@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight, attachConflictSubmission } from "../engine/lane.js";
 import { computeTrust } from "../engine/trust.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -510,7 +510,7 @@ const askPostTool: ToolDef = {
       payload: { type: "object" },
       depends_on: { type: "array", items: { type: "string" } },
       priority: { type: "number" },
-      deadline: { type: "string", description: 'ISO timestamp. Only meaningful on a "vote_request" with payload.lazyEligible true (a "vote_expiring" Policy rule) -- checkLazyConsensus ignores every other kind\'s deadline for a vote_request, and ordinary asks use it for normal lazy consensus.' },
+      deadline: { type: "string", description: 'ISO timestamp. On a "vote_request" with payload.lazyEligible true (a "vote_expiring" Policy rule), checkLazyConsensus ignores it (vote_tally handles that expiry instead) and ordinary asks use it for normal lazy consensus. On a "resolve_conflict" (a vote/escalate_human/mediate conflict_policy, #5), it opens a real window -- a further colliding submit_changeset attaches (conflict_attach) instead of spawning an independent one, until the deadline passes.' },
     },
     required: ["repo", "lane_id", "kind", "from"],
   },
@@ -626,6 +626,36 @@ const voteTally: ToolDef = {
   },
   async execute({ repo, lane_id, ask_id, actor }) {
     return tallyVotes(repo as string, lane_id as string, ask_id as string, actor as string);
+  },
+};
+
+const conflictAttach: ToolDef = {
+  name: "conflict_attach",
+  description:
+    '#5: attaches one more colliding submission onto an already-open "resolve_conflict" Ask (one with a deadline, posted for a vote/escalate_human/mediate conflict_policy -- first_wins/coordinator_decides resolve instantly and never have an open window to attach to) instead of spawning a second, independent resolve_conflict Ask or silently ignoring it. Refuses if the Ask is already answered or its deadline already passed -- find a fresh conflict path instead.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      resolve_conflict_ask_id: { type: "string" },
+      files: { type: "array", items: { type: "object" } },
+      message: { type: "string" },
+      summary: { type: "string" },
+      base_commit: { type: "string" },
+      from: { type: "string" },
+    },
+    required: ["repo", "lane_id", "resolve_conflict_ask_id", "files", "message", "summary", "base_commit", "from"],
+  },
+  async execute({ repo, lane_id, resolve_conflict_ask_id, files, message, summary, base_commit, from }) {
+    await attachConflictSubmission(repo as string, lane_id as string, resolve_conflict_ask_id as string, {
+      files: files as { path: string; content: string }[],
+      message: message as string,
+      summary: summary as string,
+      baseCommit: base_commit as string,
+      from: from as string,
+    });
+    return { ok: true };
   },
 };
 
@@ -956,7 +986,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneRevoke, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneRevoke, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, conflictAttach, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

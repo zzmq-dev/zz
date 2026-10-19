@@ -33,7 +33,7 @@ function validateRetentionMode(mode: string): asserts mode is RetentionMode {
 }
 
 function validateConflictMode(mode: string): asserts mode is ConflictMode {
-  if (!VALID_CONFLICT_MODES.includes(mode)) throw new Error(`conflict mode must be one of ${VALID_CONFLICT_MODES.join(", ")} -- got "${mode}". Only "first_wins" is actually implemented so far (#4 is schema only); the others are reserved for their own later issues.`);
+  if (!VALID_CONFLICT_MODES.includes(mode)) throw new Error(`conflict mode must be one of ${VALID_CONFLICT_MODES.join(", ")} -- got "${mode}". "first_wins" and "coordinator_decides" are actually implemented (#4, #6); "vote"/"mediate"/"escalate_human" fall back to first_wins's own behavior until each ships (#7, #9).`);
 }
 
 export async function repoPolicyShow(slug: string): Promise<void> {
