@@ -402,8 +402,9 @@ repoCmd
 repoCmd
   .command("grant <owner/repo> <principal> <role>")
   .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
-  .action(async (slug: string, principal: string, role: string) => {
-    await repoGrant(slug, principal, role);
+  .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
+  .action(async (slug: string, principal: string, role: string, opts: { as?: string }) => {
+    await repoGrant(slug, principal, role, { as: opts.as });
   });
 
 repoCmd
@@ -417,8 +418,9 @@ repoCmd
   .command("delete <owner/repo>")
   .description("permanently delete a repo -- real git history, Ladder, Lanes, all of it. Needs Owner on the repo yourself.")
   .option("-y, --yes", "skip the type-the-slug-to-confirm prompt")
-  .action(async (slug: string, opts: { yes?: boolean }) => {
-    await repoDelete(slug, { yes: opts.yes });
+  .option("--as <name>", "act as a managed agent instead of yourself -- for deleting a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
+  .action(async (slug: string, opts: { yes?: boolean; as?: string }) => {
+    await repoDelete(slug, { yes: opts.yes, as: opts.as });
   });
 
 const repoPolicyCmd = repoCmd.command("policy").description("read or change a repo's Policy -- what it takes to merge a change, and to change Policy itself");

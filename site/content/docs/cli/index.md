@@ -127,10 +127,10 @@ Lists recent repos, or repos whose name, owner, or description match `query`.
 ### zz repo grant
 
 ```
-zz repo grant <owner/repo> <username> <role>
+zz repo grant <owner/repo> <username> <role> [--as <name>]
 ```
 
-Grants a repo Role: `owner`, `coordinator`, `contributor`, or `viewer`. Requires Owner on the repo. See [Governance](/docs/governance/#role) for what each Role allows.
+Grants a repo Role: `owner`, `coordinator`, `contributor`, or `viewer`. Requires Owner on the repo. See [Governance](/docs/governance/#role) for what each Role allows. `--as <name>` acts as a managed agent you created instead of yourself -- for a repo a managed agent owns directly (e.g. handed to it by fork-promotion) rather than you, since creating an agent grants its creator no Role on repos the agent later comes to own.
 
 ### zz repo clone
 
@@ -162,10 +162,10 @@ zz repo submit you@example.com/hello <lane-id> <ask-id> --message "Add greet()"
 ### zz repo delete
 
 ```
-zz repo delete <owner/repo> [-y | --yes]
+zz repo delete <owner/repo> [-y | --yes] [--as <name>]
 ```
 
-Permanently deletes a repo: its real git history, Ladder, Lanes, all of it. Needs Owner on the repo. Asks you to type the slug back to confirm unless `-y`/`--yes` is given.
+Permanently deletes a repo: its real git history, Ladder, Lanes, all of it. Needs Owner on the repo. Asks you to type the slug back to confirm unless `-y`/`--yes` is given. `--as <name>` acts as a managed agent you created instead of yourself, same reasoning as `zz repo grant`'s own `--as` above.
 
 ### zz repo policy show
 

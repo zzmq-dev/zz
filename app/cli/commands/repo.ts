@@ -7,8 +7,9 @@
 // any Lane, not just the origin one these two always assumed.
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
-import { apiFetch } from "../lib/api.js";
+import { apiFetch, setActiveToken } from "../lib/api.js";
 import { authedCloneUrl, requireCredentials, resolveMe } from "../lib/credentials.js";
+import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 
 interface RepoRow {
   slug: string;
@@ -39,29 +40,51 @@ export async function repoList(query?: string): Promise<void> {
 // repo" confirmation uses, and cheap insurance against `--yes` muscle
 // memory from some other CLI firing on the wrong repo. Owner check
 // happens server-side (doDeleteRepo); this only gates the prompt.
-export async function repoDelete(slug: string, opts: { yes?: boolean } = {}): Promise<void> {
+// #1: fork-promotion (promoteShardAsNewOrigin, webApp.ts) can hand a
+// managed agent ownership of a real, independent repo at any point --
+// creating an agent grants its creator no Role on repos the agent
+// later comes to own (Role/ownership and agent-management are
+// separate systems). Without --as, the only way to act as that agent
+// was a raw curl with a hand-minted token, bypassing this command's
+// own confirm-by-typing-the-slug safety prompt entirely. Same
+// resolveIdentity/releaseIdentity pattern `zz work`/`zz review`
+// already use: an --as token is minted fresh for this one call and
+// revoked when it's done, never a standing credential.
+export async function repoDelete(slug: string, opts: { yes?: boolean; as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
-  if (!opts.yes) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the repo slug to confirm: `);
-    rl.close();
-    if (typed.trim() !== slug) {
-      console.error("Slug didn't match -- not deleting anything.");
-      process.exitCode = 1;
-      return;
+  const identity = await resolveIdentity(opts.as);
+  setActiveToken(identity.token);
+  try {
+    if (!opts.yes) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the repo slug to confirm: `);
+      rl.close();
+      if (typed.trim() !== slug) {
+        console.error("Slug didn't match -- not deleting anything.");
+        process.exitCode = 1;
+        return;
+      }
     }
+    const [owner, name] = splitSlug(slug);
+    await apiFetch("DELETE", `/api/repos/${owner}/${name}`);
+    console.log(`Deleted ${slug}.`);
+  } finally {
+    await releaseIdentity(identity);
   }
-  const [owner, name] = splitSlug(slug);
-  await apiFetch("DELETE", `/api/repos/${owner}/${name}`);
-  console.log(`Deleted ${slug}.`);
 }
 
-export async function repoGrant(slug: string, principal: string, role: string): Promise<void> {
+export async function repoGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
   principal = resolveMe(principal);
-  const [owner, name] = splitSlug(slug);
-  await apiFetch("POST", `/api/repos/${owner}/${name}/roles`, { principal, role });
-  console.log(`Granted ${principal} "${role}" on ${slug}.`);
+  const identity = await resolveIdentity(opts.as);
+  setActiveToken(identity.token);
+  try {
+    const [owner, name] = splitSlug(slug);
+    await apiFetch("POST", `/api/repos/${owner}/${name}/roles`, { principal, role });
+    console.log(`Granted ${principal} "${role}" on ${slug}.`);
+  } finally {
+    await releaseIdentity(identity);
+  }
 }
 
 
