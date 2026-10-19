@@ -132,7 +132,7 @@ async function main() {
   const policy = (await callRemoteTool(slug, "policy_set", { repo: slug, actor: human, path_rule: { path: "README.md", mode: "vote_quorum" } })) as RepoPolicy;
   console.log(`   README.md's own rule is now "${policy.policies.find((r) => r.path === "README.md")?.mode}"`);
 
-  step(`For contrast: mallory (Coordinator, not Owner) tries the same thing herself -- rejected, since "_repo" itself defaults to "vote_quorum"`);
+  step(`For contrast: mallory (Coordinator, not Owner) tries the same thing herself -- rejected, since "policy_change" itself defaults to "vote_quorum"`);
   try {
     setActiveToken(malloryId.token);
     await callRemoteTool(slug, "policy_set", { repo: slug, actor: mallory, path_rule: { path: "README.md", mode: "direct" } });

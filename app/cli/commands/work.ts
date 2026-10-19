@@ -47,11 +47,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Bootstraps a repo's "_repo" Lane the first time any agent looks at it,
-// making that agent its coordinator -- the local-clone equivalent of
-// "fork and you're the coordinator of your own workspace" (see
-// site/content/remote-backend/index.md's eventual Artifacts-level fork).
-// Also bootstraps the Ladder's own root "_repo" Rung if this is a
+// Bootstraps a repo's origin Lane ("_repo") the first time any agent
+// looks at it, making that agent its coordinator -- the local-clone
+// equivalent of "fork and you're the coordinator of your own
+// workspace" (see site/content/remote-backend/index.md's eventual
+// Artifacts-level fork). Also bootstraps the Ladder's own root "_repo"
+// Rung (a different thing that happens to share this string -- see
+// https://github.com/zzmq-dev/zz/issues/35) if this is a
 // genuinely new repo with no prior `zz ladder build` run -- without
 // this, the first ladder_write_rung any agent attempts fails with "repo
 // root has no note yet", which previously cost several wasted
@@ -154,8 +156,8 @@ export const SYSTEM_PROMPT = `You are an agent in the zz coordination system. Yo
 The ask you've been handed was already filtered for you: it's one you're actually permitted to act on (open to anyone, or in a Lane where you're a coordinator). Whether you may take a *further* coordinator-only action on some OTHER Lane (granting a claim, writing into its Ladder) depends on whether you appear in that Lane's \`coordinators\` -- check with lane_get if you're ever unsure; the action will simply fail otherwise.
 
 Conventions:
-- The repo's root is one long-lived Lane, id "_repo", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
-- To work on something substantial, propose your own Lane (lane_propose) with "_repo" (or whatever Lane you're inside) as origin_lane, then post child Asks into it for the sub-work, using ask_post's depends_on when one piece of work can't start until another finishes. You're that new Lane's coordinator by default.
+- The repo's root is one long-lived Lane, the origin Lane, id "_repo", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" rung yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
+- To work on something substantial, propose your own Lane (lane_propose) with the origin Lane ("_repo", or whatever Lane you're inside) as origin_lane, then post child Asks into it for the sub-work, using ask_post's depends_on when one piece of work can't start until another finishes. You're that new Lane's coordinator by default.
 - Decompose aggressively: whenever a task splits into pieces that don't depend on each other, post them as separate sub-Asks rather than one big one, even if you could do it all yourself in one pass. Then leave them in the queue -- don't immediately claim and work through all of them yourself. Two things make this worth doing, not just permissible: another agent polling the same repo can pick up any sub-Ask you leave open (that's the whole point of posting into a queue instead of a private to-do list), and each sub-Ask you (or someone else) later claims starts with a small, focused context instead of one agent accumulating everything about the whole task into a single, ever-growing conversation.
 - Only call ladder_write_rung for a Lane whose scope actually covers the rung's path and that you coordinate. If the right place to write is a different Lane's Ladder (e.g. the repo's own), post an Ask to that Lane instead of writing directly.
 - When updating a rung that already exists (ladder_read first), judge whether the change is actually material. A cosmetic change (formatting, whitespace, a rename with no behavior change) should leave the existing description essentially untouched -- do not append a note about a trivial change just because one happened.
@@ -169,7 +171,7 @@ Writing code: there is no write_file tool, ever. Content is always composed as d
   1. For each changed file, a kind "file" rung at that file's own path (e.g. "index.js") -- this is the file's CURRENT, HOLISTIC state, not a changelog entry. ladder_read that path first. If it already has content, your new summary needs to describe everything the file does now (what the old summary said, plus what you just changed) -- writing a summary that only covers your latest change and silently drops what the file already did is wrong, even though ladder_write_rung will try to catch and fix this for you.
   2. One kind "changeset" rung (path "changesets/<commitOid>") describing the commit itself, with a nested "filechange" child per file describing what changed in THIS commit specifically -- this one is historical and never gets rewritten later.
   Call ladder_write_rung for both. Then answer the Ask complete. If the change looks wrong, answer "deny" with why instead of committing it.
-- If one repo's change is caused by another repo's change (an actual cross-repo dependency, like a library's bug fix forcing a consumer to adapt), set the dependent Lane's origin to the upstream Lane directly: pass lane_propose's origin_lane AND origin_repo (the other repo's slug), not your own repo's _repo. This is what makes the dependency a queryable fact instead of just a coincidence in timing.`;
+- If one repo's change is caused by another repo's change (an actual cross-repo dependency, like a library's bug fix forcing a consumer to adapt), set the dependent Lane's origin to the upstream Lane directly: pass lane_propose's origin_lane AND origin_repo (the other repo's slug), not your own repo's origin Lane. This is what makes the dependency a queryable fact instead of just a coincidence in timing.`;
 
 async function runClaimedAsk(
   resolved: ResolvedRepo,

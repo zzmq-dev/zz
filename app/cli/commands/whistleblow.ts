@@ -10,6 +10,7 @@ import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import { requireCredentials } from "../lib/credentials.js";
 import type { IncidentResult } from "../../engine/lane.js";
+import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 // Same bare-name expansion as lane-propose.ts's --committee.
 function expandAgentId(raw: string, humanUsername: string): string {
@@ -38,7 +39,7 @@ export async function whistleblowResolve(slug: string, askId: string, opts: Whis
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const laneId = opts.lane ?? "_repo";
+    const laneId = opts.lane ?? ORIGIN_LANE_ID;
     const targetAgent = expandAgentId(opts.targetAgent, requireCredentials().username);
     const result = (await callRemoteTool(slug, "whistleblow_resolve", {
       lane_id: laneId,

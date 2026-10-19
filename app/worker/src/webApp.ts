@@ -97,6 +97,7 @@ import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { claimableAsks, claimHolder } from "../../engine/workqueue.js";
 import type { AnswerEntry, AskEntry, HistoryEntry, InsightEntry, Lane, RepoPolicy } from "../../engine/types.js";
 import { DEFAULT_REPO_POLICY, normalizePolicy } from "../../engine/policy.js";
+import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -537,7 +538,7 @@ function policyModeCode(rule: { mode: string; expiry_hours?: number }): string {
 
 /** The repo page's own "Policy" panel -- same collapsed-by-default <details> the Roles panel uses, since Policy is meant to be visible to a repo's Coordinators, not just enforced against them. */
 function policyPanelHtml(policy: RepoPolicy): string {
-  const repoRow = `<li class="row"><span class="rung">_repo</span> ${policyModeCode(policy._repo)}</li>`;
+  const repoRow = `<li class="row"><span class="rung">policy_change</span> ${policyModeCode(policy.policy_change)}</li>`;
   const pathRows = policy.policies.map((r) => `<li class="row"><span class="rung">${esc(r.path)}</span> ${policyModeCode(r)}</li>`).join("");
   return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}</ul></details>`;
 }
@@ -1500,11 +1501,11 @@ function doStub(env: WebEnv, artifactsName: string) {
   return stub;
 }
 
-/** The root ("_repo") Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no root Lane yet (never had an Ask posted to it). Real `Lane` objects throughout (not a trimmed display type): claimableAsks (engine/workqueue.ts) needs the real shape (coordinators AND committee), and the DO already hands back exactly that. */
+/** The origin Lane's full history -- every ASK/ANSWER posted via doPostAsk or the engine's own protocol. Null if the repo has no origin Lane yet (never had an Ask posted to it). Real `Lane` objects throughout (not a trimmed display type): claimableAsks (engine/workqueue.ts) needs the real shape (coordinators AND committee), and the DO already hands back exactly that. */
 async function getRootLane(env: WebEnv, artifactsName: string): Promise<Lane | null> {
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
-  return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: "_repo" })) as Lane | null;
+  return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: ORIGIN_LANE_ID })) as Lane | null;
 }
 
 /** Every Lane in the repo, for the "Lanes" tab -- the full flattened cross-lane protocol feed (the "Protocol" tab) and the Work page's claimable-asks query are both derived from these same objects, not a second fetch. */
@@ -1755,18 +1756,20 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   if (!repo) throw new ApiError(404, "no such repo");
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
   await stub.configure(repo.artifacts_name);
-  // The "_repo" root Lane isn't the same thing as the Ladder's "_repo"
-  // root rung (ensureMeta/writeRung territory) -- it's a real Lane,
-  // which doCreateRepo never bootstrapped (confirmed live: posting an
-  // ask to a repo created through the web/API threw "no such lane:
-  // _repo"). Lazily create it here, the same bootstrap
-  // demo/greenfield.ts's local flow always did, so this self-heals for
-  // every repo already created before this fix too, not just new ones.
-  const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: "_repo" });
+  // The origin Lane isn't the same thing as the Ladder's root rung
+  // (ensureMeta/writeRung territory) -- it's a real Lane, which
+  // doCreateRepo never bootstrapped (confirmed live: posting an ask to
+  // a repo created through the web/API threw "no such lane: _repo").
+  // Lazily create it here, the same bootstrap demo/greenfield.ts's
+  // local flow always did, so this self-heals for every repo already
+  // created before this fix too, not just new ones. (These two used to
+  // collide on the same bare "_repo" literal with no name of its own
+  // for either sense -- see https://github.com/zzmq-dev/zz/issues/35.)
+  const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID });
   if (!existingLane) {
-    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: "_repo", name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
+    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
   }
-  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: "_repo", kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
+  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
 }
 
 // --- Agent profile: /<username> is BOTH the public view (anyone) and
@@ -2371,10 +2374,10 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
         const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
         await stub.configure(repo.artifacts_name);
         const policy = (await stub.callTool("policy_show", { repo: repo.artifacts_name })) as RepoPolicy;
-        if (policy._repo.mode !== "direct") {
+        if (policy.policy_change.mode !== "direct") {
           throw new ApiError(
             403,
-            `${me?.username}'s Role (${role}) isn't Owner, and ${slug}'s Policy itself requires "${policy._repo.mode}" to change -- post an Ask instead (changeset_review for self_review/other_approver, vote_request for vote_quorum/vote_expiring) with payload {decisionKind:"policy", proposal:{...}}; it applies automatically once granted or tallied.`,
+            `${me?.username}'s Role (${role}) isn't Owner, and ${slug}'s Policy itself requires "${policy.policy_change.mode}" to change -- post an Ask instead (changeset_review for self_review/other_approver, vote_request for vote_quorum/vote_expiring) with payload {decisionKind:"policy", proposal:{...}}; it applies automatically once granted or tallied.`,
           );
         }
       }

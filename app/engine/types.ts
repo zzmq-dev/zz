@@ -45,8 +45,8 @@ export interface PathPolicyRule extends PolicyRule {
 // storage never drift apart on what a Policy actually contains.
 export interface RepoPolicy {
   visibility: "public" | "private";
-  /** Governs changing this document itself -- deliberately a dedicated key, not a fake file path, so editing Policy is still subject to Policy without pretending it's a git-tracked file. An Owner always bypasses this; see engine/lane.ts's writePolicy gate. */
-  _repo: PolicyRule;
+  /** Governs changing this document itself -- deliberately a dedicated key, not a fake file path, so editing Policy is still subject to Policy without pretending it's a git-tracked file. An Owner always bypasses this; see engine/lane.ts's writePolicy gate. Named `policy_change`, not `_repo` (an earlier draft's name) -- "_repo" already means two other, unrelated things elsewhere (the root Lane's id, the Ladder's root rung path; see https://github.com/zzmq-dev/zz/issues/35), and reusing it a third time here was repeating the exact collision that issue exists to fix. engine/policy.ts's normalizePolicy migrates an already-persisted document's old `_repo` key on read. */
+  policy_change: PolicyRule;
   /** Path-scoped rules for everything else; most-specific glob wins per touched path, strictest resulting mode wins across a whole changeset. */
   policies: PathPolicyRule[];
 }

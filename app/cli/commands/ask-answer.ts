@@ -10,6 +10,7 @@ import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { AnswerEntry } from "../../engine/types.js";
+import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface AskAnswerOptions {
   /** Which Lane the ask lives in -- defaults to "_repo", where `zz repo ask` always posts. */
@@ -37,7 +38,7 @@ export async function askAnswer(slug: string, askId: string, action: string, opt
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const laneId = opts.lane ?? "_repo";
+    const laneId = opts.lane ?? ORIGIN_LANE_ID;
     const payload = opts.payload ? JSON.parse(opts.payload) : undefined;
     const result = (await callRemoteTool(slug, "ask_answer", { lane_id: laneId, ask_id: askId, actor: identity.username, action, payload })) as AnswerEntry;
     console.log(`${action} ${askId} in ${slug}/${laneId} as "${identity.username}" (answer ${result.id}).`);

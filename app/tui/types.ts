@@ -3,6 +3,7 @@
 // blocks (a lane list, a filtered scrolling history feed), not two
 // separate UIs with their own data model.
 import type { AskEntry, HistoryEntry, Lane } from "../engine/types.js";
+import { ORIGIN_LANE_ID } from "../engine/lane.js";
 
 export interface LaneSnapshot {
   repo: string;
@@ -55,7 +56,7 @@ export function withCreateEvents(events: FlatEvent[], repoInfos: RepoInfo[]): Fl
   if (repoInfos.length === 0) return events;
   const synthetic: FlatEvent[] = repoInfos.map((r) => ({
     repo: r.repo,
-    laneId: "_repo",
+    laneId: ORIGIN_LANE_ID,
     entry: { type: "LANE", kind: "create", from: r.owner, at: r.createdAt },
   }));
   return [...events, ...synthetic].sort((a, b) => a.entry.at.localeCompare(b.entry.at));

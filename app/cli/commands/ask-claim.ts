@@ -11,6 +11,7 @@ import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { AskEntry, Lane } from "../../engine/types.js";
+import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface AskClaimOptions {
   /** Which Lane the ask lives in -- defaults to "_repo", where `zz repo ask` always posts. */
@@ -33,7 +34,7 @@ export async function askClaim(slug: string, askId: string, opts: AskClaimOption
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const laneId = opts.lane ?? "_repo";
+    const laneId = opts.lane ?? ORIGIN_LANE_ID;
     const lane = (await callRemoteTool(slug, "lane_get", { lane_id: laneId })) as Lane | null;
     if (!lane) throw new Error(`no such lane "${laneId}" in ${slug}`);
     const theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);

@@ -15,6 +15,19 @@ import { REPO_RUNG_PATH } from "./ladder.js";
 import type { ChangesetFile } from "./changeset.js";
 import { resolvePolicyMode } from "./policy.js";
 
+// The repo-wide Lane every other Lane traces back to -- never
+// completes, always open, the one a bare `zz repo ask`/`zz work`
+// targets by default. Named and exported here (not just a bare "_repo"
+// literal scattered across call sites) specifically so this, the
+// Lane-identity sense of that string, reads as its own distinct thing
+// from the other two unrelated jobs "_repo" used to also do: the
+// Ladder's own root rung path (REPO_RUNG_PATH, engine/ladder.ts -- a
+// different system, happens to share this value, deliberately not
+// unified with this) and a repo's Policy document's self-governance
+// key (now RepoPolicy.policy_change, engine/types.ts -- renamed for
+// exactly this reason). See https://github.com/zzmq-dev/zz/issues/35.
+export const ORIGIN_LANE_ID = "_repo";
+
 function nowIso(): string {
   return new Date().toISOString();
 }

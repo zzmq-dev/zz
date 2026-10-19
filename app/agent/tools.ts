@@ -363,7 +363,7 @@ const laneProposeTool: ToolDef = {
       origin_lane: { type: "string", description: "The lane id this one originates from, if any" },
       origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
-      id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the root Lane a repo\'s Ladder root rung anchors to.' },
+      id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the origin Lane every other Lane in a repo traces back to.' },
       committee: { type: "array", items: { type: "string" }, description: "Who must cast a ballot on a vote_request -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee. changeset_review no longer uses this; it's open-scope, any agent may submit one." },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
@@ -874,7 +874,7 @@ const repoInfo: ToolDef = {
 
 const policyShow: ToolDef = {
   name: "policy_show",
-  description: 'Reads a repo\'s current Policy document: `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
+  description: 'Reads a repo\'s current Policy document: `policy_change` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Anyone who can read the repo can call this -- Policy is meant to be visible, not just enforced.',
   parameters: {
     type: "object",
     properties: { repo: { type: "string" } },
@@ -888,7 +888,7 @@ const policyShow: ToolDef = {
 const policySet: ToolDef = {
   name: "policy_set",
   description:
-    'Writes a direct change to Policy: either `repo_rule` (replaces `_repo`) or `path_rule` (upserts one entry of `policies`, matched by its exact `path`). This is the UNGATED path -- only an Owner may call it regardless of what `_repo` currently says, or anyone else when `_repo` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
+    'Writes a direct change to Policy: either `repo_rule` (replaces `policy_change`) or `path_rule` (upserts one entry of `policies`, matched by its exact `path`). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
   parameters: {
     type: "object",
     properties: {
@@ -903,7 +903,7 @@ const policySet: ToolDef = {
     const backend = resolveBackend();
     const current = await backend.readPolicy(repo as string);
     if (repo_rule) {
-      await backend.writePolicy(repo as string, { ...current, _repo: repo_rule as RepoPolicy["_repo"] });
+      await backend.writePolicy(repo as string, { ...current, policy_change: repo_rule as RepoPolicy["policy_change"] });
     } else if (path_rule) {
       const rule = path_rule as RepoPolicy["policies"][number];
       const policies = [...current.policies.filter((r) => r.path !== rule.path), rule];
@@ -928,7 +928,7 @@ export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE
 // working is one where it's confirmed to be a coordinator (see
 // ASK_SCOPE in engine/lane.ts and how cli/commands/work.ts picks a
 // tool set per ask). policy_set additionally gets its own, stricter
-// server-side gate (Owner-or-"_repo is direct" only) -- being handed
+// server-side gate (Owner-or-"policy_change is direct" only) -- being handed
 // the tool at all is necessary but not sufficient for it to succeed.
 export const COORDINATOR_ONLY_TOOLS: ToolDef[] = [ladderWriteRung, commitChangesetTool, whistleblowResolve, policySet];
 export const CONTRIBUTOR_TOOLS: ToolDef[] = ALL_TOOLS.filter((t) => !COORDINATOR_ONLY_TOOLS.includes(t));

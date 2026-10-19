@@ -4,18 +4,18 @@
 // cli/commands/repo-submit.ts, the policy_set tool) share, so "what
 // does touching these paths require" is computed exactly once, not
 // reimplemented at each call site with its own chance to drift.
-import type { PathPolicyRule, PolicyMode, RepoPolicy } from "./types.js";
+import type { PathPolicyRule, PolicyMode, PolicyRule, RepoPolicy } from "./types.js";
 
 // A repo with no policies set behaves exactly as before this feature
 // existed: any agent may have its own review approved under
-// self_review, no vote, no second approver required. _repo defaults
-// to the strictest mode on purpose -- a brand-new repo's own Policy
-// document shouldn't be quietly loosenable by a single Coordinator;
-// an Owner always bypasses it
+// self_review, no vote, no second approver required. policy_change
+// defaults to the strictest mode on purpose -- a brand-new repo's own
+// Policy document shouldn't be quietly loosenable by a single
+// Coordinator; an Owner always bypasses it
 // regardless (see engine/lane.ts's writePolicy gate).
 export const DEFAULT_REPO_POLICY: RepoPolicy = {
   visibility: "public",
-  _repo: { mode: "vote_quorum" },
+  policy_change: { mode: "vote_quorum" },
   policies: [{ path: "**", mode: "self_review" }],
 };
 
@@ -34,11 +34,25 @@ export function stricterMode(a: PolicyMode, b: PolicyMode): PolicyMode {
   return MODE_STRICTNESS[a] >= MODE_STRICTNESS[b] ? a : b;
 }
 
-/** A policy persisted before `_repo`/`policies` existed (just `{visibility, require_changeset_review}`) reads back with both fields missing -- every readPolicy implementation runs its result through this instead of trusting the stored JSON's shape directly, so an old repo's Policy document behaves exactly like a new repo's default rather than crashing resolvePolicyMode on an undefined `.policies`. */
-export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"] }): RepoPolicy {
+/**
+ * Normalizes a raw, persisted Policy document into the current shape.
+ * Handles two generations of drift, both read-time-only (nothing is
+ * rewritten in storage until the next real write):
+ *  - Pre-path-scoped-modes documents (just `{visibility,
+ *    require_changeset_review}`) read back with `policy_change` and
+ *    `policies` both missing -- treated exactly like a new repo's
+ *    default rather than crashing resolvePolicyMode on an undefined
+ *    `.policies`.
+ *  - Documents written between this feature's introduction and #35's
+ *    rename, which used the now-retired key `_repo` for what's now
+ *    `policy_change` (collided with the Lane id and Ladder rung path
+ *    of the same literal string -- see engine/types.ts's RepoPolicy).
+ *    A legacy `_repo` is honored if present and `policy_change` isn't.
+ */
+export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"]; _repo?: PolicyRule }): RepoPolicy {
   return {
     visibility: raw.visibility,
-    _repo: raw._repo ?? DEFAULT_REPO_POLICY._repo,
+    policy_change: raw.policy_change ?? raw._repo ?? DEFAULT_REPO_POLICY.policy_change,
     policies: raw.policies ?? DEFAULT_REPO_POLICY.policies,
   };
 }

@@ -36,7 +36,7 @@ export interface RepoPolicySetOptions {
 
 export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): Promise<void> {
   if (!opts.repoRule && !(opts.path && opts.mode)) {
-    throw new Error('Either --repo-rule <mode> (sets "_repo"), or --path <glob> --mode <mode> (upserts one "policies" entry), is required.');
+    throw new Error('Either --repo-rule <mode> (sets "policy_change"), or --path <glob> --mode <mode> (upserts one "policies" entry), is required.');
   }
   const expiryHours = opts.expiryHours ? Number(opts.expiryHours) : undefined;
 
@@ -56,7 +56,7 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
     if (opts.repoRule) {
       validateMode(opts.repoRule);
       const policy = (await callRemoteTool(slug, "policy_set", { actor: identity.username, repo_rule: { mode: opts.repoRule, expiry_hours: expiryHours } })) as RepoPolicy;
-      console.log(`Set ${slug}'s "_repo" rule to "${opts.repoRule}".`);
+      console.log(`Set ${slug}'s "policy_change" rule to "${opts.repoRule}".`);
       console.log(JSON.stringify(policy, null, 2));
     } else {
       validateMode(opts.mode!);

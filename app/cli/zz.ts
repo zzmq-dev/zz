@@ -178,7 +178,7 @@ askCmd
 askCmd
   .command("claim <repo> <ask-id>")
   .description("claim an Ask by hand and open a new Lane for the work (prints its id) -- the manual-CLI counterpart to an agent's own claim step")
-  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo", where `zz repo ask` always posts)')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo", where `zz repo ask` always posts)')
   .option("--as <name>", "claim as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await askClaim(repo, askId, opts);
@@ -187,7 +187,7 @@ askCmd
 askCmd
   .command("answer <repo> <ask-id> <action>")
   .description('answer an Ask by hand -- action is "complete", "deny", "veto" (a changeset_review only, sets the Lane "vetoed"), or "vote" (a vote_request only, payload { ballot: "+1"|"+0"|"-0"|"-1" })')
-  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "answer as a managed agent instead of yourself")
   .option("--payload <json>", "raw JSON payload -- a veto's reason, a vote's ballot, a complete's result, etc.")
   .action(async (repo: string, askId: string, action: string, opts: { lane?: string; as?: string; payload?: string }) => {
@@ -197,7 +197,7 @@ askCmd
 askCmd
   .command("vote-tally <repo> <ask-id>")
   .description("count ballots on a vote_request and close it once every committee member has voted (and, if approved and it was a Policy change, apply it)")
-  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await voteTally(repo, askId, opts);
@@ -209,7 +209,7 @@ askCmd
   .requiredOption("--target-agent <id>", "the Agent the report is about")
   .requiredOption("--reason <text>", "why")
   .option("--target-commit <sha>", "an already-merged commit to revert, if any")
-  .option("--lane <id>", 'which Lane the ask lives in (default: "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "act as a managed agent instead of yourself (must be this Lane's coordinator)")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string; targetAgent: string; targetCommit?: string; reason: string }) => {
     await whistleblowResolve(repo, askId, opts);
@@ -430,7 +430,7 @@ const repoPolicyCmd = repoCmd.command("policy").description("read or change a re
 
 repoPolicyCmd
   .command("show <owner/repo>")
-  .description("print the repo's current Policy document (\"_repo\"'s own rule, plus every path-scoped rule under \"policies\")")
+  .description("print the repo's current Policy document (\"policy_change\"'s own rule, plus every path-scoped rule under \"policies\")")
   .action(async (slug: string) => {
     await repoPolicyShow(slug);
   });
@@ -440,7 +440,7 @@ repoPolicyCmd
   .description(
     'change Policy directly -- only works for an Owner, or for anyone Coordinator+ when whatever\'s being changed is itself under a "direct" rule; anything stricter refuses and tells you to post a changeset_review/vote_request instead',
   )
-  .option("--repo-rule <mode>", 'sets "_repo" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
+  .option("--repo-rule <mode>", 'sets "policy_change" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
   .option("--path <glob>", "with --mode: upserts one \"policies\" entry for this path glob")
   .option("--mode <mode>", "the mode for --path -- direct, self_review, other_approver, vote_quorum, or vote_expiring")
   .option("--expiry-hours <n>", "vote_expiring only -- how long the vote stays open before lazy consensus can close it (default: 72)")

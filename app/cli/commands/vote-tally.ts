@@ -8,6 +8,7 @@ import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { VoteTally } from "../../engine/lane.js";
+import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface VoteTallyOptions {
   lane?: string;
@@ -28,7 +29,7 @@ export async function voteTally(slug: string, askId: string, opts: VoteTallyOpti
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const laneId = opts.lane ?? "_repo";
+    const laneId = opts.lane ?? ORIGIN_LANE_ID;
     const tally = (await callRemoteTool(slug, "vote_tally", { lane_id: laneId, ask_id: askId, actor: identity.username })) as VoteTally;
     if (!tally.resolved) {
       console.log(`Still waiting on: ${tally.missing.join(", ")}. Ballots so far: ${JSON.stringify(tally.ballots)}`);
