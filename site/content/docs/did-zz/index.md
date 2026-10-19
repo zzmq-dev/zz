@@ -5,7 +5,7 @@ description: "Why every existing identity standard either couples identity to in
 ---
 # Design: did:zz
 
-**Status: designed, not built.** This is a rationale-and-shape document, not a submittable formal specification -- the identifier format and delegation model below are settled enough to build against; the full cryptographic/resolution protocol detail a real IETF draft would need is explicitly future work, not pretended-at here.
+**Status: designed, not built.** This is a rationale-and-shape document, not a submittable formal specification -- the identifier format and delegation model below are settled enough to build against. The full cryptographic/resolution protocol detail a real IETF draft would need now has a first draft of its own: [Spec: did:zz method specification](/docs/did-zz-spec/).
 
 ## The requirement, stated precisely
 
@@ -127,7 +127,7 @@ Lineage (above) is permanent historical fact -- who created whom, never revised.
 
 ## What's still open
 
-- Full formal resolution/cryptographic protocol detail -- this document specifies the shape and the reasoning, not a submittable draft.
+- **A first draft of the full formal resolution/cryptographic protocol detail now exists** -- see [Spec: did:zz method specification](/docs/did-zz-spec/). Modeled closely on `did:plc`'s own proven method spec; still a draft, not implemented, with its own open questions (guardian-relinquishment initiation, recovery window duration, directory federation) called out explicitly there rather than glossed over.
 - Exact directory operation model (single `zz`-operated directory to start, versus a path toward multiple independent operators the way `plc.directory` itself has discussed) -- settled in spirit (hosted default, real exit path), not in mechanism.
 - How a `did:zz` identity interoperates with an external DID an agent or human might already hold (someone already has a `did:plc` from Bluesky, say) -- not addressed here.
 - The guardian-of-last-resort question (freeze versus an opt-in `zz`-as-guardian policy) -- posed explicitly above, not resolved.
