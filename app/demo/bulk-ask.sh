@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stage 6 ("bulk ASK posting"): a shell loop driving the real `zz`
-# CLI, one `zz repo ask` call per task -- deliberately not a dedicated
-# bulk-post command. `zz repo ask` already does the one-ask case
+# CLI, one `zz ask post` call per task -- deliberately not a dedicated
+# bulk-post command. `zz ask post` already does the one-ask case
 # correctly, and for a demo narrating "I'm posting a batch of tasks,"
 # a sequence of visible, real commands reads better than one opaque
 # bulk call hiding what's actually happening.
@@ -30,8 +30,8 @@ while IFS= read -r line || [ -n "$line" ]; do
   [ "${line:0:1}" = "#" ] && continue
 
   echo "-> $line"
-  zz repo ask "$repo" "$line"
+  zz ask post "$repo" --remote --description "$line"
   count=$((count + 1))
 done < "$tasks_file"
 
-echo "Posted $count ask(s) to $repo's root Lane."
+echo "Posted $count ask(s) to $repo's origin Lane."

@@ -31,7 +31,7 @@ zz work @me/mathkit --as maint --scope all --provider ollama
 The worker idles, polling for claimable work. In a second window (or `zz top`'s Lanes tab):
 
 ```
-zz repo ask @me/mathkit "implement isEven(n)"
+zz ask post @me/mathkit --remote --description "implement isEven(n)"
 ```
 
 Watch the worker claim it, write `isEven`, open its own `changeset_review`, grant it, merge, and write the Ladder — the full [protocol](/docs/protocol/) sequence, no human step in the middle.

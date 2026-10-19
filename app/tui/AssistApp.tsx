@@ -219,7 +219,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
 
   // "n" from the picker -- browse lanes across the same watched repos
   // and post a plain "work" ask into whichever one you pick, same
-  // payload shape `zz repo ask`/zz top's own lane tab post, reusing
+  // payload shape `zz ask post`/zz top's own lane tab post, reusing
   // LaneList's own interactive mode directly rather than building a
   // second picker.
   const laneSnapshots = useLaneSnapshots(

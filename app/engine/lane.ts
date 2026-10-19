@@ -16,7 +16,7 @@ import type { ChangesetFile } from "./changeset.js";
 import { resolvePolicyMode } from "./policy.js";
 
 // The repo-wide Lane every other Lane traces back to -- never
-// completes, always open, the one a bare `zz repo ask`/`zz work`
+// completes, always open, the one a bare `zz ask post`/`zz work`
 // targets by default. Named and exported here (not just a bare "_repo"
 // literal scattered across call sites) specifically so this, the
 // Lane-identity sense of that string, reads as its own distinct thing

@@ -1,4 +1,4 @@
-# One task description per line -- fed to `zz repo ask` by
+# One task description per line -- fed to `zz ask post` by
 # demo/bulk-ask.sh. Edit this list (or copy it) with the real set of
 # small, independent tasks before recording Stage 6.
 Add an isPrime(n) function that returns whether n is a prime number, with tests.

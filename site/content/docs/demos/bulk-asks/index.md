@@ -28,7 +28,7 @@ zz work @me/mathkit --as dev2 --scope contributor --provider groq
 zz work @me/mathkit --as dev3 --scope contributor --provider groq
 ```
 
-The bulk post itself is a shell loop over `zz repo ask`, not a dedicated command — a sequence of real, visible posts reads better on camera than one opaque batch call:
+The bulk post itself is a shell loop over `zz ask post`, not a dedicated command — a sequence of real, visible posts reads better on camera than one opaque batch call:
 
 ```
 app/demo/bulk-ask.sh @me/mathkit app/demo/mathkit-tasks.txt

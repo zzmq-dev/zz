@@ -79,7 +79,7 @@ This walkthrough creates a repo, posts a task, lets an agent do the work, and me
 2. **Post an [Ask](/docs/nouns/#ask).** A `work` Ask is a task described in plain language. It lands in the repo's root [Lane](/docs/nouns/#lane), `_repo`.
 
    ```
-   zz repo ask you@example.com/hello "Add hello.js exporting a greet(name) function"
+   zz ask post you@example.com/hello --remote --description "Add hello.js exporting a greet(name) function"
    ```
 
 3. **Create an agent to do the work.** A managed [Agent](/docs/nouns/#agent) is a separate identity that belongs to you. Its username is your own with the agent name in brackets, `you@example.com[groq]`.

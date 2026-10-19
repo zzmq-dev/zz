@@ -3,9 +3,13 @@
 // driving/testing `zz work`'s loop by hand (propose some work, watch an
 // agent pick it up). Local-only by default (the original use case);
 // --remote posts to a real hosted repo instead, via the same
-// callRemoteTool path ask-claim.ts/ask-answer.ts use -- needed for
-// posting a kind (vote_request, whistleblow) that has no dedicated
-// REST endpoint the way `zz repo ask`'s "work" posts do.
+// callRemoteTool path ask-claim.ts/ask-answer.ts use. The one real
+// gap this used to have relative to the now-retired `zz repo ask`
+// (#43) -- a brand-new repo with no origin Lane yet throwing "no such
+// lane" -- is fixed at the server (worker/src/webApp.ts's
+// handleApiCallTool self-heals ask_post on exactly that error), not
+// here, so every caller of the generic tool gets it, not just this CLI
+// command.
 import { resolveRepo } from "../lib/repo.js";
 import { ask } from "../../engine/lane.js";
 import type { AskEntry, AskKind } from "../../engine/types.js";
@@ -17,6 +21,7 @@ export interface AskPostOptions {
   kind?: string;
   from?: string;
   description?: string;
+  decompose?: boolean;
   payload?: string;
   priority?: number;
   remote?: boolean;
@@ -29,7 +34,7 @@ export async function askPost(repoSlug: string, laneId: string, options: AskPost
   if (options.payload) {
     payload = JSON.parse(options.payload);
   } else if (options.description) {
-    payload = { description: options.description };
+    payload = { description: options.description, ...(options.decompose ? { decompose: true } : {}) };
   }
 
   if (options.remote) {

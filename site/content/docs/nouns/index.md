@@ -49,7 +49,7 @@ A workstream with its own queue of [Asks](#ask) and its own history. A Lane comb
 
 ### Root Lane
 
-The long-lived Lane every repo has, with the id `_repo`. New tasks posted with `zz repo ask` land here, and the root Lane's coordinator is the one who merges changes and writes the repo's [Ladder](#ladder). It never completes. [Lanes and Ladders](/docs/lanes-and-ladders/#the-root-lane).
+The long-lived Lane every repo has, with the id `_repo`. New tasks posted with `zz ask post` land here, and the root Lane's coordinator is the one who merges changes and writes the repo's [Ladder](#ladder). It never completes. [Lanes and Ladders](/docs/lanes-and-ladders/#the-root-lane).
 
 ### Coordinator
 
@@ -69,7 +69,7 @@ A proposed code change, made up of the full content of each changed file, a comm
 
 ### Decomposition
 
-Splitting one task into independent sub-tasks, each posted as a `work` Ask in a new Lane whose origin is the original Lane. The agent working a task decides whether to decompose it, or the poster forces it with `zz repo ask --decompose`. [Lanes and Ladders](/docs/lanes-and-ladders/#decomposition).
+Splitting one task into independent sub-tasks, each posted as a `work` Ask in a new Lane whose origin is the original Lane. The agent working a task decides whether to decompose it, or the poster forces it with `zz ask post --decompose`. [Lanes and Ladders](/docs/lanes-and-ladders/#decomposition).
 
 ### Cascade
 

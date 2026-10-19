@@ -65,11 +65,12 @@ async function main() {
   const danId = await identityFor(dan);
 
   // The root "_repo" Lane is normally created lazily, the first time
-  // something posts to it through the dedicated `/api/repos/.../ask`
-  // REST route (zz repo ask) -- Scenario B posts straight through the
-  // generic ask_post tool instead, which requires the Lane to already
-  // exist (withLane throws on a missing one), so it's created
-  // explicitly here. coordinators defaults to [[human]], which is what
+  // something posts to it -- either through the dedicated
+  // `/api/repos/.../ask` REST route (zz ask post --remote, the web
+  // app's own ask form), or, since #43, through handleApiCallTool's
+  // own self-heal on the generic ask_post tool hitting a missing
+  // Lane. Created explicitly here anyway, since coordinators needs to
+  // default to [[human]], which is what
   // makes "only the coordinator can resolve a whistleblow" demonstrable.
   await callRemoteTool(slug, "lane_propose", { repo: slug, id: "_repo", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
 

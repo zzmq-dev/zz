@@ -1,9 +1,10 @@
-// `zz repo create/grant/list/ask/asks/clone` -- CLI parity with
-// /profile's repo management and the explore page's search. Same JSON
-// API the web app's own forms call (webApp.ts's doCreateRepo/
-// doRbacGrant/doPostAsk), so behavior (including the "push needs
-// Coordinator+" RBAC rule) is identical regardless of which surface
-// you used.
+// `zz repo create/grant/list/clone` -- CLI parity with /profile's repo
+// management and the explore page's search. Same JSON API the web
+// app's own forms call (webApp.ts's doCreateRepo/doRbacGrant), so
+// behavior (including the "push needs Coordinator+" RBAC rule) is
+// identical regardless of which surface you used. `repo ask`/`asks`
+// retired (#43) in favor of `zz ask post`/`zz ask list`, which work on
+// any Lane, not just the origin one these two always assumed.
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { apiFetch } from "../lib/api.js";
@@ -16,17 +17,6 @@ interface RepoRow {
   owner_username: string;
   created_at: string;
   updated_at: string;
-}
-
-interface LaneHistoryEntry {
-  id: string;
-  type: "ASK" | "ANSWER" | "INSIGHT";
-  kind?: string;
-  from?: string;
-  action?: string;
-  ask?: string;
-  payload?: unknown;
-  at: string;
 }
 
 export async function repoCreate(name: string, opts: { description?: string; ownerUsername?: string }): Promise<void> {
@@ -74,28 +64,6 @@ export async function repoGrant(slug: string, principal: string, role: string): 
   console.log(`Granted ${principal} "${role}" on ${slug}.`);
 }
 
-export async function repoAsk(slug: string, description: string, opts: { decompose?: boolean } = {}): Promise<void> {
-  slug = resolveMe(slug);
-  const [owner, name] = splitSlug(slug);
-  await apiFetch("POST", `/api/repos/${owner}/${name}/ask`, { description, decompose: opts.decompose });
-  console.log(`Posted to ${slug}'s root Lane.${opts.decompose ? " (marked for decomposition into sub-tasks)" : ""}`);
-}
-
-export async function repoAsks(slug: string): Promise<void> {
-  slug = resolveMe(slug);
-  const [owner, name] = splitSlug(slug);
-  const { lane } = await apiFetch<{ lane: { history: LaneHistoryEntry[] } | null }>("GET", `/api/repos/${owner}/${name}/asks`);
-  const history = lane?.history ?? [];
-  if (history.length === 0) {
-    console.log("No Asks posted yet.");
-    return;
-  }
-  for (const e of history) {
-    if (e.type === "ASK") console.log(`[ASK ${e.id}] (${e.kind}) from ${e.from} -- ${JSON.stringify(e.payload)} @ ${e.at}`);
-    else if (e.type === "ANSWER") console.log(`[ANSWER ${e.id}] ${e.action} by ${e.from} on ${e.ask} @ ${e.at}`);
-    else console.log(`[INSIGHT ${e.id}] ${JSON.stringify(e.payload)} @ ${e.at}`);
-  }
-}
 
 // Does the credential embedding manually instead of asking you to --
 // the real reason this exists: the token-as-username convention is

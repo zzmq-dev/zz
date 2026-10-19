@@ -20,11 +20,11 @@ echo "==> Creating $REPO..."
 zz repo create mathkit --description "Small, dependency-free math utilities"
 
 echo "==> Posting the work Ask..."
-zz repo ask "$REPO" "implement sum(...numbers)"
+zz ask post "$REPO" --remote --description "implement sum(...numbers)"
 
-ASK_ID=$(zz repo asks "$REPO" | grep -oE '\[ASK ask-[a-f0-9]+\] \(work\)' | grep -oE 'ask-[a-f0-9]+' | head -1)
+ASK_ID=$(zz ask list "$REPO" | grep -oE '\[ASK ask-[a-f0-9]+\] \(work\)' | grep -oE 'ask-[a-f0-9]+' | head -1)
 if [ -z "$ASK_ID" ]; then
-  echo "Couldn't find the work ask id -- check 'zz repo asks $REPO' by hand." >&2
+  echo "Couldn't find the work ask id -- check 'zz ask list $REPO' by hand." >&2
   exit 1
 fi
 echo "    ask id: $ASK_ID"
@@ -56,7 +56,7 @@ SUBMIT_OUT=$(cd "$CLONE_DIR" && zz repo submit "$REPO" "$LANE_ID" "$ASK_ID" --me
 echo "$SUBMIT_OUT"
 REVIEW_ASK_ID=$(echo "$SUBMIT_OUT" | grep -oE 'changeset_review ask-[a-f0-9]+' | grep -oE 'ask-[a-f0-9]+')
 if [ -z "$REVIEW_ASK_ID" ]; then
-  echo "Couldn't find the changeset_review ask id -- check 'zz repo asks $REPO' by hand." >&2
+  echo "Couldn't find the changeset_review ask id -- check 'zz ask list $REPO' by hand." >&2
   exit 1
 fi
 echo "    changeset_review ask id: $REVIEW_ASK_ID"

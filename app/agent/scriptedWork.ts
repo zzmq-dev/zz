@@ -644,7 +644,7 @@ SUBTASK: <a short name, a few words -- used to label the new Lane>
 
 List at least 2 sub-tasks. Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
 
-/** Splits one "work" Ask (payload.description) into several independent sub-tasks, each posted as a fresh "work" Ask into its own new sibling Lane (lane_propose with this Ask's own Lane as origin) -- then records each one on this Lane's own related_lanes (lane_add_related), the first real populator of that field, so the parent side can enumerate what it spawned. Answers the original Ask complete once every sub-task is posted; never generates or commits any code itself. Triggered when payload.decompose is true (set by `zz repo ask --decompose`) instead of the plain runContributorWorkAsk a "work" Ask normally gets -- see cli/commands/work.ts's own dispatch. */
+/** Splits one "work" Ask (payload.description) into several independent sub-tasks, each posted as a fresh "work" Ask into its own new sibling Lane (lane_propose with this Ask's own Lane as origin) -- then records each one on this Lane's own related_lanes (lane_add_related), the first real populator of that field, so the parent side can enumerate what it spawned. Answers the original Ask complete once every sub-task is posted; never generates or commits any code itself. Triggered when payload.decompose is true (set by `zz ask post --decompose`) instead of the plain runContributorWorkAsk a "work" Ask normally gets -- see cli/commands/work.ts's own dispatch. */
 export async function runDecomposeWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
   const { resolved, laneId, theAsk, agent, alreadyClaimed, backend, onLog, onPartial, callTool = localCallTool } = opts;
   if (!alreadyClaimed) {
@@ -720,7 +720,7 @@ function parseShouldDecompose(text: string): boolean {
   return m[1] === "decompose";
 }
 
-/** What cli/commands/work.ts's autonomous loop actually calls for every "work" Ask now, instead of runContributorWorkAsk directly -- lets the agent itself judge, per Ask, whether to split it (runDecomposeWorkAsk) or just implement it directly (runContributorWorkAsk), via one cheap classification call before either path claims anything (only whichever path actually runs does the real claim, so there's no double-claim). payload.decompose (set by `zz repo ask --decompose`) skips the question and forces decomposition outright -- a human's explicit call always wins over the model's own judgment. */
+/** What cli/commands/work.ts's autonomous loop actually calls for every "work" Ask now, instead of runContributorWorkAsk directly -- lets the agent itself judge, per Ask, whether to split it (runDecomposeWorkAsk) or just implement it directly (runContributorWorkAsk), via one cheap classification call before either path claims anything (only whichever path actually runs does the real claim, so there's no double-claim). payload.decompose (set by `zz ask post --decompose`) skips the question and forces decomposition outright -- a human's explicit call always wins over the model's own judgment. */
 export async function runWorkAsk(opts: ScriptedFlowOptions): Promise<void> {
   const { theAsk, backend, onLog, onPartial } = opts;
   const payload = theAsk.payload as { description?: string; decompose?: boolean } | undefined;

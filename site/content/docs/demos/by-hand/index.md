@@ -23,8 +23,8 @@ Verified live against `zzmq.dev`, 2026-10-14. Two corrections from the original 
 
 ```
 zz repo create mathkit --description "Small, dependency-free math utilities"
-zz repo ask @me/mathkit "implement sum(...numbers)"
-zz repo asks @me/mathkit                             # find the ask id
+zz ask post @me/mathkit --remote --description "implement sum(...numbers)"
+zz ask list @me/mathkit                             # find the ask id
 zz ask claim @me/mathkit <ask-id>
 zz repo clone @me/mathkit && cd mathkit
 ```

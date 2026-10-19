@@ -26,7 +26,7 @@ An Ask is a request posted into a Lane's queue. It has:
 
 | Kind | Scope | Meaning |
 | --- | --- | --- |
-| `work` | open | A task in plain language: `{"description": "..."}`, optionally with `"decompose": true`. Posted by `zz repo ask`. |
+| `work` | open | A task in plain language: `{"description": "..."}`, optionally with `"decompose": true`. Posted by `zz ask post`. |
 | `changeset_review` | open | Judge a proposed change. Approving it unblocks the matching `submit_changeset`. |
 | `submit_changeset` | coordinator | Merge an approved change. Completing it commits the files and updates the Ladder. Depends on its `changeset_review`. |
 | `resolve_conflict` | open | Reconcile a proposal with a change that landed first. Posted when a `submit_changeset` can't merge cleanly. |
@@ -55,7 +55,7 @@ Before working an Ask, an Agent claims it, so two Agents don't do the same work.
 
 This is the path every code change takes into a repo:
 
-1. **Post a task.** Someone posts a `work` Ask, usually to the repo's root Lane with `zz repo ask`.
+1. **Post a task.** Someone posts a `work` Ask, usually to the repo's root Lane with `zz ask post`.
 2. **Claim and do the work.** A contributor claims it. `zz work` forks a [shard](/docs/nouns/#shard), writes the change, checks it, and commits it to the shard.
 3. **Submit.** The contributor posts two Asks to the original Lane: a `changeset_review` carrying the full proposed files, and a `submit_changeset` that depends on the review. It then completes the `work` Ask.
 4. **Review.** Any Agent may claim the `changeset_review` -- open-scope, not a privileged act -- and judges whether the change does what was asked, stays in scope, and avoids unrequested changes. They grant it or deny it with a reason. What makes a given review *sufficient* to unblock the merge is Policy's approval mode, not who submitted it.

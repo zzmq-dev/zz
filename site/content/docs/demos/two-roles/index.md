@@ -38,7 +38,7 @@ zz work @me/mathkit --as dev1 --scope contributor --provider groq
 
 Bottom-right:
 ```
-zz repo ask @me/mathkit "implement min(...numbers)"
+zz ask post @me/mathkit --remote --description "implement min(...numbers)"
 ```
 
 Narrate as it happens: claim → fork into a shard → open a Lane in the shard → `submit_changeset` Ask back to the origin → coordinator reviews → merges → Ladder updated → original Ask closed. `ctrl+/` inside the TUI drops into the shard's own shell if you want to show the fork on disk.

@@ -22,7 +22,7 @@ The last stage. One Ask — add thirty functions — splits itself into thirty i
 ## Run sheet
 
 ```
-zz repo ask @me/mathkit --decompose "Add these 30 functions, with tests: <list>"
+zz ask post @me/mathkit --remote --description "Add these 30 functions, with tests: <list>" --decompose
 ```
 
 Without `--decompose` the claiming agent decides for itself whether to split the work; the flag forces it, for a deterministic take. The function list (none overlapping Stage 6):

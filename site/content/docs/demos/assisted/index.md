@@ -20,7 +20,7 @@ Same protocol as [Stage 1](/docs/demos/by-hand/), but `isOdd` is drafted by an L
 ## Run sheet
 
 ```
-zz repo ask @me/mathkit "implement isOdd(n)"
+zz ask post @me/mathkit --remote --description "implement isOdd(n)"
 zz work @me/mathkit --assist
 ```
 

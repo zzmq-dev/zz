@@ -9,6 +9,7 @@ try {
 import { Command } from "commander";
 import { version, BANNER } from "./lib/banner.js";
 import { registerLocalBackendFactory } from "../engine/backend.js";
+import { ORIGIN_LANE_ID } from "../engine/lane.js";
 import { createLocalBackend } from "../engine/localBackend.js";
 import { ladderBuild } from "./commands/ladder-build.js";
 import type { Provider } from "./lib/resolveChatBackend.js";
@@ -23,11 +24,12 @@ import { review } from "./commands/review.js";
 import { login, whoami } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
-import { repoCreate, repoList, repoGrant, repoAsk, repoAsks, repoClone, repoDelete } from "./commands/repo.js";
+import { repoCreate, repoList, repoGrant, repoClone, repoDelete } from "./commands/repo.js";
 import { repoSubmit } from "./commands/repo-submit.js";
 import { repoPolicyShow, repoPolicySet } from "./commands/repo-policy.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { askAnswer } from "./commands/ask-answer.js";
+import { askList } from "./commands/ask-list.js";
 import { voteTally } from "./commands/vote-tally.js";
 import { whistleblowResolve } from "./commands/whistleblow.js";
 import { laneProposeCmd } from "./commands/lane-propose.js";
@@ -162,23 +164,31 @@ lane
 const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");
 
 askCmd
-  .command("post <repo> <lane>")
-  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Local-only unless --remote.')
+  .command("post <repo> [lane]")
+  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Lane defaults to the origin Lane ("_repo") -- the one `zz repo ask` always posted to, before #43 retired it in favor of this one command. Local-only unless --remote.')
   .option("--kind <kind>", 'Ask kind (default: "work")')
   .option("--from <agent>", 'who it\'s from, local mode only (default: "human")')
   .option("--description <text>", 'shorthand for payload { description: text } -- what kind "work" expects')
+  .option("--decompose", "with --description: mark this task to be split into several independent sub-tasks (each its own new Lane) instead of implemented directly -- picked up by `zz work`'s autonomous loop, not --assist")
   .option("--payload <json>", "raw JSON payload, for any other kind")
   .option("--priority <n>", "higher = more urgent at query time", (v) => parseInt(v, 10))
   .option("--remote", "post to a real hosted repo instead of the local backend -- needed for a kind with no dedicated REST endpoint (e.g. vote_request, whistleblow)")
   .option("--as <name>", "post as a managed agent instead of yourself, remote mode only")
-  .action(async (repo: string, laneId: string, opts: { kind?: string; from?: string; description?: string; payload?: string; priority?: number; remote?: boolean; as?: string }) => {
-    await askPost(repo, laneId, opts);
+  .action(async (repo: string, lane: string | undefined, opts: { kind?: string; from?: string; description?: string; decompose?: boolean; payload?: string; priority?: number; remote?: boolean; as?: string }) => {
+    await askPost(repo, lane ?? ORIGIN_LANE_ID, opts);
+  });
+
+askCmd
+  .command("list <owner/repo> [lane]")
+  .description('show a Lane\'s full history (every ASK/ANSWER/INSIGHT posted so far) -- lane defaults to the origin Lane ("_repo"). Replaces the now-retired `zz repo asks`, which only ever showed the origin Lane.')
+  .action(async (slug: string, lane?: string) => {
+    await askList(slug, lane);
   });
 
 askCmd
   .command("claim <repo> <ask-id>")
   .description("claim an Ask by hand and open a new Lane for the work (prints its id) -- the manual-CLI counterpart to an agent's own claim step")
-  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo", where `zz repo ask` always posts)')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "claim as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await askClaim(repo, askId, opts);
@@ -394,21 +404,6 @@ repoCmd
   .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
   .action(async (slug: string, principal: string, role: string) => {
     await repoGrant(slug, principal, role);
-  });
-
-repoCmd
-  .command("ask <owner/repo> <description>")
-  .description("post a work Ask to a repo's root Lane")
-  .option("--decompose", "mark this task to be split into several independent sub-tasks (each its own new Lane) instead of implemented directly -- picked up by `zz work`'s autonomous loop, not --assist")
-  .action(async (slug: string, description: string, opts: { decompose?: boolean }) => {
-    await repoAsk(slug, description, opts);
-  });
-
-repoCmd
-  .command("asks <owner/repo>")
-  .description("show a repo's root Lane history (every ASK/ANSWER/INSIGHT posted so far)")
-  .action(async (slug: string) => {
-    await repoAsks(slug);
   });
 
 repoCmd

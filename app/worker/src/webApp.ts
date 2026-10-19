@@ -2433,7 +2433,28 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
     await stub.configure(repo.artifacts_name);
     try {
-      const result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
+      let result: unknown;
+      try {
+        result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
+      } catch (err) {
+        // A brand-new repo has no origin Lane yet -- doCreateRepo never
+        // bootstraps one (demo/greenfield.ts's local flow always did;
+        // the remote side only ever caught up for the one dedicated
+        // /api/repos/:owner/:repo/ask REST route, doPostAsk, which both
+        // the web app's own ask form and the now-retired `zz repo ask`
+        // CLI command went through -- #43 retired the CLI-side
+        // duplicate in favor of one generic `ask_post`, which needs this
+        // same self-heal to not regress on a repo that's never had an
+        // Ask posted to it any other way). Bootstrap and retry exactly
+        // once, the same lazy-create doPostAsk already did, rather than
+        // leaving this gap now that it's the only remaining path in.
+        if (toolName === "ask_post" && body.lane_id === ORIGIN_LANE_ID && err instanceof Error && /no such lane: /.test(err.message)) {
+          await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
+          result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
+        } else {
+          throw err;
+        }
+      }
       if (toolName === "ask_answer" && repo.shard_of_slug && typeof body.lane_id === "string") {
         await maybeDisposeShardAfterAnswer(env, repo, body.lane_id);
       }

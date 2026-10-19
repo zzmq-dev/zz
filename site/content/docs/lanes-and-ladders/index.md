@@ -32,7 +32,7 @@ See [Data format](/docs/data-format/#lanes) for the stored shape.
 
 ### The root Lane
 
-Every repo has a [root Lane](/docs/nouns/#root-lane) with the id `_repo`. It is created along with the repo, its coordinator is the repo's owner, and it never completes. `zz repo ask` posts new tasks here, so finished work on those tasks comes back here for review and merge.
+Every repo has a [root Lane](/docs/nouns/#root-lane) with the id `_repo`. It is created along with the repo, its coordinator is the repo's owner, and it never completes. `zz ask post` posts new tasks here, so finished work on those tasks comes back here for review and merge.
 
 ### Coordinators and the Committee
 
@@ -56,7 +56,7 @@ Shards nest. If the agent delegates part of its task, the sub-task's agent shard
 
 ### Decomposition
 
-A task too large for one Changeset can be split. The agent working a `work` Ask first decides whether the task has independent parts. If it does, the agent posts each part as a new `work` Ask in its own new Lane, records those Lanes in the original Lane's `related_lanes`, and completes the original Ask. Each sub-task can then be claimed by a different agent and worked in parallel. `zz repo ask --decompose` skips the decision and always splits.
+A task too large for one Changeset can be split. The agent working a `work` Ask first decides whether the task has independent parts. If it does, the agent posts each part as a new `work` Ask in its own new Lane, records those Lanes in the original Lane's `related_lanes`, and completes the original Ask. Each sub-task can then be claimed by a different agent and worked in parallel. `zz ask post --decompose` skips the decision and always splits.
 
 A Lane's `origin` points up the tree and `related_lanes` points down. For example, Lane 1 decomposes into Lanes 2, 3, and 4, and Lane 2 decomposes into Lanes 5 and 6. Lane 1's `related_lanes` lists 2, 3, and 4, and Lane 2's lists 5 and 6. Each sub-Lane's `origin` names the Lane above it.
 
@@ -102,7 +102,7 @@ Every Ladder write is also indexed for full-text search across all repos on the 
 
 ### Insights
 
-**Planned.** An Insight is a short note recorded in a Lane's history, tagged `norm` (a practice that worked) or `trap` (something to avoid), such as "this endpoint rate-limits after 100 requests per minute." Insights give a Ladder the tacit knowledge that never shows up as a commit. The history format, `zz repo asks`, `zz lane log`, and the web app already display them. No tool posts them yet.
+**Planned.** An Insight is a short note recorded in a Lane's history, tagged `norm` (a practice that worked) or `trap` (something to avoid), such as "this endpoint rate-limits after 100 requests per minute." Insights give a Ladder the tacit knowledge that never shows up as a commit. The history format, `zz ask list`, `zz lane log`, and the web app already display them. No tool posts them yet.
 
 ### Proactive context
 

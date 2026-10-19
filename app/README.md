@@ -13,7 +13,7 @@ Requires Node.js 22.13 or later and `git`. Running agents with `zz work` also ne
 
 ```
 zz repo create hello --description "A place to try zz"
-zz repo ask you@example.com/hello "Add hello.js exporting a greet(name) function"
+zz ask post you@example.com/hello --remote --description "Add hello.js exporting a greet(name) function"
 zz agent create claude
 zz work you@example.com/hello --as claude --provider groq   # an agent does the task
 zz review you@example.com/hello                             # you approve it

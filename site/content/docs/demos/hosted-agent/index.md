@@ -24,7 +24,7 @@ Same layout as Stage 3, worker restarted. Real time, no speed-up — let the spe
 ```
 # stop the Stage 3 worker, then:
 zz work @me/mathkit --as maint --scope all --provider groq
-zz repo ask @me/mathkit "implement max(...numbers)"
+zz ask post @me/mathkit --remote --description "implement max(...numbers)"
 ```
 
 ## Checkpoint
