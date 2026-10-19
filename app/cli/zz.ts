@@ -446,10 +446,27 @@ repoPolicyCmd
   .option("--expiry-hours <n>", "vote_expiring only -- how long the vote stays open before lazy consensus can close it (default: 72)")
   .option("--claim-mode-manual <mode>", 'with --claim-mode-autonomous: sets "claim_mode" -- which claim path `zz ask claim` takes -- "in_place" or "shard"')
   .option("--claim-mode-autonomous <mode>", 'with --claim-mode-manual: sets "claim_mode" -- which claim path the autonomous work loop takes -- "in_place" or "shard"')
+  .option("--retention-mode <mode>", 'sets "retention" -- what happens to a completed work Lane\'s own shard once it goes terminal -- "keep" (default), "dispose" (DESTRUCTIVE: deletes it immediately), or "ttl" (schema only, not yet enforced -- behaves like "keep" today)')
+  .option("--retention-ttl-hours <n>", "ttl only -- hours after the Lane goes terminal before disposal (not yet enforced)")
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
-  .action(async (slug: string, opts: { repoRule?: string; path?: string; mode?: string; expiryHours?: string; claimModeManual?: string; claimModeAutonomous?: string; as?: string }) => {
-    await repoPolicySet(slug, opts);
-  });
+  .action(
+    async (
+      slug: string,
+      opts: {
+        repoRule?: string;
+        path?: string;
+        mode?: string;
+        expiryHours?: string;
+        claimModeManual?: string;
+        claimModeAutonomous?: string;
+        retentionMode?: string;
+        retentionTtlHours?: string;
+        as?: string;
+      },
+    ) => {
+      await repoPolicySet(slug, opts);
+    },
+  );
 
 repoCmd
   .command("submit <owner/repo> <lane-id> <ask-id>")

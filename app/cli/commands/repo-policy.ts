@@ -13,10 +13,11 @@
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import type { ClaimMode, PolicyMode, RepoPolicy } from "../../engine/types.js";
+import type { ClaimMode, PolicyMode, RepoPolicy, RetentionMode } from "../../engine/types.js";
 
 const VALID_MODES = ["direct", "self_review", "other_approver", "vote_quorum", "vote_expiring"];
 const VALID_CLAIM_MODES = ["in_place", "shard"];
+const VALID_RETENTION_MODES = ["keep", "dispose", "ttl"];
 
 function validateMode(mode: string): asserts mode is PolicyMode {
   if (!VALID_MODES.includes(mode)) throw new Error(`--mode must be one of ${VALID_MODES.join(", ")} -- got "${mode}".`);
@@ -24,6 +25,10 @@ function validateMode(mode: string): asserts mode is PolicyMode {
 
 function validateClaimMode(mode: string): asserts mode is ClaimMode {
   if (!VALID_CLAIM_MODES.includes(mode)) throw new Error(`claim mode must be one of ${VALID_CLAIM_MODES.join(", ")} -- got "${mode}".`);
+}
+
+function validateRetentionMode(mode: string): asserts mode is RetentionMode {
+  if (!VALID_RETENTION_MODES.includes(mode)) throw new Error(`retention mode must be one of ${VALID_RETENTION_MODES.join(", ")} -- got "${mode}".`);
 }
 
 export async function repoPolicyShow(slug: string): Promise<void> {
@@ -38,20 +43,23 @@ export interface RepoPolicySetOptions {
   expiryHours?: string;
   claimModeManual?: string;
   claimModeAutonomous?: string;
+  retentionMode?: string;
+  retentionTtlHours?: string;
   as?: string;
 }
 
 export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): Promise<void> {
   const settingClaimMode = opts.claimModeManual || opts.claimModeAutonomous;
-  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode) {
+  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode) {
     throw new Error(
-      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), or --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), is required.',
+      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), or --retention-mode <mode> (sets "retention"), is required.',
     );
   }
   if (settingClaimMode && !(opts.claimModeManual && opts.claimModeAutonomous)) {
     throw new Error("--claim-mode-manual and --claim-mode-autonomous must be set together -- claim_mode is replaced wholesale, not merged.");
   }
   const expiryHours = opts.expiryHours ? Number(opts.expiryHours) : undefined;
+  const retentionTtlHours = opts.retentionTtlHours ? Number(opts.retentionTtlHours) : undefined;
 
   const identity = await resolveIdentity(opts.as);
   setActiveToken(identity.token);
@@ -79,6 +87,14 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
         claim_mode: { manual: opts.claimModeManual, autonomous: opts.claimModeAutonomous },
       })) as RepoPolicy;
       console.log(`Set ${slug}'s "claim_mode" to {manual: "${opts.claimModeManual}", autonomous: "${opts.claimModeAutonomous}"}.`);
+      console.log(JSON.stringify(policy, null, 2));
+    } else if (opts.retentionMode) {
+      validateRetentionMode(opts.retentionMode);
+      const policy = (await callRemoteTool(slug, "policy_set", {
+        actor: identity.username,
+        retention_rule: { mode: opts.retentionMode, ttl_hours: retentionTtlHours },
+      })) as RepoPolicy;
+      console.log(`Set ${slug}'s "retention" rule to "${opts.retentionMode}"${retentionTtlHours ? ` (ttl_hours: ${retentionTtlHours})` : ""}.${opts.retentionMode === "dispose" ? " This is destructive -- a completed work Lane's shard repo will be deleted the moment its Lane goes terminal." : ""}`);
       console.log(JSON.stringify(policy, null, 2));
     } else {
       validateMode(opts.mode!);

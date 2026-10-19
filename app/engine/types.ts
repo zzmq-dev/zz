@@ -48,6 +48,29 @@ export interface PathPolicyRule extends PolicyRule {
 // and always behaves as in_place regardless of this setting.
 export type ClaimMode = "in_place" | "shard";
 
+// What happens to a completed work Lane's own backing shard repo once
+// it reaches a real terminal status (#38's merged/closed/vetoed/
+// stopped -- the "then what" #39 needed that signal for). "keep" --
+// the default, and the only mode that matches every repo's actual
+// behavior before this feature existed, since nothing was ever
+// auto-deleted -- never touches it. "dispose" deletes it immediately
+// once its Lane goes terminal. "ttl" is the schema for a deferred
+// sweep (ttl_hours after termination); the actual scheduled-sweep
+// mechanism is NOT built yet (needs a real scheduling primitive --
+// Durable Object alarms or a cron Worker trigger -- deliberately not
+// rushed alongside the schema), so a repo whose retention.mode is
+// "ttl" today behaves exactly like "keep" until that lands. Only ever
+// applies to a shard repo (repos.shard_of_slug set) -- an origin
+// repo's own retention is never policy-disposed, regardless of this
+// setting.
+export type RetentionMode = "keep" | "dispose" | "ttl";
+
+export interface RetentionRule {
+  mode: RetentionMode;
+  /** ttl only -- hours after the Lane goes terminal before disposal. Not yet enforced; see RetentionMode's own doc comment. */
+  ttl_hours?: number;
+}
+
 // The canonical shape -- worker/src/repoMeta.ts's own RepoPolicy
 // imports this instead of redeclaring it, so the governance layer
 // (engine/lane.ts's tallyVotes, which writes a passed policy vote's
@@ -61,6 +84,8 @@ export interface RepoPolicy {
   policies: PathPolicyRule[];
   /** Which claim path each of the two real entry points takes -- a deliberate, stated Policy choice instead of an implementation accident of which CLI command was used (#37). Defaults to exactly today's pre-existing behavior (manual by-hand claims work in_place; the autonomous work loop shards), so this is purely additive for every already-existing repo. */
   claim_mode: { manual: ClaimMode; autonomous: ClaimMode };
+  /** What happens to a completed work Lane's own shard repo, once #38's real lifecycle gives this a terminal status to key off of (#39). Defaults to "keep" -- matches every repo's actual pre-existing behavior, since nothing was ever auto-deleted before this; "dispose" is a real, destructive opt-in. */
+  retention: RetentionRule;
 }
 
 export type LaneStatus =

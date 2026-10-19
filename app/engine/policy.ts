@@ -18,6 +18,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   policy_change: { mode: "vote_quorum" },
   policies: [{ path: "**", mode: "self_review" }],
   claim_mode: { manual: "in_place", autonomous: "shard" },
+  retention: { mode: "keep" },
 };
 
 // Loosest to strictest -- resolveMode across several touched paths
@@ -52,6 +53,10 @@ export function stricterMode(a: PolicyMode, b: PolicyMode): PolicyMode {
  *  - Documents written before `claim_mode` existed (#37) -- read back
  *    missing that key entirely, defaulting to exactly the pre-#37
  *    behavior (manual in_place, autonomous shard).
+ *  - Documents written before `retention` existed (#39) -- read back
+ *    missing that key entirely, defaulting to "keep", the only mode
+ *    that matches every repo's actual pre-#39 behavior (nothing was
+ *    ever auto-deleted).
  */
 export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"]; _repo?: PolicyRule }): RepoPolicy {
   return {
@@ -59,6 +64,7 @@ export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPol
     policy_change: raw.policy_change ?? raw._repo ?? DEFAULT_REPO_POLICY.policy_change,
     policies: raw.policies ?? DEFAULT_REPO_POLICY.policies,
     claim_mode: raw.claim_mode ?? DEFAULT_REPO_POLICY.claim_mode,
+    retention: raw.retention ?? DEFAULT_REPO_POLICY.retention,
   };
 }
 

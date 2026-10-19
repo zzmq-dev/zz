@@ -541,7 +541,8 @@ function policyPanelHtml(policy: RepoPolicy): string {
   const repoRow = `<li class="row"><span class="rung">policy_change</span> ${policyModeCode(policy.policy_change)}</li>`;
   const pathRows = policy.policies.map((r) => `<li class="row"><span class="rung">${esc(r.path)}</span> ${policyModeCode(r)}</li>`).join("");
   const claimRow = `<li class="row"><span class="rung">claim_mode</span> <span class="scope">manual: ${esc(policy.claim_mode.manual)}</span> <span class="scope">autonomous: ${esc(policy.claim_mode.autonomous)}</span></li>`;
-  return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}${claimRow}</ul></details>`;
+  const retentionRow = `<li class="row"><span class="rung">retention</span> <span class="scope">${esc(policy.retention.mode)}</span></li>`;
+  return `<details class="summary-detail"><summary>Policy</summary><ul class="list">${repoRow}${pathRows}${claimRow}${retentionRow}</ul></details>`;
 }
 
 /** A text input that autocompletes against /api/agents/search as you type -- used anywhere a form asks for a principal (grant-role, add-token, transfer-ownership). Fills in the agent's `username` (the one identifier there is) once a suggestion is clicked; typing one directly and not picking a suggestion still works, same as before. */
@@ -2334,6 +2335,47 @@ const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info"]);
 // bypassed that entirely.
 const COORDINATOR_ONLY_REMOTE_TOOLS = new Set(["commit_changeset", "ladder_write_rung"]);
 
+const TERMINAL_LANE_STATUSES = new Set(["merged", "closed", "vetoed", "stopped"]);
+
+/**
+ * #39's real enforcement point: fires after every `ask_answer` on a
+ * shard repo (never on an ordinary, non-shard repo -- an origin
+ * repo's own retention is never policy-disposed). Reads the just-
+ * answered Lane back (cheap -- one more DO call, same cost any other
+ * post-answer read already has), and if it just reached a terminal
+ * status (#38) for the first time this call, checks the PARENT
+ * repo's own Policy (retention is set on the repo a shard belongs
+ * to, not on the shard itself -- a shard never gets its own distinct
+ * Policy document worth maintaining) and deletes this shard outright
+ * if it says "dispose". Best-effort and silent on any failure --
+ * never lets a retention side effect fail the `ask_answer` call that
+ * triggered it; a shard that fails to delete here is still cleaned up
+ * the next time its parent itself is deleted (doCleanupShards) or
+ * can be removed by hand.
+ */
+async function maybeDisposeShardAfterAnswer(env: WebEnv, shardRepo: RepoRow, laneId: string): Promise<void> {
+  try {
+    const stub = doStub(env, shardRepo.artifacts_name);
+    await stub.configure(shardRepo.artifacts_name);
+    const lane = (await stub.callTool("lane_get", { repo: shardRepo.artifacts_name, lane_id: laneId })) as Lane | null;
+    if (!lane || !TERMINAL_LANE_STATUSES.has(lane.status)) return;
+
+    const parentSlug = shardRepo.shard_of_slug;
+    if (!parentSlug) return;
+    const parentRepo = await getRepoBySlug(env.DB, parentSlug);
+    if (!parentRepo) return;
+    const parentStub = doStub(env, parentRepo.artifacts_name);
+    await parentStub.configure(parentRepo.artifacts_name);
+    const policy = (await parentStub.callTool("policy_show", { repo: parentRepo.artifacts_name })) as RepoPolicy;
+    if (policy.retention.mode !== "dispose") return;
+
+    await env.ARTIFACTS.delete(shardRepo.artifacts_name);
+    await deleteRepoRow(env.DB, shardRepo.slug, shardRepo.artifacts_name);
+  } catch {
+    // Best-effort, see this function's own doc comment.
+  }
+}
+
 async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const repo = await getRepoBySlug(env.DB, slug);
@@ -2392,6 +2434,9 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     await stub.configure(repo.artifacts_name);
     try {
       const result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
+      if (toolName === "ask_answer" && repo.shard_of_slug && typeof body.lane_id === "string") {
+        await maybeDisposeShardAfterAnswer(env, repo, body.lane_id);
+      }
       return json({ result });
     } catch (err) {
       throw new ApiError(400, err instanceof Error ? err.message : String(err));
