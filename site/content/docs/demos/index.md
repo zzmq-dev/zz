@@ -7,7 +7,7 @@ description: "Runnable scenarios for the zz demo video: voice-over script, exact
 
 Each page here is one scenario from the [demo video](/docs/overview/) run sheet: a voice-over script to read aloud, the exact commands or code behind it, and what to expect when it runs. They're written to be followed, not just read — every command shown has actually been run against a real repo on `zzmq.dev`.
 
-The first seven are the original `mathkit` run sheet, one function at a time, handing more of the work from the human to agents at each stage. The last two cover [Committee, Vote, VETO, Policy](/docs/governance/#committee) and [Whistleblow, STOP/DROP/ROLL](/docs/protocol/#incident-response) — governance and incident response, previously documented as **Planned**, now built at demo-level rigor and verified live.
+The first seven are the original `mathkit` run sheet, one function at a time, handing more of the work from the human to agents at each stage. The next two cover [Committee, Vote, VETO, Policy](/docs/governance/#committee) and [Whistleblow, STOP/DROP/ROLL](/docs/protocol/#incident-response) — governance and incident response, previously documented as **Planned**, now built at demo-level rigor and verified live. The last covers [Mediated conflict resolution](/docs/mediated-conflict-resolution/) — a real shared-dependency conflict, reconciled by a real model call instead of a forced pick.
 
 ## A rule for every scenario with a bad actor
 
@@ -28,6 +28,7 @@ Everything on the other side — voting, reviewing, deciding whether a report is
 | [7. Decomposition](/docs/demos/decomposition/) | One Ask splits into many, merging back up to the root | `--decompose` |
 | [Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) | A Policy change requires a real Vote, never just nobody objecting in time | `demo/governance-and-incident-demo.ts`, `demo/governance-live-agents.ts` |
 | [Whistleblow & incident response](/docs/demos/whistleblow-and-incident-response/) | Tainted work gets caught, reverted for real, and recorded | same two scripts |
+| [Mediated Conflict Resolution](/docs/demos/mediated-conflict-resolution/) | A real shared-dependency conflict gets reconciled by a real mediation call, not a forced pick -- and the fix surfaces for the next contributor automatically | `demo/mediated-conflict-demo.ts` |
 
 ## Setup shared by every scenario
 
@@ -40,4 +41,4 @@ Agents created for one scenario (`zz agent create <name>`) stick around until yo
 
 ## Cleaning up
 
-Stages 1–7 are one continuous take on the same `mathkit` repo and the same growing set of agents, each stage deliberately building on the one before it — there's nothing to clean up until [Stage 7](/docs/demos/decomposition/)'s own checkpoint, which covers the whole thing in one pass. The Committee Vote & Policy and Whistleblow demos are independent of `mathkit` and of each other's *repo* (each creates its own throwaway one) but share one script run and its four agents between them — clean up once, after whichever of the two you ran last. Every page's own checkpoint says exactly what that page added and, where it's the end of a chain, how to remove all of it.
+Stages 1–7 are one continuous take on the same `mathkit` repo and the same growing set of agents, each stage deliberately building on the one before it — there's nothing to clean up until [Stage 7](/docs/demos/decomposition/)'s own checkpoint, which covers the whole thing in one pass. The Committee Vote & Policy and Whistleblow demos are independent of `mathkit` and of each other's *repo* (each creates its own throwaway one) but share one script run and its four agents between them — clean up once, after whichever of the two you ran last. Mediated Conflict Resolution is fully independent of every other demo here — its own throwaway repo, no agents created at all (the script runs as whoever is logged in) — clean up with the one `zz repo delete` its own checkpoint prints. Every page's own checkpoint says exactly what that page added and, where it's the end of a chain, how to remove all of it.

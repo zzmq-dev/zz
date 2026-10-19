@@ -474,12 +474,22 @@ export async function searchLadderIndex(db: D1Database, query: string, limit: nu
   // an unquoted "." (any bare file path, e.g. "math.js"), "-", ":" or
   // similar is query syntax to it, not a token, and throws
   // "fts5: syntax error" (confirmed live, 2026-10-19, while verifying
-  // #9's own ladder_search call on a path). Wrapping the whole query
-  // in doubled quotes forces a plain phrase match -- safe for any
-  // caller's input (a path, a symbol, a sentence), never a syntax
-  // error, at the cost of losing FTS5's own AND/OR/prefix operators
-  // for a caller that actually wanted them (none do today).
-  const phraseQuery = `"${query.replace(/"/g, '""')}"`;
+  // #9's own ladder_search call on a path). Quoting each whitespace-
+  // separated word individually, rather than the whole query as one
+  // phrase, keeps every token's own punctuation safe (a quoted token
+  // is always a literal, regardless of what's inside it) while still
+  // ANDing the words together -- FTS5's own default for several bare
+  // tokens, so a plain multi-word query (a task description, several
+  // keywords) still matches a summary containing all of them in any
+  // order, not just that exact adjacent phrase (confirmed live: an
+  // earlier, whole-query version of this fix quoted the full string
+  // as one phrase and silently stopped matching any multi-word query
+  // whose words weren't literally adjacent in the indexed summary).
+  const phraseQuery = query
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => `"${word.replace(/"/g, '""')}"`)
+    .join(" ");
   const result = await db
     .prepare(
       `SELECT r.slug AS repo_slug, li.path, li.kind, li.commit_sha, li.summary
