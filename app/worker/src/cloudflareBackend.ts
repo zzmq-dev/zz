@@ -94,6 +94,17 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
       const legacy = lane as unknown as { maintainers?: string[] };
       lane.committee = legacy.maintainers ?? lane.coordinators;
     }
+    // #41: owners/viewers didn't exist before tonight -- a Lane
+    // written before this lands reads back with both fields entirely
+    // absent (not an empty array; genuinely `undefined`), which threw
+    // live on the very first real pre-existing repo this was tried
+    // against (ensureOriginLaneRoles's own `.length` read). Normalized
+    // here, the same single choke point committee's own legacy
+    // migration already uses, rather than defensively guarding every
+    // owners/viewers read elsewhere against a shape that should only
+    // ever exist for one brief moment right after deserializing.
+    if (lane.owners === undefined) lane.owners = [];
+    if (lane.viewers === undefined) lane.viewers = [];
     return lane;
   }
   function readLaneSync(laneId: string): Lane | null {

@@ -42,7 +42,20 @@ function randomId(prefix: string): string {
 
 export async function proposeLane(
   repo: string,
-  input: { id: string; repo: string; name: string; objective: string; scope: string[]; proposedBy: string; origin?: LaneRef | null; reason?: string; coordinators?: string[]; committee?: string[] },
+  input: {
+    id: string;
+    repo: string;
+    name: string;
+    objective: string;
+    scope: string[];
+    proposedBy: string;
+    origin?: LaneRef | null;
+    reason?: string;
+    coordinators?: string[];
+    committee?: string[];
+    owners?: string[];
+    viewers?: string[];
+  },
 ): Promise<Lane> {
   const trigger: Trigger = { kind: "manual", proposed_by: input.proposedBy, reason: input.reason };
   const coordinators = input.coordinators ?? [input.proposedBy];
@@ -61,6 +74,12 @@ export async function proposeLane(
     // narrow this explicitly (e.g. to a single human actor id) to
     // require real votes from a specific set of agents.
     committee: input.committee ?? coordinators,
+    // Empty for an ordinary work Lane -- only the origin Lane's own
+    // bootstrap (worker/src/webApp.ts's doCreateRepo) passes these,
+    // naming the repo's real owner(s). See Lane.owners's own doc
+    // comment (engine/types.ts).
+    owners: input.owners ?? [],
+    viewers: input.viewers ?? [],
     history: [],
     related_lanes: [],
   };
@@ -68,30 +87,93 @@ export async function proposeLane(
   return lane;
 }
 
+/** Highest tier `principal` holds on this Lane's repo-level hierarchy -- "viewer" is the floor, same semantics worker/src/repoMeta.ts's old repoRoleFor used (everyone is at least a viewer; it's laneHasAnyGrant below, not this, that distinguishes an explicit grant from none at all for private-repo read). */
+export function laneRoleFor(lane: Lane, principal: string): "owner" | "coordinator" | "viewer" {
+  if (lane.owners.includes(principal)) return "owner";
+  if (lane.coordinators.includes(principal)) return "coordinator";
+  return "viewer";
+}
+
+export function laneHasOwner(lane: Lane, principal: string): boolean {
+  return lane.owners.includes(principal);
+}
+
+export function laneHasCoordinatorOrAbove(lane: Lane, principal: string): boolean {
+  return lane.owners.includes(principal) || lane.coordinators.includes(principal);
+}
+
+/** An explicit grant of any tier (owner, coordinator, or viewer) -- as opposed to no grant at all. The one thing that actually distinguishes a repo-level Contributor/Viewer grant from an ungranted visitor: read access to a private repo (see site/content/docs/governance/#role's own direct audit of this). */
+export function laneHasAnyGrant(lane: Lane, principal: string): boolean {
+  return lane.owners.includes(principal) || lane.coordinators.includes(principal) || lane.viewers.includes(principal);
+}
+
 /**
- * Adds `principal` to an EXISTING Lane's `coordinators` or `committee`
- * list -- the thing proposeLane's own `coordinators`/`committee`
- * params can't do, since those only ever apply at the moment a Lane is
- * first proposed. Needed because granting a repo-level Role
- * (site/content/docs/governance's "Planned: Tying Lane rights to repo
- * Roles") has no effect on any Lane's own authority today -- `_repo`
- * in particular is created lazily on first post with its committee
+ * Adds `principal` to an EXISTING Lane's `owners`/`coordinators`/
+ * `viewers`/`committee` list -- the thing proposeLane's own params
+ * can't do, since those only ever apply at the moment a Lane is first
+ * proposed. The repo-level-Role-equivalent tiers (owner/coordinator/
+ * viewer, #41) only matter on the origin Lane in practice, but the
+ * function itself doesn't special-case which Lane it's called on --
+ * same reasoning as everywhere else this session landed on "one
+ * mechanism, not two kept in sync by hand."
+ *
+ * Granting "owner" requires already holding owner -- the top tier
+ * grants itself, the same escape-hatch shape Policy's own
+ * `policy_change` already has (an Owner always may; nothing else
+ * reaches this high). Granting anything else (coordinator/viewer/
+ * committee) requires owner OR coordinator -- the same "authority only
+ * comes from an explicit grant" principle every other RBAC check here
+ * already follows, not an owner-only action, since a Lane's own
+ * coordinator is the one who actually knows who should share its
+ * authority. (Before #41, this only handled coordinator/committee,
+ * gated to coordinators only -- granting a repo-level Role had no
+ * effect on any Lane's own authority at all, confirmed live as a real
+ * gap: `_repo` is created lazily on first post with its committee
  * hardcoded to just the repo's owner, so a Coordinator-Role agent
  * granted afterward could claim open-scope work forever but never
- * actually cast a vote on any of it, with no way to fix that short
- * of this. Gated to the Lane's own current coordinators -- the same
- * "authority only comes from an explicit grant" principle every other
- * RBAC check here already follows, not a repo-Owner-only action,
- * since a Lane's coordinator is the one who actually knows who should
- * share its authority.
+ * actually cast a vote on any of it.)
  */
-export async function grantLaneRole(repo: string, laneId: string, input: { principal: string; as: "coordinator" | "committee"; grantedBy: string }): Promise<Lane> {
+export async function grantLaneRole(repo: string, laneId: string, input: { principal: string; as: "owner" | "coordinator" | "viewer" | "committee"; grantedBy: string }): Promise<Lane> {
   return resolveBackend().withLane(repo, laneId, (lane) => {
-    if (!lane.coordinators.includes(input.grantedBy)) {
-      throw new Error(`"${input.grantedBy}" cannot grant Lane roles on "${laneId}" -- only one of its own coordinators (${lane.coordinators.join(", ")}) can.`);
+    const granterCanActAtAll = laneHasCoordinatorOrAbove(lane, input.grantedBy);
+    if (input.as === "owner") {
+      if (!laneHasOwner(lane, input.grantedBy)) {
+        throw new Error(`"${input.grantedBy}" cannot grant Owner on "${laneId}" -- only one of its own owners (${lane.owners.join(", ") || "none"}) can.`);
+      }
+    } else if (!granterCanActAtAll) {
+      throw new Error(`"${input.grantedBy}" cannot grant Lane roles on "${laneId}" -- only one of its own owners or coordinators (${[...lane.owners, ...lane.coordinators].join(", ")}) can.`);
     }
-    const list = input.as === "coordinator" ? lane.coordinators : lane.committee;
+    const list = input.as === "owner" ? lane.owners : input.as === "coordinator" ? lane.coordinators : input.as === "viewer" ? lane.viewers : lane.committee;
     if (!list.includes(input.principal)) list.push(input.principal);
+  });
+}
+
+/**
+ * The inverse of grantLaneRole -- same gating (owner-only to revoke
+ * Owner itself, owner-or-coordinator for everything else). Unlike a
+ * grant, removing the LAST owner is refused outright: an origin Lane
+ * with zero owners has no one left who could ever grant another one
+ * back (grantLaneRole's own "owner" gate requires already holding
+ * owner), which would permanently lock the repo -- the one case this
+ * function won't let happen even at an owner's own request. Revoking
+ * from a list the principal isn't actually on is a no-op, not an
+ * error -- matches how doRevokeGrant always behaved.
+ */
+export async function revokeLaneRole(repo: string, laneId: string, input: { principal: string; as: "owner" | "coordinator" | "viewer" | "committee"; revokedBy: string }): Promise<Lane> {
+  return resolveBackend().withLane(repo, laneId, (lane) => {
+    if (input.as === "owner") {
+      if (!laneHasOwner(lane, input.revokedBy)) {
+        throw new Error(`"${input.revokedBy}" cannot revoke Owner on "${laneId}" -- only one of its own owners (${lane.owners.join(", ") || "none"}) can.`);
+      }
+      if (lane.owners.includes(input.principal) && lane.owners.length === 1) {
+        throw new Error(`cannot revoke "${input.principal}" as Owner of "${laneId}" -- they're its only owner, and removing the last one would leave no one able to grant it back.`);
+      }
+    } else if (!laneHasCoordinatorOrAbove(lane, input.revokedBy)) {
+      throw new Error(`"${input.revokedBy}" cannot revoke Lane roles on "${laneId}" -- only one of its own owners or coordinators (${[...lane.owners, ...lane.coordinators].join(", ")}) can.`);
+    }
+    const list = input.as === "owner" ? lane.owners : input.as === "coordinator" ? lane.coordinators : input.as === "viewer" ? lane.viewers : lane.committee;
+    const idx = list.indexOf(input.principal);
+    if (idx !== -1) list.splice(idx, 1);
   });
 }
 

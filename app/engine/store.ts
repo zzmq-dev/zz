@@ -78,6 +78,11 @@ function migrateLane(lane: Lane): Lane {
     const legacy = lane as unknown as { maintainers?: string[] };
     lane.committee = legacy.maintainers ?? lane.coordinators;
   }
+  // #41: owners/viewers didn't exist before tonight -- same fix as
+  // worker/src/cloudflareBackend.ts's own migrateLane, see its doc
+  // comment for the live crash this was found from.
+  if (lane.owners === undefined) lane.owners = [];
+  if (lane.viewers === undefined) lane.viewers = [];
   return lane;
 }
 

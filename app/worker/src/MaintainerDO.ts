@@ -53,4 +53,33 @@ export class MaintainerDO extends DurableObject<Env> {
     if (!tool) throw new Error(`no such tool: ${name}`);
     return withBackend(this.backend, () => tool.execute(args));
   }
+
+  /**
+   * #41's one-time migration step: seeds a Lane's owners/coordinators/
+   * viewers from a repo's old roles.json grants, exactly once. Not a
+   * ToolDef -- deliberately a separate, typed RPC method rather than
+   * another string-dispatched callTool() name, so it is NOT reachable
+   * through handleApiCallTool's generic /tools/:name passthrough (an
+   * external caller supplying their own `owners` there would be a
+   * real ownership-hijack hole). Only webApp.ts's own trusted
+   * TypeScript code can call this, by calling the method directly on
+   * the stub.
+   *
+   * Refuses outright if the Lane already has any owner -- the self-
+   * limiting gate that makes this safe to call unconditionally on
+   * every real RBAC check (ensureOriginLaneRoles, webApp.ts): once a
+   * repo is migrated, this becomes a permanent no-op for it, so it can
+   * never be used to overwrite an already-owned Lane's roles, by
+   * anyone, including this same code calling it again.
+   */
+  async seedOriginLaneRolesIfUnset(laneId: string, owners: string[], coordinators: string[], viewers: string[]): Promise<void> {
+    await withBackend(this.backend, () =>
+      this.backend.withLane(this.artifactsName, laneId, (lane) => {
+        if (lane.owners.length > 0) return;
+        lane.owners = owners;
+        for (const c of coordinators) if (!lane.coordinators.includes(c)) lane.coordinators.push(c);
+        lane.viewers = viewers;
+      }),
+    );
+  }
 }

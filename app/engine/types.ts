@@ -283,6 +283,29 @@ export interface Lane {
   // flows keep working; narrow it to require a specific set of real
   // votes.
   committee: string[];
+  // The repo-level Role hierarchy (#41), collapsed onto the Lane that
+  // was already the real unit of authority instead of living as a
+  // separate, parallel system (worker/src/repoMeta.ts's old
+  // RbacRole/roles.json) that could silently drift from this Lane's
+  // own coordinators -- confirmed drifted in practice: granting
+  // repo-level "coordinator" never added anyone to a Lane's own
+  // coordinators list, so it never actually let them merge anything
+  // (#32's "permission-model gotcha"). Meaningful only on the origin
+  // Lane (the repo-wide one, id "_repo") -- an ordinary work Lane
+  // just leaves both empty, since it has no repo-level authority of
+  // its own to hold.
+  //
+  // owners: the top tier -- delete, transfer, grant/revoke any of
+  // these three lists, bypass Policy's policy_change gate
+  // unconditionally. coordinators (above) doubles as the
+  // repo-level "coordinator" tier directly -- same list, same
+  // meaning, not two things kept in sync by hand. viewers: explicit
+  // read access to a private repo; collapses what used to be two
+  // separate tiers (Contributor, Viewer) into one, confirmed by a
+  // direct audit (site/content/docs/governance/#role) that nothing
+  // anywhere actually enforced a difference between them.
+  owners: string[];
+  viewers: string[];
   budget?: { cap_usd: number; spent_usd: number };
   history: HistoryEntry[];
   related_lanes: RelatedLaneEntry[];

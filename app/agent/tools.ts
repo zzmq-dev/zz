@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { resolveRepo } from "../cli/lib/repo.js";
 import { fetchContributors, fetchIssues, fetchPullRequests, fetchReleases, fetchThreadComments } from "../engine/ingest.js";
-import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, grantLaneRole, revokeLaneRole, addRelatedLane, tallyVotes, runIncidentRunbook, postInsight } from "../engine/lane.js";
 import { computeTrust } from "../engine/trust.js";
 import { claimableAsks, claimHolder, isResolved } from "../engine/workqueue.js";
 import { resolveBackend } from "../engine/backend.js";
@@ -365,10 +365,17 @@ const laneProposeTool: ToolDef = {
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
       id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the origin Lane every other Lane in a repo traces back to.' },
       committee: { type: "array", items: { type: "string" }, description: "Who must cast a ballot on a vote_request -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee. changeset_review no longer uses this; it's open-scope, any agent may submit one." },
+      owners: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          'Repo-level Owner tier (#41) -- meaningful only when this IS the origin Lane ("_repo"); an ordinary work Lane has no repo-level authority of its own and should omit this. Defaults to empty, NOT to [actor] -- unlike coordinators, proposing a Lane does not make you its owner.',
+      },
+      viewers: { type: "array", items: { type: "string" }, description: "Repo-level explicit-read-access tier (#41) -- same origin-Lane-only caveat as owners. Grants read access to a private repo." },
     },
     required: ["repo", "name", "objective", "scope", "actor"],
   },
-  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id, committee }) {
+  async execute({ repo, name, objective, scope, origin_lane, origin_repo, actor, id, committee, owners, viewers }) {
     const origin: LaneRef | undefined = origin_lane ? { repo: (origin_repo as string) ?? (repo as string), lane: origin_lane as string } : undefined;
     return proposeLane(repo as string, {
       id: (id as string) ?? shortId("lane"),
@@ -379,6 +386,8 @@ const laneProposeTool: ToolDef = {
       proposedBy: actor as string,
       coordinators: [actor as string],
       committee: committee as string[] | undefined,
+      owners: owners as string[] | undefined,
+      viewers: viewers as string[] | undefined,
       origin,
     });
   },
@@ -387,20 +396,40 @@ const laneProposeTool: ToolDef = {
 const laneGrant: ToolDef = {
   name: "lane_grant",
   description:
-    'Adds an agent to an EXISTING Lane\'s coordinators or committee -- the only way to do this after the Lane was first proposed (lane_propose\'s own coordinators/committee only apply at creation). Needed because a repo-level Role grant has no effect on any Lane\'s own authority by itself. Only one of the Lane\'s own current coordinators may call this.',
+    'Adds an agent to an EXISTING Lane\'s owners/coordinators/viewers/committee -- the only way to do this after the Lane was first proposed (lane_propose\'s own params only apply at creation). owner/coordinator/viewer are the repo-level Role hierarchy (#41), meaningful on the origin Lane ("_repo"); committee is the unrelated voting axis any Lane can have. Granting "owner" requires already holding owner; granting anything else requires owner or coordinator.',
   parameters: {
     type: "object",
     properties: {
       repo: { type: "string" },
       lane_id: { type: "string" },
       principal: { type: "string", description: "The agent id to add" },
-      as: { type: "string", enum: ["coordinator", "committee"] },
-      actor: { type: "string", description: "Your agent id -- must already be one of this Lane's coordinators" },
+      as: { type: "string", enum: ["owner", "coordinator", "viewer", "committee"] },
+      actor: { type: "string", description: "Your agent id -- must already hold owner (to grant owner) or owner/coordinator (for anything else) on this Lane" },
     },
     required: ["repo", "lane_id", "principal", "as", "actor"],
   },
   async execute({ repo, lane_id, principal, as, actor }) {
-    return grantLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "coordinator" | "committee", grantedBy: actor as string });
+    return grantLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "owner" | "coordinator" | "viewer" | "committee", grantedBy: actor as string });
+  },
+};
+
+const laneRevoke: ToolDef = {
+  name: "lane_revoke",
+  description:
+    'The inverse of lane_grant: removes an agent from one of a Lane\'s owners/coordinators/viewers/committee lists. Same gating as lane_grant (owner-only to revoke owner, owner-or-coordinator for the rest), plus one extra refusal lane_grant doesn\'t need: revoking the LAST remaining owner is refused outright, since an origin Lane with zero owners would have no one left who could ever grant another one back.',
+  parameters: {
+    type: "object",
+    properties: {
+      repo: { type: "string" },
+      lane_id: { type: "string" },
+      principal: { type: "string", description: "The agent id to remove" },
+      as: { type: "string", enum: ["owner", "coordinator", "viewer", "committee"] },
+      actor: { type: "string", description: "Your agent id -- must already hold owner (to revoke owner) or owner/coordinator (for anything else) on this Lane" },
+    },
+    required: ["repo", "lane_id", "principal", "as", "actor"],
+  },
+  async execute({ repo, lane_id, principal, as, actor }) {
+    return revokeLaneRole(repo as string, lane_id as string, { principal: principal as string, as: as as "owner" | "coordinator" | "viewer" | "committee", revokedBy: actor as string });
   },
 };
 
@@ -922,7 +951,7 @@ const policySet: ToolDef = {
 };
 
 export const GIT_TOOLS: ToolDef[] = [gitLog, gitDiff, gitShowFile, ghFetchIssues, ghFetchPullRequests, ghFetchReleases, ghFetchContributors, ghFetchThreadComments];
-export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
+export const LADDER_LANE_TOOLS: ToolDef[] = [ladderRead, ladderTree, ladderSearch, ladderReindex, ladderWriteRung, laneProposeTool, laneGrant, laneRevoke, laneAddRelated, laneGet, laneList, askPostTool, askQueryClaimable, askClaim, askRelease, askAnswerTool, voteTally, whistleblowResolve, insightPost, trustGet, policyShow, policySet, repoInfo];
 export const CODE_TOOLS: ToolDef[] = [commitChangesetTool, runInSandbox];
 export const ALL_TOOLS: ToolDef[] = [...GIT_TOOLS, ...LADDER_LANE_TOOLS, ...CODE_TOOLS];
 

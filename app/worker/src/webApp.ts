@@ -89,7 +89,7 @@ import {
   type OAuthEnv,
   type Provider,
 } from "./auth.js";
-import { ensureMeta, readRepoMeta, readRepoMetaAndRoles, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole } from "./repoMeta.js";
+import { ensureMeta, readRepoMeta, readRepoMetaAndRoles, readRepoRoles, repoAtLeast, repoRoleFor, writeRepoRoles, writeRepoMeta, type RbacRole, type RepoRoles } from "./repoMeta.js";
 import { LICENSES, LICENSE_ORDER, type LicenseOption } from "./licenses.js";
 import { isRef, type EmbeddedRung } from "../../engine/ladderNotes.js";
 import { REPO_RUNG_PATH, type Rung } from "../../engine/ladder.js";
@@ -97,7 +97,7 @@ import type { ResolvedRung } from "../../engine/ladderRender.js";
 import { claimableAsks, claimHolder } from "../../engine/workqueue.js";
 import type { AnswerEntry, AskEntry, HistoryEntry, InsightEntry, Lane, RepoPolicy } from "../../engine/types.js";
 import { DEFAULT_REPO_POLICY, normalizePolicy } from "../../engine/policy.js";
-import { ORIGIN_LANE_ID } from "../../engine/lane.js";
+import { ORIGIN_LANE_ID, laneHasOwner, laneHasCoordinatorOrAbove, laneHasAnyGrant } from "../../engine/lane.js";
 
 export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
@@ -1140,7 +1140,7 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // (not just "no history yet", genuinely no Lane at all), which is
   // why a freshly created repo looked completely unreachable from zz
   // top's protocol/lanes tabs, not just empty -- confirmed live.
-  await stub.callTool("lane_propose", { repo: artifactsName, id: REPO_RUNG_PATH, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username });
+  await stub.callTool("lane_propose", { repo: artifactsName, id: REPO_RUNG_PATH, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username, owners: [owner.username] });
 
   return row;
 }
@@ -1239,39 +1239,53 @@ async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskTe
   return row;
 }
 
+// Old repo-level Role -> new Lane tier (#41) -- contributor collapses
+// into viewer (laneHasAnyGrant's own doc comment; a direct audit
+// found nothing anywhere that actually enforced a difference).
+function laneTierFor(role: RbacRole): "owner" | "coordinator" | "viewer" {
+  return role === "owner" ? "owner" : role === "coordinator" ? "coordinator" : "viewer";
+}
+
 async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
   if (!(await getAgent(env.DB, principal))) throw new ApiError(404, `no such agent "${principal}"`);
 
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("write", 3600);
-  const info = await artifactsRepo.info();
-
-  const roles = await readRepoRoles(info.remote, token);
   // No more "or any agent I created" indirection -- peers means the
   // ACTOR's own standing is what's checked, full stop, same as every
-  // other RBAC check in this codebase (canReadRepo/canPushRepo).
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
-
-  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
-  nextGrants.push({ principal, role, granted_by: actor.username, at: new Date().toISOString() });
-  await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
+  // other RBAC check in this codebase (canReadRepo/canPushRepo). Kept
+  // at Owner-only here even though lane_grant's own internal gate
+  // would allow a Coordinator to grant coordinator/viewer -- this API
+  // endpoint's authority bar doesn't widen just because the mechanism
+  // under it moved (#41). `roles: null` -- ensureOriginLaneRoles's
+  // migration fallback only matters for a repo nothing has ever
+  // resolved the origin Lane for yet; by the time anyone can name it
+  // as a grant target here, getRepoAccessContext (every page view)
+  // has already migrated it.
+  const lane = await requireLaneOwner(env, repo, null, actor, repoSlug);
+  const stub = doStub(env, repo.artifacts_name);
+  await stub.configure(repo.artifacts_name);
+  await stub.callTool("lane_grant", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, principal, as: laneTierFor(role), actor: actor.username });
+  const tier = laneTierFor(role);
+  if (tier === "owner" && !lane.owners.includes(principal)) lane.owners.push(principal);
+  if (tier === "coordinator" && !lane.coordinators.includes(principal)) lane.coordinators.push(principal);
+  if (tier === "viewer" && !lane.viewers.includes(principal)) lane.viewers.push(principal);
+  await syncRepoRoleCache(env.DB, repo.slug, laneGrantsForCache(lane));
 }
 
-/** Removes one grant by its exact stored `principal` value -- doesn't require it to resolve to a current agent, so a stale/orphaned grant can still be cleaned up. */
+/** Removes one grant by its exact stored `principal` value -- doesn't require it to resolve to a current agent, so a stale/orphaned grant can still be cleaned up. Tries all three tiers (a principal's exact current tier isn't known to the caller, and lane_revoke is a no-op for a list they're not actually on). */
 async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("write", 3600);
-  const info = await artifactsRepo.info();
-  const roles = await readRepoRoles(info.remote, token);
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
-  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== principal);
-  await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
+  const lane = await requireLaneOwner(env, repo, null, actor, repoSlug);
+  const stub = doStub(env, repo.artifacts_name);
+  await stub.configure(repo.artifacts_name);
+  for (const as of ["owner", "coordinator", "viewer"] as const) {
+    if (as === "owner" && lane.owners.includes(principal) && lane.owners.length === 1) continue; // same last-owner protection lane_revoke itself enforces
+    await stub.callTool("lane_revoke", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, principal, as, actor: actor.username });
+  }
+  const updatedLane = (await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID })) as Lane;
+  await syncRepoRoleCache(env.DB, repo.slug, laneGrantsForCache(updatedLane));
 }
 
 async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visibility: "public" | "private"): Promise<void> {
@@ -1282,7 +1296,7 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   const info = await artifactsRepo.info();
   const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  await requireLaneOwner(env, repo, roles, actor, repoSlug);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
   await updateRepoVisibility(env.DB, repo.slug, visibility);
 
@@ -1305,7 +1319,7 @@ async function doSetDescription(env: WebEnv, actor: Agent, repoSlug: string, des
   const info = await artifactsRepo.info();
   const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  await requireLaneOwner(env, repo, roles, actor, repoSlug);
   await writeRepoMeta(info.remote, token, { ...meta, description });
   await updateRepoDescription(env.DB, repo.slug, description);
 }
@@ -1319,15 +1333,21 @@ async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, 
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
-  const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
+  const { meta } = await readRepoMetaAndRoles(info.remote, token);
   if (!meta) throw new ApiError(404, "repo has no metadata yet");
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  const lane = await requireLaneOwner(env, repo, null, actor, repoSlug);
 
   await writeRepoMeta(info.remote, token, { ...meta, owner: newOwner.username });
-  const nextGrants = (roles?.grants ?? []).filter((g) => g.principal !== newOwner.username);
-  nextGrants.push({ principal: newOwner.username, role: "owner", granted_by: actor.username, at: new Date().toISOString() });
-  await writeRepoRoles(info.remote, token, { grants: nextGrants });
-  await syncRepoRoleCache(env.DB, repo.slug, nextGrants);
+  // The new owner gets an explicit Owner grant on the origin Lane;
+  // the previous owner's own grant is left as-is (not stripped), same
+  // "transferring doesn't silently revoke your own access" choice
+  // this always made -- they can demote themselves separately if
+  // that's what they want.
+  const stub = doStub(env, repo.artifacts_name);
+  await stub.configure(repo.artifacts_name);
+  await stub.callTool("lane_grant", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, principal: newOwner.username, as: "owner", actor: actor.username });
+  if (!lane.owners.includes(newOwner.username)) lane.owners.push(newOwner.username);
+  await syncRepoRoleCache(env.DB, repo.slug, laneGrantsForCache(lane));
   await updateRepoOwner(env.DB, repo.slug, newOwner.username);
 }
 
@@ -1336,23 +1356,20 @@ async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promis
   if (!repo) throw new ApiError(404, "no such repo");
 
   try {
-    using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-    const token = await artifactsRepo.createToken("read", 120);
-    const info = await artifactsRepo.info();
-    const roles = await readRepoRoles(info.remote, token);
-    if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+    await requireLaneOwner(env, repo, null, actor, repoSlug);
     await env.ARTIFACTS.delete(repo.artifacts_name);
   } catch (e) {
     if (e instanceof ApiError) throw e;
     if (!(e instanceof Error)) throw e;
-    // Any failure reading live Role state via Artifacts -- the repo
-    // gone already (confirmed live: "ArtifactsError: Repository not
-    // found", an orphaned D1 row from some earlier delete that
-    // cleared the Artifacts repo but failed before this row), or its
-    // content/history too corrupted for info()/readRepoRoles to even
-    // parse (confirmed live on a long-lived shard repo: some
-    // unidentified exception neither "not found" nor a clean ApiError,
-    // crashing both this and the repo page itself) -- falls back to
+    // Any failure reading live Role state (the origin Lane, via the
+    // DO) -- the repo gone already (confirmed live: "ArtifactsError:
+    // Repository not found", an orphaned D1 row from some earlier
+    // delete that cleared the Artifacts repo but failed before this
+    // row), or its content/history too corrupted for the DO's own
+    // reads to even parse (confirmed live on a long-lived shard repo:
+    // some unidentified exception neither "not found" nor a clean
+    // ApiError, crashing both this and the repo page itself) -- falls
+    // back to
     // the D1 row's own recorded owner rather than leaving a repo stuck
     // forever undeletable by anyone, including its own real owner.
     // Same authorization bar either way, not a bypass: this still
@@ -1490,11 +1507,7 @@ async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<Shard
 async function doCleanupShards(env: WebEnv, actor: Agent, repoSlug: string): Promise<ShardCleanupResult> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such repo");
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("read", 120);
-  const info = await artifactsRepo.info();
-  const roles = await readRepoRoles(info.remote, token);
-  if (!repoAtLeast(repoRoleFor(roles, actor.username), "owner")) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  await requireLaneOwner(env, repo, null, actor, repoSlug);
   return deleteShardTreeOf(env, repoSlug);
 }
 
@@ -1508,6 +1521,65 @@ async function getRootLane(env: WebEnv, artifactsName: string): Promise<Lane | n
   const stub = doStub(env, artifactsName);
   await stub.configure(artifactsName);
   return (await stub.callTool("lane_get", { repo: artifactsName, lane_id: ORIGIN_LANE_ID })) as Lane | null;
+}
+
+/**
+ * The repo-level RBAC read every real enforcement call site now goes
+ * through (#41) -- the origin Lane's own owners/coordinators/viewers,
+ * not the retired roles.json/repo_roles cache. Bootstraps the origin
+ * Lane if it's somehow still missing (same self-heal doPostAsk/
+ * handleApiCallTool already do), then migrates a not-yet-migrated
+ * Lane (owners still empty) from the repo's old roles.json grants,
+ * exactly once -- MaintainerDO.seedOriginLaneRolesIfUnset's own gate
+ * makes this safe to call unconditionally on every read, since it's a
+ * permanent no-op for an already-migrated repo. `roles` is whatever
+ * the caller already has in hand (most call sites already fetched it
+ * for other reasons) -- null is fine, falls back to just the repo's
+ * own owner_username.
+ */
+async function ensureOriginLaneRoles(env: WebEnv, repo: RepoRow, roles: RepoRoles | null): Promise<Lane> {
+  const stub = doStub(env, repo.artifacts_name);
+  await stub.configure(repo.artifacts_name);
+  let lane = (await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID })) as Lane | null;
+  if (!lane) {
+    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username, owners: [repo.owner_username] });
+    lane = (await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID })) as Lane;
+  }
+  if (lane.owners.length > 0) return lane;
+
+  const owners: string[] = [];
+  const coordinators: string[] = [];
+  const viewers: string[] = [];
+  for (const g of roles?.grants ?? []) {
+    if (g.role === "owner") owners.push(g.principal);
+    else if (g.role === "coordinator") coordinators.push(g.principal);
+    else viewers.push(g.principal); // contributor + viewer both collapse here (#41)
+  }
+  if (owners.length === 0) owners.push(repo.owner_username); // never leave a repo with zero owners
+  await stub.seedOriginLaneRolesIfUnset(ORIGIN_LANE_ID, owners, coordinators, viewers);
+  return (await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID })) as Lane;
+}
+
+/** Flattens the origin Lane's owners/coordinators/viewers into the flat grant-list shape syncRepoRoleCache (accountsDb.ts) already expects -- the repo_roles D1 cache's own shape predates #41 and doesn't need to change, just what populates it. granted_by/at are placeholders ("system", now) for every entry: the cache was never read for either field anywhere (confirmed by grep), only role itself (getRepoRoleForPrincipal) and the ordering of listMyRepos's own RBAC_RANK sort. */
+function laneGrantsForCache(lane: Lane): { principal: string; role: string; granted_by: string; at: string }[] {
+  const at = new Date().toISOString();
+  // Deduped by principal, highest tier wins -- an owner is very often
+  // ALSO in coordinators (proposeLane's own default seeds the
+  // proposer, here the repo's owner, into coordinators regardless of
+  // owners), and the D1 cache's own PRIMARY KEY is (repo_slug,
+  // principal), one row per principal, not one per list membership.
+  const best = new Map<string, string>();
+  for (const p of lane.viewers) best.set(p, "viewer");
+  for (const p of lane.coordinators) best.set(p, "coordinator");
+  for (const p of lane.owners) best.set(p, "owner"); // owner last -- always wins the overwrite
+  return [...best.entries()].map(([principal, role]) => ({ principal, role, granted_by: "system", at }));
+}
+
+/** The one owner-check every structural repo action (grant/revoke, delete, transfer, visibility/description change, shard cleanup) shares -- #41 moved all of them from roles.json's repoAtLeast(repoRoleFor(...), "owner") onto this. Throws the exact same ApiError shape every one of those call sites already threw, so this is a pure extraction, not a behavior change. */
+async function requireLaneOwner(env: WebEnv, repo: RepoRow, roles: RepoRoles | null, actor: Agent, repoSlug: string): Promise<Lane> {
+  const lane = await ensureOriginLaneRoles(env, repo, roles);
+  if (!laneHasOwner(lane, actor.username)) throw new ApiError(403, `${actor.username} is not an Owner of ${repoSlug}`);
+  return lane;
 }
 
 /** Every Lane in the repo, for the "Lanes" tab -- the full flattened cross-lane protocol feed (the "Protocol" tab) and the Work page's claimable-asks query are both derived from these same objects, not a second fetch. */
@@ -1769,7 +1841,7 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   // for either sense -- see https://github.com/zzmq-dev/zz/issues/35.)
   const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID });
   if (!existingLane) {
-    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
+    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username, owners: [repo.owner_username] });
   }
   await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
 }
@@ -1804,7 +1876,7 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
   for (const r of connected.values()) {
     if (r.ingest_status === "ingesting") continue;
     const ctx = await getRepoAccessContext(r.slug, env);
-    if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.roles))) visible.push(r);
+    if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.lane))) visible.push(r);
   }
   return layout(
     agent.username,
@@ -2251,7 +2323,7 @@ async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
     if (!ctx) throw new ApiError(404, "no such repo");
-    return json({ repo: ctx.repoRow, meta: ctx.meta, roles: ctx.roles });
+    return json({ repo: ctx.repoRow, meta: ctx.meta, lane: ctx.lane });
   });
 }
 
@@ -2449,7 +2521,7 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
         // once, the same lazy-create doPostAsk already did, rather than
         // leaving this gap now that it's the only remaining path in.
         if (toolName === "ask_post" && body.lane_id === ORIGIN_LANE_ID && err instanceof Error && /no such lane: /.test(err.message)) {
-          await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username });
+          await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username, owners: [repo.owner_username] });
           result = await stub.callTool(toolName, { ...body, repo: repo.artifacts_name });
         } else {
           throw err;
@@ -2686,7 +2758,7 @@ function pathBreadcrumbHtml(slug: string, ref: string, path: string, lastIsLink:
 async function handleTree(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
@@ -2747,7 +2819,7 @@ async function walkTreeForZip(repo: ArtifactsRepo, treeHash: string, prefix: str
 // doing real work -- now it's one fetch total, and ensureMeta (a real
 // write, only for a repo's actual first-ever access) only runs on the
 // rare path where that one read comes back empty.
-async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> } | null> {
+async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; lane: Lane } | null> {
   const repoRow = await getRepoBySlug(env.DB, slug);
   if (!repoRow) return null;
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
@@ -2758,7 +2830,12 @@ async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRo
     await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
     ({ meta, roles } = await readRepoMetaAndRoles(info.remote, token));
   }
-  return { repoRow, meta, roles };
+  // #41: repo-level RBAC reads the origin Lane's own owners/
+  // coordinators/viewers now, not roles.json directly -- `roles` is
+  // only still read above to feed ensureOriginLaneRoles's one-time
+  // migration fallback for a repo that hasn't been touched since.
+  const lane = await ensureOriginLaneRoles(env, repoRow, roles);
+  return { repoRow, meta, lane };
 }
 
 // Git has no session cookie -- it authenticates over Basic Auth on
@@ -2797,13 +2874,13 @@ async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<s
 // session) or the Agent resolved from a Basic Auth / bearer token
 // (git CLI, API clients) -- one check, one principal, no "or any of
 // my agents" indirection now that every Agent's standing is its own.
-async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnType<typeof readRepoMeta>>, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
+async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnType<typeof readRepoMeta>>, lane: Lane): Promise<boolean> {
   if (meta?.policy.visibility !== "private") return true;
   const me = await resolveRequestAgent(request, env);
   const gitPrincipal = await resolveGitAuthPrincipal(request, env);
   const principals = [me?.username, gitPrincipal].filter((p): p is string => !!p);
   if (principals.length === 0) return false;
-  return principals.some((p) => (roles?.grants ?? []).some((g) => g.principal === p));
+  return principals.some((p) => laneHasAnyGrant(lane, p));
 }
 
 // Push always requires real, resolved authentication -- never
@@ -2814,10 +2891,10 @@ async function canReadRepo(request: Request, env: WebEnv, meta: Awaited<ReturnTy
 // for each changeset"; a raw push bypasses that per-changeset review
 // entirely, so it's deliberately held to the same authority that
 // could grant the review anyway, not opened to every Contributor).
-async function canPushRepo(request: Request, env: WebEnv, roles: Awaited<ReturnType<typeof readRepoRoles>>): Promise<boolean> {
+async function canPushRepo(request: Request, env: WebEnv, lane: Lane): Promise<boolean> {
   const principal = await resolveGitAuthPrincipal(request, env);
   if (!principal) return false;
-  return repoAtLeast(repoRoleFor(roles, principal), "coordinator");
+  return laneHasCoordinatorOrAbove(lane, principal);
 }
 
 function needGitAuthResponse(): Response {
@@ -2827,8 +2904,8 @@ function needGitAuthResponse(): Response {
 async function handleRepoPage(me: Agent | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
-  const { repoRow, meta, roles } = ctx;
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
+  const { repoRow, meta, lane } = ctx;
 
   // Started here, awaited down below where they're actually used --
   // neither depends on anything from the git-content reads that
@@ -2861,9 +2938,13 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
 
   const fileListHtml = fileListRowsHtml(slug, info.defaultBranch, "", tree);
 
-  const rolesHtml = (roles?.grants ?? []).map((g) => `<li class="row">${roleBadge(g.role, formatAgentId(g.principal))}</li>`).join("");
+  const rolesHtml = [
+    ...lane.owners.map((p) => `<li class="row">${roleBadge("owner", formatAgentId(p))}</li>`),
+    ...lane.coordinators.map((p) => `<li class="row">${roleBadge("coordinator", formatAgentId(p))}</li>`),
+    ...lane.viewers.map((p) => `<li class="row">${roleBadge("viewer", formatAgentId(p))}</li>`),
+  ].join("");
   const visibility = meta?.policy.visibility ?? "public";
-  const isOwner = !!me && repoAtLeast(repoRoleFor(roles, me.username), "owner");
+  const isOwner = !!me && laneHasOwner(lane, me.username);
   const tracking = !isOwner && (await trackingCheck);
 
   const [lanes, ladder] = await lanesAndLadder;
@@ -3041,22 +3122,27 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   if (!me) return redirect("/login");
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
-  const { meta, roles } = ctx;
-  if (!repoAtLeast(repoRoleFor(roles, me.username), "owner")) return new Response("Owners only", { status: 403 });
+  const { meta, lane } = ctx;
+  if (!laneHasOwner(lane, me.username)) return new Response("Owners only", { status: 403 });
 
   // Direct shards only, for the count shown here -- the actual
   // cleanup (doCleanupShards) recurses to shards of shards itself;
   // this is just "does the button need to show at all."
   const directShards = await listShardsOf(env.DB, slug);
 
-  const roleRows = (roles?.grants ?? [])
+  const laneGrantRows: { principal: string; role: "owner" | "coordinator" | "viewer" }[] = [
+    ...lane.owners.map((principal) => ({ principal, role: "owner" as const })),
+    ...lane.coordinators.map((principal) => ({ principal, role: "coordinator" as const })),
+    ...lane.viewers.map((principal) => ({ principal, role: "viewer" as const })),
+  ];
+  const roleRows = laneGrantRows
     .map(
       (g) => `<li class="row">
         ${formatAgentId(g.principal)}
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
-            ${(["owner", "coordinator", "contributor", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
+            ${(["owner", "coordinator", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
           </select>
           <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
           <button type="submit" class="secondary" hidden>Save</button>
@@ -3142,7 +3228,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
 async function handleCommit(slug: string, sha: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("no such repo", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   // Started here, awaited down by the render -- a separate DO
@@ -3216,7 +3302,7 @@ async function handleCommit(slug: string, sha: string, request: Request, env: We
 async function handleDownload(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("not found", { status: 404 });
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const blob = await repo.readFile({ ref: await resolveRefName(repo, ref), path });
   if (!blob) return new Response("not found", { status: 404 });
@@ -3309,7 +3395,7 @@ function diffLinesHtml(diff: DiffLine[]): string {
 async function handleBlob(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("not found", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   // Started here, awaited down by the render -- a separate DO
@@ -3407,7 +3493,7 @@ async function handleBlob(slug: string, ref: string, path: string, request: Requ
 async function handleArchive(slug: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
   if (!ctx) return new Response("not found", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.roles))) return new Response("not found", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("not found", { status: 404 });
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
   const info = await repo.info();
   const [head] = await repo.log({ ref: info.defaultBranch, limit: 1 });
@@ -3434,12 +3520,12 @@ function stripHopByHopHeaders(headers: Headers): Headers {
   return copy;
 }
 
-async function checkGitServiceAccess(service: GitService, request: Request, env: WebEnv, ctx: { meta: Awaited<ReturnType<typeof readRepoMeta>>; roles: Awaited<ReturnType<typeof readRepoRoles>> }): Promise<"ok" | "need-auth" | "denied"> {
+async function checkGitServiceAccess(service: GitService, request: Request, env: WebEnv, ctx: { meta: Awaited<ReturnType<typeof readRepoMeta>>; lane: Lane }): Promise<"ok" | "need-auth" | "denied"> {
   if (service === "git-receive-pack") {
-    if (await canPushRepo(request, env, ctx.roles)) return "ok";
+    if (await canPushRepo(request, env, ctx.lane)) return "ok";
     return request.headers.get("authorization") ? "denied" : "need-auth";
   }
-  if (await canReadRepo(request, env, ctx.meta, ctx.roles)) return "ok";
+  if (await canReadRepo(request, env, ctx.meta, ctx.lane)) return "ok";
   const isPrivate = ctx.meta?.policy.visibility === "private";
   return isPrivate && !request.headers.get("authorization") ? "need-auth" : "denied";
 }
