@@ -647,14 +647,19 @@ export async function tallyVotes(repo: string, laneId: string, askId: string, cl
     // Rejected, or missed quorum by the deadline with no lazy
     // consensus (a conflict vote_request is never lazyEligible --
     // #7's own design: a stalled vote shouldn't silently default to
-    // "accept the override"). Final, no retry -- same "unilateral,
-    // no additional process" semantics coordinator_decides's own
-    // keep_existing already uses; whoever wants this redone posts a
-    // fresh ask themselves.
+    // "accept the override"). #9's discard_and_reclaim: final, no
+    // retry (same "unilateral, no additional process" semantics
+    // coordinator_decides's own keep_existing already uses; whoever
+    // wants this redone posts a fresh ask themselves), plus a trap
+    // Insight -- same shape mediate's own low-confidence fallback
+    // uses, so whoever looks at this contested ground next sees why
+    // it stalled via their own pre-work ladder_search, not by
+    // rediscovering the same collision.
     const originalLane = await backend.readLane(repo, laneId);
     const resolveConflictAsk = originalLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === decision.resolveConflictAskId);
     if (resolveConflictAsk && !originalLane!.history.some((e) => e.type === "ANSWER" && e.ask === resolveConflictAsk.id)) {
-      await answer(repo, laneId, resolveConflictAsk, { from: closedBy, action: "deny", payload: { reason: "conflict_policy vote: rejected or missed quorum -- kept the existing merged content, final, no retry" } });
+      await answer(repo, laneId, resolveConflictAsk, { from: closedBy, action: "deny", payload: { reason: "conflict_policy vote: rejected or missed quorum -- kept the existing merged content, final, no retry", needsTriage: true } });
+      await postInsight(repo, laneId, { kind: "trap", text: `A conflict vote on "${(resolveConflictAsk.payload as { originalDescription?: string }).originalDescription ?? resolveConflictAsk.id}" was rejected or missed quorum -- kept the existing content, discard_and_reclaim, no retry.`, from: closedBy });
     }
   }
 

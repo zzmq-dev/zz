@@ -470,6 +470,16 @@ export interface LadderSearchHit {
 
 /** BM25-ranked full-text search over every indexed rung's summary, joined back to the owning repo for its slug and gated by the same public-or-granted visibility rule as searchRepos. A `trap`-kind Insight (a documented mistake worth not repeating) outranks an equally-relevant ordinary summary -- ignoring a known trap should cost more than missing a routine note, so it has to actually surface first, not just exist somewhere in the results. SQLite's bm25() returns more-negative scores for a better match, ascending order already puts the best match first -- multiplying a trap's (negative) score by >1 makes it more negative, moving it earlier without needing a second ORDER BY clause. */
 export async function searchLadderIndex(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<LadderSearchHit[]> {
+  // FTS5's MATCH argument is a query EXPRESSION, not a literal string --
+  // an unquoted "." (any bare file path, e.g. "math.js"), "-", ":" or
+  // similar is query syntax to it, not a token, and throws
+  // "fts5: syntax error" (confirmed live, 2026-10-19, while verifying
+  // #9's own ladder_search call on a path). Wrapping the whole query
+  // in doubled quotes forces a plain phrase match -- safe for any
+  // caller's input (a path, a symbol, a sentence), never a syntax
+  // error, at the cost of losing FTS5's own AND/OR/prefix operators
+  // for a caller that actually wanted them (none do today).
+  const phraseQuery = `"${query.replace(/"/g, '""')}"`;
   const result = await db
     .prepare(
       `SELECT r.slug AS repo_slug, li.path, li.kind, li.commit_sha, li.summary
@@ -478,7 +488,7 @@ export async function searchLadderIndex(db: D1Database, query: string, limit: nu
        WHERE ladder_index MATCH ? AND ${VISIBILITY_CLAUSE}
        ORDER BY bm25(ladder_index) * (CASE WHEN li.kind = 'insight_trap' THEN 1.5 ELSE 1.0 END) LIMIT ?`,
     )
-    .bind(query, viewerUsername ?? "", limit)
+    .bind(phraseQuery, viewerUsername ?? "", limit)
     .all<LadderSearchHit>();
   return result.results;
 }

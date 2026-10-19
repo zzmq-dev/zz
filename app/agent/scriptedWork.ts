@@ -430,11 +430,18 @@ export async function proposeContributorWork(opts: ScriptedFlowOptions): Promise
   // mode somehow resolved to a real cross-repo D1 search this way was
   // simply wrong -- nothing ever wires resolveBackend() to anything
   // remote outside a Worker/DO's own withBackend() scope). callTool
-  // correctly reaches the server-side D1 search in remote mode, since
-  // the DO's own callTool wraps every tool execution in withBackend().
+  // reaches the server-side D1 search in remote mode -- but found
+  // live while verifying #9, this call was STILL silently broken
+  // there even after that fix: remoteCallTool's own generic wrapper
+  // (cli/lib/remoteTools.ts) requires args.repo to build the request
+  // URL, which this call never passed (ladder_search's own tool
+  // schema is cross-repo and needs no repo param, so it was easy to
+  // omit) -- caught by this empty catch below every time, silently,
+  // meaning "search before writing new code" has never actually
+  // worked in remote `zz work` until this fix added repo: resolved.slug.
   let relevantBlock = "";
   try {
-    const hits = (await callTool("ladder_search", { query: description, limit: 5 })) as LadderSearchHit[];
+    const hits = (await callTool("ladder_search", { repo: resolved.slug, query: description, limit: 5 })) as LadderSearchHit[];
     if (hits.length) {
       relevantBlock = `\n\nPotentially relevant existing code elsewhere in the ecosystem -- consider depending on one of these instead of reimplementing it (add it to this repo's dependencies and import/reference it in your FILE output):\n${hits.map((h) => `- ${h.repo} ${h.path} (${h.kind}): ${h.summary}`).join("\n")}`;
     }
@@ -1037,6 +1044,59 @@ function parseCoordinatorConflictDecision(text: string): { outcome: "keep_new" |
   return { outcome: decisionMatch[1] as "keep_new" | "keep_existing", reason: reasonMatch?.[1]?.trim() ?? "" };
 }
 
+// #9: no-Jev mediate -- one model call, grounded in Getting to Yes
+// (position vs. interest), not a literal line merge. "Side A" is
+// whatever's existing/already-merged (no content to show -- it's
+// just "the repo as it stands," described by whichever task produced
+// it); "Side B" is the one concrete challenger computeProposedOverride
+// settles on (same simplification #7's vote/escalate_human already
+// made -- the real N-way case, several attached submissions each
+// weighed independently, is a bigger mechanism than this first pass).
+const MEDIATE_SYSTEM_PROMPT = `You are a mediator in the zz coordination system. Two submissions collided on the exact same lines -- a real conflict, not a simple merge. Critique the CHANGES, never the people or agents who made them -- stay neutral. You never call tools here -- you only write plain text in the exact format below.
+
+Side A -- the existing, already-merged content. Its own task: {{taskA}}
+Side B -- the new, colliding submission. Its own task: {{taskB}}
+
+Side B's content for the contested file(s):
+{{sideBBlob}}
+
+What's actually in conflict (git's own markers -- <<<<<<< ours is Side A, >>>>>>> theirs is Side B):
+{{conflictBlob}}
+
+Prior Insights recorded on this Lane, if any (context only -- don't just repeat them):
+{{insights}}
+
+Decide what each side actually NEEDS (the interest behind the position), not just what their diff literally says. Then decide: keep Side A as-is, keep Side B as-is, or synthesize a third version that genuinely satisfies both sides' real need -- not a line-by-line splice, an actual reconciliation. Prefer synthesis when a real one exists. Only pick a side outright when the two needs are genuinely incompatible, and say so honestly rather than forcing a synthesis that doesn't really resolve anything.
+
+Output format, exactly:
+OUTCOME: keep_existing | keep_new | synthesize
+CONFIDENCE: high | low
+REASON: <what each side actually needed, and why this does or doesn't reconcile them -- one or two sentences>
+
+If OUTCOME is synthesize, follow with one block per contested file:
+FILE: <path>
+\`\`\`
+<the file's FULL resolved content, no conflict markers>
+\`\`\`
+
+Nothing else -- no prose outside these lines, no explanation beyond REASON, no tool calls.`;
+
+function parseMediationDecision(text: string): { outcome: "keep_existing" | "keep_new" | "synthesize"; confidence: "high" | "low"; reason: string; files: { path: string; content: string }[] } {
+  const outcomeMatch = text.match(/^OUTCOME:\s*(keep_existing|keep_new|synthesize)/m);
+  const confidenceMatch = text.match(/^CONFIDENCE:\s*(high|low)/m);
+  const reasonMatch = text.match(/^REASON:\s*(.+)$/m);
+  if (!outcomeMatch) throw new Error(`could not parse an OUTCOME: keep_existing|keep_new|synthesize line from the mediator's response -- got:\n${text.slice(0, 1000)}`);
+  const outcome = outcomeMatch[1] as "keep_existing" | "keep_new" | "synthesize";
+  const files: { path: string; content: string }[] = [];
+  if (outcome === "synthesize") {
+    const fileRe = /^FILE:\s*(.+?)\s*\r?\n```[a-zA-Z0-9]*\r?\n([\s\S]*?)\r?\n```/gm;
+    let m: RegExpExecArray | null;
+    while ((m = fileRe.exec(text)) !== null) files.push({ path: m[1].trim(), content: m[2] + "\n" });
+    if (files.length === 0) throw new Error(`OUTCOME was "synthesize" but no "FILE: <path>" + fenced code block followed -- got:\n${text.slice(0, 2000)}`);
+  }
+  return { outcome, confidence: confidenceMatch?.[1] as "high" | "low" | undefined ?? "low", reason: reasonMatch?.[1]?.trim() ?? "", files };
+}
+
 const RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. One or more files have a real git merge conflict -- two changes touched the exact same lines. You never call tools or write JSON here -- you only write plain text in the exact format below.
 
 Each conflicted file below has git's own conflict markers:
@@ -1065,11 +1125,11 @@ Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
  * while the window was open, else the original submission that
  * triggered this resolve_conflict in the first place.
  */
-export function computeProposedOverride(payload: ResolveConflictPayload): { files: { path: string; content: string }[]; from: string } {
+export function computeProposedOverride(payload: ResolveConflictPayload): { files: { path: string; content: string }[]; from: string; summary: string } {
   const attached = payload.attachedSubmissions ?? [];
-  if (attached.length === 0) return { files: payload.originalFiles, from: "the original submission" };
+  if (attached.length === 0) return { files: payload.originalFiles, from: "the original submission", summary: payload.summary };
   const latest = attached.reduce((a, b) => (new Date(b.at).getTime() > new Date(a.at).getTime() ? b : a));
-  return { files: latest.files, from: latest.from };
+  return { files: latest.files, from: latest.from, summary: latest.summary };
 }
 
 export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<void> {
@@ -1123,6 +1183,75 @@ export async function runResolveConflict(opts: ScriptedFlowOptions): Promise<voi
       depends_on: [],
     });
     onLog(`[scripted] resolve_conflict ${theAsk.id}'s window closed -- conflict_policy vote, posted a vote_request proposing ${override.from}'s submission as the override`);
+    return;
+  }
+
+  // #9: mediate, no-Jev path. Unlike vote/escalate_human above, this
+  // DOES resolve right here, right now -- there's no external
+  // decision-maker to hand off to, just a single, more deliberate
+  // model call than the generic reconciliation below: position-vs-
+  // interest framing, existing Insights pulled in first, and three
+  // real outcomes (keep_existing/keep_new/synthesize) instead of
+  // always force-merging. A low-confidence result -- "picked a side
+  // because no synthesis was possible" -- doesn't auto-apply; same
+  // discard_and_reclaim fallback as a vote that ties or misses
+  // quorum (tallyVotes), since there's no Jev escalation target built
+  // yet (#10) to route a low-confidence signal to instead.
+  if (windowedPayload.conflictMode === "mediate") {
+    if (!alreadyClaimed) {
+      await callTool("ask_claim", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent });
+    }
+    const override = computeProposedOverride(windowedPayload);
+    const conflictBlob = windowedPayload.conflicts.map((c) => `--- ${c.path} ---\n${c.markedContent}`).join("\n\n");
+    const sideBBlob = override.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n\n");
+    let insightsBlob = "none found";
+    try {
+      const paths = windowedPayload.conflicts.map((c) => c.path).join(" ");
+      const results = (await callTool("ladder_search", { repo: resolved.slug, query: paths, limit: 10 })) as { path: string; kind: string; summary: string }[];
+      const insights = results.filter((r) => r.kind === "insight_trap" || r.kind === "insight_norm");
+      if (insights.length > 0) insightsBlob = insights.map((r) => `- (${r.kind}) ${r.summary}`).join("\n");
+    } catch (err) {
+      onLog(`[scripted] mediate: ladder_search for prior insights failed (non-fatal, mediating without them): ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const prompt = MEDIATE_SYSTEM_PROMPT.replace("{{taskA}}", windowedPayload.originalDescription)
+      .replace("{{taskB}}", override.summary)
+      .replace("{{sideBBlob}}", sideBBlob)
+      .replace("{{conflictBlob}}", conflictBlob)
+      .replace("{{insights}}", insightsBlob);
+    const text = await generateText(backend, prompt, `Repo: ${resolved.slug}`, onLog);
+    let decision: ReturnType<typeof parseMediationDecision>;
+    try {
+      decision = parseMediationDecision(text);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: `mediate: couldn't parse the mediator's decision: ${message}`, needsTriage: true } });
+      await callTool("insight_post", { repo: resolved.slug, lane_id: laneId, kind: "trap", text: `Mediation on "${windowedPayload.originalDescription}" failed to produce a parseable decision: ${message.slice(0, 300)}`, actor: agent }).catch(() => {});
+      onLog(`[scripted] mediate: ${message} -- denied ${theAsk.id}, discard_and_reclaim (needsTriage, trap Insight posted)`);
+      return;
+    }
+
+    if (decision.confidence === "low") {
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: `mediate (low confidence): ${decision.reason}`, needsTriage: true } });
+      await callTool("insight_post", {
+        repo: resolved.slug, lane_id: laneId, kind: "trap",
+        text: `Mediation on "${windowedPayload.originalDescription}" reached only low confidence (outcome: ${decision.outcome}) -- ${decision.reason}`,
+        actor: agent,
+      }).catch((err) => onLog(`[scripted] insight_post failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`));
+      onLog(`[scripted] mediate: low confidence (${decision.outcome}) -- denied ${theAsk.id}, discard_and_reclaim (needsTriage, trap Insight posted): ${decision.reason}`);
+      return;
+    }
+
+    const normText = `Resolved a conflict on ${windowedPayload.conflicts.map((c) => c.path).join(", ")} via mediation (${decision.outcome}): ${decision.reason}`;
+    if (decision.outcome === "keep_existing") {
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: `mediate: kept the existing merged content -- ${decision.reason}` } });
+      await callTool("insight_post", { repo: resolved.slug, lane_id: laneId, kind: "norm", text: normText, actor: agent }).catch((err) => onLog(`[scripted] insight_post failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`));
+      onLog(`[scripted] mediate: kept existing content, final -- denied ${theAsk.id}, wrote a norm Insight: ${decision.reason}`);
+      return;
+    }
+    const landingFiles = decision.outcome === "synthesize" ? decision.files : override.files;
+    await callTool("conflict_resolve", { repo: resolved.slug, lane_id: laneId, resolve_conflict_ask_id: theAsk.id, files: landingFiles, actor: agent, resolution_note: `mediate (${decision.outcome}): ${decision.reason}` });
+    await callTool("insight_post", { repo: resolved.slug, lane_id: laneId, kind: "norm", text: normText, actor: agent }).catch((err) => onLog(`[scripted] insight_post failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`));
+    onLog(`[scripted] mediate: ${decision.outcome} -- resolved ${theAsk.id}, wrote a norm Insight: ${decision.reason}`);
     return;
   }
 
