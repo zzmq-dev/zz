@@ -8,7 +8,7 @@
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { apiFetch, setActiveToken } from "../lib/api.js";
-import { authedCloneUrl, requireCredentials, resolveMe } from "../lib/credentials.js";
+import { requireCredentials, resolveMe } from "../lib/credentials.js";
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 
 interface RepoRow {
@@ -88,17 +88,28 @@ export async function repoGrant(slug: string, principal: string, role: string, o
 }
 
 
-// Does the credential embedding manually instead of asking you to --
-// the real reason this exists: the token-as-username convention is
-// unfamiliar enough (confirmed live: the natural thing to type when
-// git prompts "Username for ..." is your own identity, not a bearer
-// token) that most people won't get it right by hand on the first try.
+// #12: a credential helper (zz credential-helper, cli/commands/
+// credential-helper.ts), not a token embedded in the clone URL -- the
+// embedded-token form lived in .git/config's remote.origin.url in
+// plaintext indefinitely (visible in `git remote -v`, copied wherever
+// the directory is copied). `-c` scopes the helper to just this one
+// `git clone` invocation (there's no .git/config yet to set it in
+// permanently -- the directory doesn't exist until the clone
+// finishes); the config command right after persists the same,
+// equally-non-secret helper *reference* (never a token itself) into
+// the new clone's own .git/config, so a later plain `git pull`/`git
+// push` run outside the zz CLI entirely still gets a fresh credential
+// transparently, no copy-paste into a Basic Auth prompt ever needed.
 export async function repoClone(slug: string, dir?: string): Promise<void> {
   slug = resolveMe(slug);
   const creds = requireCredentials();
-  const url = authedCloneUrl(creds.apiBase, creds.token, slug);
-  const args = dir ? ["clone", url, dir] : ["clone", url];
+  const host = creds.apiBase.replace(/^https?:\/\//, "");
+  const plainUrl = `${creds.apiBase}/${slug}`;
+  const helperConfig = `credential.https://${host}.helper`;
+  const args = ["-c", `${helperConfig}=!zz credential-helper`, "clone", plainUrl, ...(dir ? [dir] : [])];
   execFileSync("git", args, { stdio: "inherit" });
+  const cloneDir = dir ?? splitSlug(slug)[1];
+  execFileSync("git", ["-C", cloneDir, "config", helperConfig, "!zz credential-helper"], { stdio: "inherit" });
 
   // `zz repo submit` never pushes your local commit -- the coordinator
   // re-commits its exact file content server-side (commit_changeset),
@@ -112,7 +123,6 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   // already upstream (confirmed live: "skipped previously applied
   // commit") and drops it, leaving you fast-forwarded onto the real
   // merged commit with no extra history.
-  const cloneDir = dir ?? splitSlug(slug)[1];
   execFileSync("git", ["-C", cloneDir, "config", "pull.rebase", "true"], { stdio: "inherit" });
 
   // TEMPORARY, pending a Cloudflare fix -- a real bug in Artifacts'

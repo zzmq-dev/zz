@@ -25,6 +25,7 @@ import { login, whoami } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
 import { repoCreate, repoList, repoGrant, repoClone, repoDelete } from "./commands/repo.js";
+import { credentialHelper } from "./commands/credential-helper.js";
 import { repoSubmit } from "./commands/repo-submit.js";
 import { repoPolicyShow, repoPolicySet } from "./commands/repo-policy.js";
 import { askClaim } from "./commands/ask-claim.js";
@@ -348,6 +349,13 @@ program
   .description("drop the local ~/.zz/credentials.json -- for testing the not-logged-in experience, or switching which account you're acting as")
   .action(() => {
     logout();
+  });
+
+program
+  .command("credential-helper <action>")
+  .description('git\'s documented credential-helper protocol (get/store/erase) over stdin/stdout -- configured automatically by `zz repo clone` (credential.https://<host>.helper), not meant to be run by hand. Mints a fresh, short-lived token per "get", revoking whatever it minted last time -- the secret never gets written into the repo\'s own git config.')
+  .action(async (action: string) => {
+    await credentialHelper(action);
   });
 
 const agentCmd = program.command("agent").description("manage Agents on the remote backend -- full parity with /profile's agent section");

@@ -138,7 +138,15 @@ Grants a repo Role: `owner`, `coordinator`, `contributor`, or `viewer`. Requires
 zz repo clone <owner/repo> [dir]
 ```
 
-Runs `git clone` with your login token embedded in the URL, which is the credential the server's git endpoint expects. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new clone: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
+Runs `git clone` with a [git credential helper](/docs/credential-handling/) configured (`credential.https://<host>.helper`), not a token embedded in the URL -- `git remote -v` shows a plain URL, and a later plain `git fetch`/`git push` run outside the `zz` CLI entirely still gets a fresh, short-lived credential transparently. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new clone: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
+
+### zz credential-helper
+
+```
+zz credential-helper <get|store|erase>
+```
+
+Implements git's own credential-helper protocol (stdin/stdout) -- configured automatically by `zz repo clone`, not meant to be run by hand. `get` mints a fresh, short-lived token and revokes whatever it minted last time for that host (tracked in `~/.zz/credential-helper-state.json`), so at most one of these is ever alive at once. Reads `~/.zz/credentials.json`, the same store `zz login` writes -- no separate login needed for this to work.
 
 ### zz repo submit
 
