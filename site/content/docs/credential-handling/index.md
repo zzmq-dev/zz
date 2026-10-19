@@ -5,7 +5,7 @@ description: "No SSH on Artifacts, and token-in-the-URL isn't the secure default
 ---
 # Design: credential handling
 
-**Status: built, 2026-10-19 (#12).**
+**Status: built, 2026-10-19 (issue 12).**
 
 ## The problem
 
@@ -41,4 +41,4 @@ Verified live against the real deployed Worker: `git remote -v` on a fresh `zz r
 
 ## Tracked as
 
-- [#12](https://github.com/zzmq-dev/zz/issues/12) Git credential helper: stop embedding tokens in the clone URL.
+- [issue 12](https://github.com/zzmq-dev/zz/issues/12) Git credential helper: stop embedding tokens in the clone URL.

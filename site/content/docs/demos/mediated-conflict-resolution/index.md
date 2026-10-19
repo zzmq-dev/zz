@@ -48,9 +48,9 @@ This creates a throwaway repo, then:
 1. Sets `conflict_policy` to `mediate` for `math.js` (`zz repo policy set --conflict-path math.js --conflict-mode mediate` under the hood) — `expiry_hours` shortened just for this take; a real repo leaves the 72h default.
 2. Lands Contributor A's `gcd` for real (`commit_changeset`).
 3. Posts Contributor B's `lcm` as a real `changeset_review` + `submit_changeset`, based on the now-stale pre-`gcd` commit.
-4. Runs the real protocol's own conflict detection (`runCoordinatorSubmitChangeset`) — not scripted, the same three-way merge every submission goes through. It finds the real conflict and opens a `resolve_conflict` Ask with its deadline window (#5).
+4. Runs the real protocol's own conflict detection (`runCoordinatorSubmitChangeset`) — not scripted, the same three-way merge every submission goes through. It finds the real conflict and opens a `resolve_conflict` Ask with its deadline window (issue 5).
 5. Waits for the window to close.
-6. Runs the real mediation (`runResolveConflict`, #9's no-Jev path) — one model call, unscripted.
+6. Runs the real mediation (`runResolveConflict`, issue 9's no-Jev path) — one model call, unscripted.
 7. Prints the resulting commit's content and the Insight it wrote.
 8. Runs a real `ladder_search` with the kind of query a later contributor would actually type, and shows the Insight surfacing in the results.
 
@@ -90,6 +90,6 @@ A real transcript, taken from an actual run (abridged):
 
 The conflict resolves to a real commit that satisfies both sides' actual need, not a forced pick — confirmed by re-fetching the repo and reading the committed file directly, not just trusting the Ask's own "complete" answer. A `norm` Insight documents the clarified contract, indexed into the same cross-repo Ladder search every ordinary `work` ask already consults before writing new code (`agent/scriptedWork.ts`'s own pre-work `ladder_search` step) — so this isn't a one-off fix, it's a durable fact the next contributor finds for free.
 
-**What this demo doesn't show yet**: a genuine three-or-more-way mediation (several submissions attached to the same window, #5's `conflict_attach`) still only weighs the single latest challenger against the existing content, not every attachment against each other — and the Jev-backed path (triage, scoring, a Kialo-shaped argument tree, [#10](https://github.com/zzmq-dev/zz/issues/10)) is still just the design doc's own description, not run here. Both are explicitly scoped out of this first pass, not overlooked.
+**What this demo doesn't show yet**: a genuine three-or-more-way mediation (several submissions attached to the same window, issue 5's `conflict_attach`) still only weighs the single latest challenger against the existing content, not every attachment against each other — and the Jev-backed path (triage, scoring, a Kialo-shaped argument tree, [issue 10](https://github.com/zzmq-dev/zz/issues/10)) is still just the design doc's own description, not run here. Both are explicitly scoped out of this first pass, not overlooked.
 
 Clean up when done: `zz repo delete <owner>/<the printed repo name>` (the script prints the exact slug at the end).

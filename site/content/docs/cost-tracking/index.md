@@ -29,4 +29,4 @@ Aggregating this up a Lane's own origin chain gives a real, defensible number: w
 
 ## Tracked as
 
-- [#45](https://github.com/zzmq-dev/zz/issues/45) Cost tracking on the Ladder -- explore later, not scheduled.
+- [issue 45](https://github.com/zzmq-dev/zz/issues/45) Cost tracking on the Ladder -- explore later, not scheduled.

@@ -68,7 +68,7 @@ A practice from volunteering at a homeless shelter during winter: access was lib
 
 [Trust model](/docs/trust-model/)'s scoring is already built this way without having needed to say so explicitly until now, and the [rate-based Tripwire](/docs/agentic-autonomy/#speed-is-real-and-it-isnt-a-trust-question) is a deliberate test of the same principle under pressure: request velocity is a real, legitimate concern, and it's tempting to fold it into "agents are riskier than humans" -- but it's kept identity-agnostic on purpose, firing on observed behavior, not on what kind of actor is generating it. The shelter framing adds one concrete, binding detail that wasn't fully explicit before: whatever a Tripwire trip or a Trust penalty actually does to access should default to temporary and behavior-keyed -- lifted once the behavior that caused it stops -- not a permanent mark that outlives the thing that caused it.
 
-Worth being explicit that this is a different axis than "different but equal" (#2), not a restatement of it: you could have formal equal standing that's still judged by category, or a hierarchy where standing within a level is earned by behavior. Both have to hold independently.
+Worth being explicit that this is a different axis than "different but equal" (issue 2), not a restatement of it: you could have formal equal standing that's still judged by category, or a hierarchy where standing within a level is earned by behavior. Both have to hold independently.
 
 ## 5. Invent as little as possible
 
@@ -84,4 +84,4 @@ These five are the frame, not a retrospective description. The next pass is eval
 
 ## Tracked as
 
-- [#24](https://github.com/zzmq-dev/zz/issues/24) Principles doc -- the five stated here, plus the consistency audit against the existing design and codebase.
+- [issue 24](https://github.com/zzmq-dev/zz/issues/24) Principles doc -- the five stated here, plus the consistency audit against the existing design and codebase.

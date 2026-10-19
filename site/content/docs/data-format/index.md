@@ -15,7 +15,7 @@ description: "Where zz stores repos, Ladders, repo settings, Lane state, and acc
 | A Durable Object per repo | The live, authoritative copy of Lane/Ask/Answer state | No |
 | Cloudflare D1 | Accounts, tokens, the repo index, the search index | No |
 
-The design goal is that the repo carries everything that matters, so a repo can leave the platform with its history, knowledge, and settings intact. Code, the Ladder, repo settings, and (since #27) Lane history all meet that goal now. See [Architecture](/docs/architecture/#portability).
+The design goal is that the repo carries everything that matters, so a repo can leave the platform with its history, knowledge, and settings intact. Code, the Ladder, repo settings, and (since issue 27) Lane history all meet that goal now. See [Architecture](/docs/architecture/#portability).
 
 ## Ladder
 
@@ -118,7 +118,7 @@ History entries are one of:
 
 `repo` holds the server's internal storage name for the repo. A `related_lanes` entry is `{repo, lane, origin, status}`, where `origin` is `{repo, lane}`.
 
-**Exported onto `zz-meta`, 2026-10-19 (#27).** The Durable Object above is still the live, authoritative copy for every read and write -- this is the portable twin kept alongside it, not a replacement. Append-only by design: storage grows with real activity, not with how large a Lane's history has already gotten, by never rewriting an entry once it's written.
+**Exported onto `zz-meta`, 2026-10-19 (issue 27).** The Durable Object above is still the live, authoritative copy for every read and write -- this is the portable twin kept alongside it, not a replacement. Append-only by design: storage grows with real activity, not with how large a Lane's history has already gotten, by never rewriting an entry once it's written.
 
 ```
 lanes/<lane-id>/header.json            # everything above except "history" -- overwritten each write

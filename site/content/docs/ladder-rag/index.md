@@ -17,7 +17,7 @@ Three real pieces of this already exist, not from a plan built for this doc, but
 
 - **Cached-inference summaries.** The Ladder already computes one summary per file at write time (`describeOneFile`) and reuses it until something invalidates it.
 - **A real dependency graph.** The SLSA min-reduction work ([trust model](/docs/trust-model/#slsa-and-the-dependency-graph-one-structure-not-two)) already walks a dependency graph (`findDependencyUsage`) for trust propagation. It's the same kind of graph a knowledge-retrieval walk needs -- reused here, not rebuilt.
-- **The delivery shape.** The [living contributors guide](/docs/contributors-guide/) (#34) already established "assembled live, attached automatically to context, scoped to the touched area" as the delivery pattern for Policy/Principles/Insights. This extends that same pattern to code/dependency knowledge specifically.
+- **The delivery shape.** The [living contributors guide](/docs/contributors-guide/) (issue 34) already established "assembled live, attached automatically to context, scoped to the touched area" as the delivery pattern for Policy/Principles/Insights. This extends that same pattern to code/dependency knowledge specifically.
 
 What's actually new: symbol-level granularity (today's rungs stop at the file), an embedding step alongside the existing summarization step, a vector-search backend, a two-phase retrieval protocol, and the session-buffer mechanism that sits between them.
 
@@ -54,7 +54,7 @@ Before an Ask is handed to whoever claims it, and again at every review of it, a
 3. **Materializes the relevant context into a buffer.** The same Phase A retrieval already specified above, just triggered at grooming time -- "pull the ladder graph that relates" is Phase A, not a second mechanism.
 4. **Sets acceptance criteria that account for "already partially done."** Not a fixed checklist decided once and never revisited -- criteria that explicitly allow "the remaining gap is smaller than the original task implied" as a valid, complete outcome, not a partial one. A reviewer checking a standard that already accounts for this converges; a reviewer checking the literal original task text against a codebase that's moved on does not, which is exactly what was observed.
 
-**The buffer is Lane/Ask-scoped, not process-scoped -- a correction to how #50 was first specified.** The original two-phase design treated the session buffer as something the claiming worker's own process materializes for itself. Grooming needs one shared buffer per Ask instead: the worker reads from it while implementing, and the reviewer reads from the *same* buffer -- same context, same acceptance criteria, both sides checking against an identical standard rather than each reconstructing their own view.
+**The buffer is Lane/Ask-scoped, not process-scoped -- a correction to how issue 50 was first specified.** The original two-phase design treated the session buffer as something the claiming worker's own process materializes for itself. Grooming needs one shared buffer per Ask instead: the worker reads from it while implementing, and the reviewer reads from the *same* buffer -- same context, same acceptance criteria, both sides checking against an identical standard rather than each reconstructing their own view.
 
 **Two versions, split deliberately so the real fix doesn't wait on the bigger build-out.** A simple version needs none of the symbol-level/vector-backed machinery above -- one model call against today's existing file-level Ladder content, asking "does this already exist, and if not, what are the acceptance criteria," ships against what exists right now. The full version (grooming backed by symbol-level retrieval and a real vector-searched buffer) is still correctly gated behind [the retrieval-recall benchmark](#the-central-risk-retrieval-recall) like the rest of this doc.
 
@@ -91,10 +91,10 @@ Both tiers wait on the retrieval-recall benchmark above landing with a real, fav
 
 ## Tracked as
 
-- [#47](https://github.com/zzmq-dev/zz/issues/47) Symbol-level Ladder rungs -- the foundational prerequisite everything else depends on.
-- [#48](https://github.com/zzmq-dev/zz/issues/48) Embedding step alongside existing write-time summarization.
-- [#49](https://github.com/zzmq-dev/zz/issues/49) Vector-search backend integration, as a derived/rebuildable index over git-notes rungs -- never the canonical store.
-- [#50](https://github.com/zzmq-dev/zz/issues/50) Two-phase retrieval: harness-enforced Phase A, model-discretionary Phase B, the session buffer between them -- now also Lane/Ask-scoped, shared between worker and reviewer, not process-scoped.
-- [#51](https://github.com/zzmq-dev/zz/issues/51) The retrieval-recall benchmark -- do this before committing further, not after.
-- [#53](https://github.com/zzmq-dev/zz/issues/53) Ask grooming, simple version -- one model call against today's file-level Ladder, ships now, actually fixes the live deny-repost bug.
-- [#54](https://github.com/zzmq-dev/zz/issues/54) Ask grooming, full version -- symbol-level retrieval, a real shared buffer, gated behind #51 like the rest of this doc.
+- [issue 47](https://github.com/zzmq-dev/zz/issues/47) Symbol-level Ladder rungs -- the foundational prerequisite everything else depends on.
+- [issue 48](https://github.com/zzmq-dev/zz/issues/48) Embedding step alongside existing write-time summarization.
+- [issue 49](https://github.com/zzmq-dev/zz/issues/49) Vector-search backend integration, as a derived/rebuildable index over git-notes rungs -- never the canonical store.
+- [issue 50](https://github.com/zzmq-dev/zz/issues/50) Two-phase retrieval: harness-enforced Phase A, model-discretionary Phase B, the session buffer between them -- now also Lane/Ask-scoped, shared between worker and reviewer, not process-scoped.
+- [issue 51](https://github.com/zzmq-dev/zz/issues/51) The retrieval-recall benchmark -- do this before committing further, not after.
+- [issue 53](https://github.com/zzmq-dev/zz/issues/53) Ask grooming, simple version -- one model call against today's file-level Ladder, ships now, actually fixes the live deny-repost bug.
+- [issue 54](https://github.com/zzmq-dev/zz/issues/54) Ask grooming, full version -- symbol-level retrieval, a real shared buffer, gated behind issue 51 like the rest of this doc.

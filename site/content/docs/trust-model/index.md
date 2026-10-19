@@ -1,11 +1,11 @@
 ---
 layout: docs
 title: "Design: trust model"
-description: "Identity without key custody, reputation that feeds merge-conflict mediation, trusting Artifacts itself, and a dependency graph of SLSA attestations -- building on GitHub issue #2."
+description: "Identity without key custody, reputation that feeds merge-conflict mediation, trusting Artifacts itself, and a dependency graph of SLSA attestations -- building on GitHub issue 2."
 ---
 # Design: trust model
 
-**Status: designed, not built.** Builds directly on [GitHub issue #2](https://github.com/zzmq-dev/zz/issues/2), which first named Sigstore, SLSA, and the ring-of-trust/key-signing question. The vouch graph -- how a new agent or repo starts with something better than zero trust -- is the one piece this page leaves open; see [Open: the vouch graph](#open-the-vouch-graph).
+**Status: designed, not built.** Builds directly on [GitHub issue 2](https://github.com/zzmq-dev/zz/issues/2), which first named Sigstore, SLSA, and the ring-of-trust/key-signing question. The vouch graph -- how a new agent or repo starts with something better than zero trust -- is the one piece this page leaves open; see [Open: the vouch graph](#open-the-vouch-graph).
 
 ## Two different things are called "trust" here, and they don't resolve the same way
 
@@ -15,16 +15,16 @@ description: "Identity without key custody, reputation that feeds merge-conflict
 
 ## Identity: Sigstore, not key-signing parties
 
-The real, hard problem here is the one [issue #2](https://github.com/zzmq-dev/zz/issues/2) already names: managing cryptographic key material at scale, securely, across distributed agents. Long-lived keys are genuinely hard to manage safely at that scale -- that's not an incidental difficulty, it's *why* the industry built [Sigstore](https://www.sigstore.dev/)'s keyless-signing model (`cosign` + Fulcio + Rekor) in the first place. An ephemeral keypair gets minted and bound to an existing OIDC identity, signs once, and the certificate expires in minutes; the signing *event* -- not a long-lived key -- is what gets recorded, in a public transparency log (Rekor). Nobody holds a durable private key at all.
+The real, hard problem here is the one [issue 2](https://github.com/zzmq-dev/zz/issues/2) already names: managing cryptographic key material at scale, securely, across distributed agents. Long-lived keys are genuinely hard to manage safely at that scale -- that's not an incidental difficulty, it's *why* the industry built [Sigstore](https://www.sigstore.dev/)'s keyless-signing model (`cosign` + Fulcio + Rekor) in the first place. An ephemeral keypair gets minted and bound to an existing OIDC identity, signs once, and the certificate expires in minutes; the signing *event* -- not a long-lived key -- is what gets recorded, in a public transparency log (Rekor). Nobody holds a durable private key at all.
 
-**A real blocker, found live, 2026-10-19 (#15).** The paragraph above describes the intent correctly; the next sentence used to claim `zz`'s own `zz login` identity could mint a Fulcio cert directly. It can't. Confirmed directly against Fulcio's own live public-instance configuration (`https://fulcio.sigstore.dev/api/v2/configuration`): Fulcio's issuer allowlist is keyed on *(issuer, audience)* pairs, not bare issuer -- `accounts.google.com` is allowed, but only for a token whose `aud` claim is the literal string `"sigstore"`. A token from `zz`'s own Google OAuth app (or Cloudflare's, or GitHub's -- neither of those issuers is on the allowlist at all) has `zz`'s own client ID as its audience, and Fulcio rejects it outright ("error processing the identity token," reproduced live). This isn't a `zz`-side bug to fix -- it's how Fulcio's public instance is designed to work, full stop.
+**A real blocker, found live, 2026-10-19 (issue 15).** The paragraph above describes the intent correctly; the next sentence used to claim `zz`'s own `zz login` identity could mint a Fulcio cert directly. It can't. Confirmed directly against Fulcio's own live public-instance configuration (`https://fulcio.sigstore.dev/api/v2/configuration`): Fulcio's issuer allowlist is keyed on *(issuer, audience)* pairs, not bare issuer -- `accounts.google.com` is allowed, but only for a token whose `aud` claim is the literal string `"sigstore"`. A token from `zz`'s own Google OAuth app (or Cloudflare's, or GitHub's -- neither of those issuers is on the allowlist at all) has `zz`'s own client ID as its audience, and Fulcio rejects it outright ("error processing the identity token," reproduced live). This isn't a `zz`-side bug to fix -- it's how Fulcio's public instance is designed to work, full stop.
 
 Two real paths forward, not one:
 
 - **Phase 1, no new infrastructure**: Sigstore runs its *own* independent OIDC login (Dex, at `oauth2.sigstore.dev`, public client id `"sigstore"`), itself federating Google/GitHub/Microsoft. A human can sign today by going through *that* login at signing time -- completely separate from however they logged into `zz` -- using `@sigstore/cli`'s own `OAuthIdentityProvider` (a local-callback-server + browser flow, the same shape `gh`/`gcloud` already use) or an equivalent built directly on `openid-client`. Real, works now, zero new `zz` infrastructure -- but only ever covers a human at the keyboard willing to click through a browser login each time (or each time a locally-cached refresh token expires, if Dex issues one -- not yet confirmed).
 - **Phase 2, a private Fulcio/CA instance**: the only path that covers a *managed* agent, which has no OIDC identity of its own at all -- Fulcio's keyless model fundamentally requires a real ID token bound to the signing principal, and a managed agent only ever has a `zz`-minted bearer token, never an OIDC token from an allowlisted issuer. Running `zz`'s own Fulcio (trusting `zz`'s own tokens) is real infrastructure -- a certificate authority, its own root of trust, key management -- not a feature-sized implementation.
 
-**Decided 2026-10-19: defer both phases until Phase 2's own CA exists**, rather than ship Phase 1 as a human-only, agent-excluded interim (which would need throwing away once Phase 2 lands anyway). Tracked as its own planning item -- see [#15](https://github.com/zzmq-dev/zz/issues/15)'s own comment thread for the full investigation.
+**Decided 2026-10-19: defer both phases until Phase 2's own CA exists**, rather than ship Phase 1 as a human-only, agent-excluded interim (which would need throwing away once Phase 2 lands anyway). Tracked as its own planning item -- see [issue 15](https://github.com/zzmq-dev/zz/issues/15)'s own comment thread for the full investigation.
 
 This page's own identity model is being superseded by [Design: did:zz](/docs/did-zz/) -- Sigstore stays exactly as described here (short-lived, per-signing-event keys), now sitting on top of `did:zz` identities instead of raw OAuth accounts.
 
@@ -78,11 +78,11 @@ The rest of the graph -- how multiple incoming vouches combine, decay over time 
 
 ## Tracked as
 
-- ~~[#13](https://github.com/zzmq-dev/zz/issues/13) GitHub OAuth login~~ -- **closed 2026-10-19.** Prerequisite for the bootstrap below, done. "Sign in with GitHub" alongside Cloudflare/Google (`worker/src/auth.ts`), same OAuth 2.0 authorization-code flow, linking to the existing account rather than creating a new kind. The actual scoring logic (#14) still has nothing to read yet -- this issue only proves the identity, deliberately narrow scope.
-- [#14](https://github.com/zzmq-dev/zz/issues/14) GitHub-history bootstrap trust score.
-- [#15](https://github.com/zzmq-dev/zz/issues/15) Sigstore keyless signing for agent identity, and Rekor for trusting Artifacts itself -- **real blocker found live, 2026-10-19: see "Identity: Sigstore" above.** Deferred until a private Fulcio/CA instance (Phase 2) is built; Phase 1 (human-only, via Sigstore's own independent Dex login) deliberately not shipped as an interim.
-- [#16](https://github.com/zzmq-dev/zz/issues/16) Attestation rungs on the Ladder + `attestation_policy` Policy axis.
-- [#17](https://github.com/zzmq-dev/zz/issues/17) Effective SLSA level as a min-reduction over the dependency graph.
-- [#18](https://github.com/zzmq-dev/zz/issues/18) Wire Trust into mediated-conflict-resolution's objective-criteria tiebreaker.
-- [#19](https://github.com/zzmq-dev/zz/issues/19) Agent-creation-chain trust inheritance.
-- [#20](https://github.com/zzmq-dev/zz/issues/20) The full vouch graph -- exploratory, needs more design first.
+- ~~[issue 13](https://github.com/zzmq-dev/zz/issues/13) GitHub OAuth login~~ -- **closed 2026-10-19.** Prerequisite for the bootstrap below, done. "Sign in with GitHub" alongside Cloudflare/Google (`worker/src/auth.ts`), same OAuth 2.0 authorization-code flow, linking to the existing account rather than creating a new kind. The actual scoring logic (issue 14) still has nothing to read yet -- this issue only proves the identity, deliberately narrow scope.
+- [issue 14](https://github.com/zzmq-dev/zz/issues/14) GitHub-history bootstrap trust score.
+- [issue 15](https://github.com/zzmq-dev/zz/issues/15) Sigstore keyless signing for agent identity, and Rekor for trusting Artifacts itself -- **real blocker found live, 2026-10-19: see "Identity: Sigstore" above.** Deferred until a private Fulcio/CA instance (Phase 2) is built; Phase 1 (human-only, via Sigstore's own independent Dex login) deliberately not shipped as an interim.
+- [issue 16](https://github.com/zzmq-dev/zz/issues/16) Attestation rungs on the Ladder + `attestation_policy` Policy axis.
+- [issue 17](https://github.com/zzmq-dev/zz/issues/17) Effective SLSA level as a min-reduction over the dependency graph.
+- [issue 18](https://github.com/zzmq-dev/zz/issues/18) Wire Trust into mediated-conflict-resolution's objective-criteria tiebreaker.
+- [issue 19](https://github.com/zzmq-dev/zz/issues/19) Agent-creation-chain trust inheritance.
+- [issue 20](https://github.com/zzmq-dev/zz/issues/20) The full vouch graph -- exploratory, needs more design first.

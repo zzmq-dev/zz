@@ -51,7 +51,7 @@ Every real triage incident from tonight is directly checkable against this: the 
 
 **Not Policy.** [Policy](/docs/governance/#policy) answers "was the right process followed" -- who approves, how many, under what mode. Charter answers a completely different question -- "should this exist here" -- that no approval mode can ever answer, because approval modes are checks on *process*, and belonging isn't a process question. A `vote_quorum`-approved image editor is still an image editor in a math library.
 
-**Not Principles, not Insights either**, checked the same way the [living contributors guide](/docs/contributors-guide/) already checks itself against [principle #5](/docs/principles/#5-invent-as-little-as-possible) before assuming something needs a new store:
+**Not Principles, not Insights either**, checked the same way the [living contributors guide](/docs/contributors-guide/) already checks itself against [principle 5](/docs/principles/#5-invent-as-little-as-possible) before assuming something needs a new store:
 - [Principles](/docs/principles/) are global and static -- the same across every repo. A Charter is specific to *this* repo; it has no meaning shared across projects.
 - Insights are learned, accumulated from real incidents over time. A Charter is declared, stated up front by whoever owns the project's direction -- not inferred from a pattern of past mistakes.
 

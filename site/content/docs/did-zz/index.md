@@ -135,4 +135,4 @@ Lineage (above) is permanent historical fact -- who created whom, never revised.
 
 ## Tracked as
 
-- [#23](https://github.com/zzmq-dev/zz/issues/23) Design and implement did:zz. Supersedes part of [#21](https://github.com/zzmq-dev/zz/issues/21)'s original mechanism (noted there); sits underneath [#15](https://github.com/zzmq-dev/zz/issues/15)'s Sigstore identity work and [#19](https://github.com/zzmq-dev/zz/issues/19)'s creation-chain trust inheritance without changing either's own design.
+- [issue 23](https://github.com/zzmq-dev/zz/issues/23) Design and implement did:zz. Supersedes part of [issue 21](https://github.com/zzmq-dev/zz/issues/21)'s original mechanism (noted there); sits underneath [issue 15](https://github.com/zzmq-dev/zz/issues/15)'s Sigstore identity work and [issue 19](https://github.com/zzmq-dev/zz/issues/19)'s creation-chain trust inheritance without changing either's own design.

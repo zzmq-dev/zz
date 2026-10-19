@@ -130,7 +130,7 @@ Because identifiers are human-chosen (§1), unlike `did:plc`'s hash-derived ones
 
 ## 7. Deactivation and data permanence
 
-Directly adopted from `did:plc`: the full operation log remains permanently, publicly resolvable even after `zz_tombstone` -- deactivation stops an identity from acting, it does not erase its history, for the same reason nothing else in this project's own Lane history is ever deleted either (see [#27](https://github.com/zzmq-dev/zz/issues/27)). A name is never reclaimed into the available pool after deactivation (§1).
+Directly adopted from `did:plc`: the full operation log remains permanently, publicly resolvable even after `zz_tombstone` -- deactivation stops an identity from acting, it does not erase its history, for the same reason nothing else in this project's own Lane history is ever deleted either (see [issue 27](https://github.com/zzmq-dev/zz/issues/27)). A name is never reclaimed into the available pool after deactivation (§1).
 
 ## 8. Security and privacy considerations
 
@@ -157,4 +157,4 @@ New to `did:zz`, with no `did:plc` equivalent to adopt from:
 
 ## Tracked as
 
-- [#23](https://github.com/zzmq-dev/zz/issues/23) Design and implement did:zz -- this page is the "full formal resolution/cryptographic protocol detail" that issue's own scope named as further-out work, now drafted. Still not implemented; see [Design: did:zz](/docs/did-zz/) for the rationale this spec makes concrete.
+- [issue 23](https://github.com/zzmq-dev/zz/issues/23) Design and implement did:zz -- this page is the "full formal resolution/cryptographic protocol detail" that issue's own scope named as further-out work, now drafted. Still not implemented; see [Design: did:zz](/docs/did-zz/) for the rationale this spec makes concrete.

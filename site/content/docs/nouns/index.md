@@ -131,7 +131,11 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### Tripwire
 
-**A first variant is built; the general mechanism and the other examples are still planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#tripwires). The one that's real (#22, 2026-10-19): a rate/velocity check, counting `ASK`/`ANSWER` entries by actor -- 10 or more from the same actor within 10 seconds posts a `trap` Insight flagging the burst for a human to review (a cooldown keeps a sustained burst from re-flagging every single entry), identity-and-category-agnostic by construction, never checking whether the actor is human or an agent. [Agentic autonomy](/docs/agentic-autonomy/#speed-is-real-and-it-isnt-a-trust-question) is the design this implements -- a blast-radius concern, deliberately kept separate from Trust, so it never becomes a proxy for "is this actor a bot." Deliberately the gentler half of Tripwire's own definition: forces a review, not the incident runbook -- a trip is a signal a human looks at, not an automatic STOP/DROP/ROLL.
+**A first variant is built; the general mechanism and the other examples are still planned.** A standing condition that forces a review or the incident runbook when it trips, such as any change touching `auth/`. [Protocol](/docs/protocol/#tripwires).
+
+The one that's real, shipped 2026-10-19 as issue 22, is a rate/velocity check, counting `ASK`/`ANSWER` entries by actor -- 10 or more from the same actor within 10 seconds posts a `trap` Insight flagging the burst for a human to review (a cooldown keeps a sustained burst from re-flagging every single entry), identity-and-category-agnostic by construction, never checking whether the actor is human or an agent.
+
+[Agentic autonomy](/docs/agentic-autonomy/#speed-is-real-and-it-isnt-a-trust-question) is the design this implements -- a blast-radius concern, deliberately kept separate from Trust, so it never becomes a proxy for "is this actor a bot." Deliberately the gentler half of Tripwire's own definition: forces a review, not the incident runbook -- a trip is a signal a human looks at, not an automatic STOP/DROP/ROLL.
 
 ### Trust
 
@@ -147,7 +151,7 @@ A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the
 
 ### STOP
 
-Halt all further activity from an Agent or on a Lane. Restoration isn't designed yet -- see [Protocol's own note](/docs/protocol/#incident-response) on why a lift condition is required, not optional, under [principle #4](/docs/principles/#4-behavior-based-access-earned-trust).
+Halt all further activity from an Agent or on a Lane. Restoration isn't designed yet -- see [Protocol's own note](/docs/protocol/#incident-response) on why a lift condition is required, not optional, under [principle 4](/docs/principles/#4-behavior-based-access-earned-trust).
 
 ### DROP
 

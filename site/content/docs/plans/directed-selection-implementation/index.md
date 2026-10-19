@@ -17,11 +17,11 @@ Build the thing that makes failure *informative* before the things that only mak
 
 ## Step 1: Insights -- the evolutionary engine itself
 
-**Tracked as [#8](https://github.com/zzmq-dev/zz/issues/8).** Storage on a new Ladder notes ref, an `insight_post` tool, search-ranking boost for `trap`-kind entries.
+**Tracked as [issue 8](https://github.com/zzmq-dev/zz/issues/8).** Storage on a new Ladder notes ref, an `insight_post` tool, search-ranking boost for `trap`-kind entries.
 
 **Drift to watch for**: Insights becoming a dumping ground one role is responsible for curating, instead of something any agent posts and any agent's grooming/review pass reads. Check against [the checklist](/docs/design-process-charter/#the-checklist) item 2 specifically -- if posting an Insight needs anyone's approval, that's the standing-ask mistake again, in a new container.
 
-**Concrete addition this plan makes to #8's existing scope**: a denied `changeset_review` or a capped-out retry chain (today's `needsTriage` flagging) should post an Insight automatically, not just record a denial reason. The Insight is "a task matching this description was attempted and failed for this reason," scoped to the same path the original task touched, so the *next* unrelated attempt at something similar reads it during grooming instead of repeating the failure from zero. This is what makes the retry cap's eventual retirement (Step 4) actually safe to do.
+**Concrete addition this plan makes to issue 8's existing scope**: a denied `changeset_review` or a capped-out retry chain (today's `needsTriage` flagging) should post an Insight automatically, not just record a denial reason. The Insight is "a task matching this description was attempted and failed for this reason," scoped to the same path the original task touched, so the *next* unrelated attempt at something similar reads it during grooming instead of repeating the failure from zero. This is what makes the retry cap's eventual retirement (Step 4) actually safe to do.
 
 ## Step 2: Charter, for real
 
@@ -43,7 +43,7 @@ Build the thing that makes failure *informative* before the things that only mak
 
 ## Step 5: Promote Trust over Role
 
-**Needs a new foundational issue, distinct from the existing Tier-4 Trust issues** (#13-15, #18-20), which cover bootstrap/cryptographic mechanisms (GitHub history, Sigstore, the vouch graph) -- bigger, more exploratory, correctly sequenced later. This step is narrower and more load-bearing: a basic, native Trust score, recorded in Lane history the same way Insights are, that becomes the *default* way standing is checked for anything short of the handful of genuinely hard Role gates (deleting a repo, transferring ownership, granting Roles).
+**Needs a new foundational issue, distinct from the existing Tier-4 Trust issues** (issue 13-15, issue 18-20), which cover bootstrap/cryptographic mechanisms (GitHub history, Sigstore, the vouch graph) -- bigger, more exploratory, correctly sequenced later. This step is narrower and more load-bearing: a basic, native Trust score, recorded in Lane history the same way Insights are, that becomes the *default* way standing is checked for anything short of the handful of genuinely hard Role gates (deleting a repo, transferring ownership, granting Roles).
 
 **Drift to watch for**: building this as an enhancement to Role (a Role with more levels, or a reputation multiplier on top of Role) instead of what it actually is -- a different axis that should eventually make most of Role's current job unnecessary. Check against the checklist's item 3: if the design still asks a human to approve individual Role grants rather than shaping the criteria Trust accumulates against, it hasn't moved to the right layer yet.
 
