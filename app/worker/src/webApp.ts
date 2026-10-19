@@ -814,6 +814,7 @@ async function handleLogin(request: Request, env: WebEnv): Promise<Response> {
      <div class="card stack" style="max-width:320px;margin:0 auto">
        <a href="/auth/start/cloudflare${qs}" style="display:block"><button style="width:100%;padding:.85rem 1.1rem">Log in with Cloudflare</button></a>
        <a href="/auth/start/google${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with Google</button></a>
+       <a href="/auth/start/github${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with GitHub</button></a>
      </div>`,
     { centerTitle: true },
   );
@@ -3605,8 +3606,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/logout") return handleLogout(request, env);
   if (path === "/auth/start/cloudflare") return handleAuthStart("cloudflare", request, env);
   if (path === "/auth/start/google") return handleAuthStart("google", request, env);
+  if (path === "/auth/start/github") return handleAuthStart("github", request, env);
   if (path === "/auth/callback/cloudflare") return handleAuthCallback("cloudflare", request, env);
   if (path === "/auth/callback/google") return handleAuthCallback("google", request, env);
+  if (path === "/auth/callback/github") return handleAuthCallback("github", request, env);
   // /profile is kept only as a convenience redirect to your own
   // /<username> page -- see that handler's header for why there's no
   // separate profile route anymore (one route, public or editable

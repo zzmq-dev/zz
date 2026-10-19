@@ -71,7 +71,7 @@ The rest of the graph -- how multiple incoming vouches combine, decay over time 
 
 ## Tracked as
 
-- [#13](https://github.com/zzmq-dev/zz/issues/13) GitHub OAuth login -- prerequisite for the bootstrap below.
+- ~~[#13](https://github.com/zzmq-dev/zz/issues/13) GitHub OAuth login~~ -- **closed 2026-10-19.** Prerequisite for the bootstrap below, done. "Sign in with GitHub" alongside Cloudflare/Google (`worker/src/auth.ts`), same OAuth 2.0 authorization-code flow, linking to the existing account rather than creating a new kind. The actual scoring logic (#14) still has nothing to read yet -- this issue only proves the identity, deliberately narrow scope.
 - [#14](https://github.com/zzmq-dev/zz/issues/14) GitHub-history bootstrap trust score.
 - [#15](https://github.com/zzmq-dev/zz/issues/15) Sigstore keyless signing for agent identity, and Rekor for trusting Artifacts itself.
 - [#16](https://github.com/zzmq-dev/zz/issues/16) Attestation rungs on the Ladder + `attestation_policy` Policy axis.

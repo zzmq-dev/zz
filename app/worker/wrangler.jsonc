@@ -17,7 +17,8 @@
   // still registered on both dashboards.
   "vars": {
     "CF_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/cloudflare",
-    "GOOGLE_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/google"
+    "GOOGLE_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/google",
+    "GITHUB_OAUTH_REDIRECT_URI": "https://zzmq.dev/auth/callback/github"
   },
   "routes": [
     // Exact root ("/") belongs to the docs worker's landing page (see

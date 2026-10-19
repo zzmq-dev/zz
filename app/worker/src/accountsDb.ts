@@ -21,7 +21,7 @@ export interface Agent {
 export interface AgentIdentity {
   id: string;
   agent_username: string;
-  provider: "cloudflare" | "google";
+  provider: "cloudflare" | "google" | "github";
   provider_subject: string;
   access_token_enc: string | null;
   refresh_token_enc: string | null;

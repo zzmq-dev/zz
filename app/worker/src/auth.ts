@@ -1,9 +1,19 @@
-// Login: Cloudflare OAuth + Google OAuth (no GitHub -- zz aims to
-// replace GitHub, not depend on it for identity). Both are standard
-// OAuth 2.0 authorization-code flow. Cloudflare's token is kept
-// (encrypted) specifically so a later feature can call the Cloudflare
-// API as the signed-in user; Google's is kept the same way for
-// symmetry even though nothing uses it yet.
+// Login: Cloudflare OAuth + Google OAuth + GitHub OAuth. All three are
+// standard OAuth 2.0 authorization-code flow. Cloudflare's token is
+// kept (encrypted) specifically so a later feature can call the
+// Cloudflare API as the signed-in user; Google's and GitHub's are
+// kept the same way for symmetry, though only GitHub's has a planned
+// consumer so far (#14's GitHub-history trust bootstrap needs the
+// access token to read the signed-in user's real repo/commit history,
+// not just the one-time profile fetch below).
+//
+// GitHub was deliberately left out originally -- zz aims to replace
+// GitHub, not depend on it for identity -- but #13 is a narrower,
+// justified exception: proving a *claimed* GitHub username is real
+// (not a self-reported string anyone could type) is what #14's trust
+// bootstrap needs, which is verifying an external fact about an
+// existing zz identity, not using GitHub as the identity system
+// itself the way `zz login` with Cloudflare/Google is.
 //
 // Cloudflare endpoints confirmed against developers.cloudflare.com's
 // own OAuth docs (fundamentals/oauth/integrate-with-cloudflare);
@@ -24,10 +34,13 @@ export interface OAuthEnv {
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   GOOGLE_OAUTH_REDIRECT_URI?: string;
+  GITHUB_OAUTH_CLIENT_ID?: string;
+  GITHUB_OAUTH_CLIENT_SECRET?: string;
+  GITHUB_OAUTH_REDIRECT_URI?: string;
   TOKEN_ENCRYPTION_KEY?: string; // base64, 32 bytes, for AES-GCM
 }
 
-export type Provider = "cloudflare" | "google";
+export type Provider = "cloudflare" | "google" | "github";
 
 export interface ProviderIdentity {
   subject: string;
@@ -93,6 +106,27 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
       return { subject: j.sub, email: j.email ?? null, displayName: j.name ?? j.email ?? j.sub };
     },
   },
+  github: {
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    // read:user for the profile fetch below; user:email is requested
+    // too but not actually used yet -- GET /user's own `email` field
+    // is null whenever the user has made their email private, and
+    // getting the verified primary one regardless needs a second call
+    // (GET /user/emails) this first pass doesn't make. displayName
+    // falls back to the GitHub login (always present) same as every
+    // other provider here falls back to *something* real rather than
+    // leaving a blank.
+    userinfoUrl: "https://api.github.com/user",
+    scope: "read:user user:email",
+    clientId: (env) => required(env.GITHUB_OAUTH_CLIENT_ID, "GITHUB_OAUTH_CLIENT_ID"),
+    clientSecret: (env) => required(env.GITHUB_OAUTH_CLIENT_SECRET, "GITHUB_OAUTH_CLIENT_SECRET"),
+    redirectUri: (env) => required(env.GITHUB_OAUTH_REDIRECT_URI, "GITHUB_OAUTH_REDIRECT_URI"),
+    parseUserInfo: (json) => {
+      const j = json as { id: number; login: string; email?: string | null; name?: string | null };
+      return { subject: String(j.id), email: j.email ?? null, displayName: j.name ?? j.login };
+    },
+  },
 };
 
 function required(value: string | undefined, name: string): string {
@@ -114,16 +148,30 @@ export function buildAuthorizeUrl(provider: Provider, env: OAuthEnv, state: stri
 
 export async function exchangeCodeForIdentity(provider: Provider, env: OAuthEnv, code: string): Promise<ProviderIdentity> {
   const config = PROVIDERS[provider];
-  const basic = btoa(`${config.clientId(env)}:${config.clientSecret(env)}`);
+  const clientId = config.clientId(env);
+  const clientSecret = config.clientSecret(env);
+  const basic = btoa(`${clientId}:${clientSecret}`);
   const tokenResp = await fetch(config.tokenUrl, {
     method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${basic}` },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: config.redirectUri(env) }),
+    // Basic Auth (what CF/Google's own docs confirm) and client_id/
+    // client_secret in the body (what GitHub's own docs confirm,
+    // without explicitly saying Basic Auth also works) -- sent
+    // together so every provider's own documented mechanism is
+    // actually used, not assumed to also accept the other one.
+    // "accept: application/json" is GitHub-specific (its default
+    // response is form-urlencoded, not JSON, without this) but
+    // harmless for CF/Google, which already return JSON regardless.
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", authorization: `Basic ${basic}` },
+    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: config.redirectUri(env), client_id: clientId, client_secret: clientSecret }),
   });
   if (!tokenResp.ok) throw new Error(`${provider} token exchange failed: ${tokenResp.status} ${await tokenResp.text()}`);
-  const tokenJson = (await tokenResp.json()) as { access_token: string; refresh_token?: string; expires_in?: number };
+  const tokenJson = (await tokenResp.json()) as { access_token: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string };
+  if (tokenJson.error) throw new Error(`${provider} token exchange returned an error: ${tokenJson.error} -- ${tokenJson.error_description ?? ""}`);
 
-  const userResp = await fetch(config.userinfoUrl, { headers: { authorization: `Bearer ${tokenJson.access_token}` } });
+  // User-Agent is a long-standing hard requirement of GitHub's own
+  // REST API (a request with none is rejected outright) -- harmless
+  // to send to CF/Google regardless.
+  const userResp = await fetch(config.userinfoUrl, { headers: { authorization: `Bearer ${tokenJson.access_token}`, accept: "application/json", "user-agent": "zzmq-dev" } });
   if (!userResp.ok) throw new Error(`${provider} userinfo fetch failed: ${userResp.status} ${await userResp.text()}`);
   const userJson = await userResp.json();
   const { subject, email, displayName } = config.parseUserInfo(userJson);
