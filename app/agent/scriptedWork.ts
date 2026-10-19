@@ -29,7 +29,7 @@ import { resolveRepo, ensureCloned, ensureNamedWorktree, readCharter, type Resol
 import { apiFetch } from "../cli/lib/api.js";
 import type { AskEntry, Lane, RepoPolicy } from "../engine/types.js";
 import type { LadderSearchHit } from "../engine/backend.js";
-import { resolvePolicyMode } from "../engine/policy.js";
+import { resolvePolicyMode, resolveConflictMode } from "../engine/policy.js";
 import { fileContentAtCommit } from "../engine/ingest.js";
 import { threeWayMerge } from "./threeWayMerge.js";
 import { diffFileSets } from "../cli/lib/fileDiff.js";
@@ -802,32 +802,76 @@ export async function runCoordinatorSubmitChangeset(opts: ScriptedFlowOptions): 
   const merge = threeWayMerge(resolved.repoDir, payload.baseCommit, payload.files);
   if (!merge.clean) {
     const reason = `line-level conflict in: ${merge.conflicts.map((c) => c.path).join(", ")}`;
-    await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason } });
-    // The original "work" ask's own description (not just the
-    // rejected diff) -- lets the resolver treat this as a normal
-    // additive task for whatever wasn't already resolved by the merge.
-    // Through callTool, not resolveBackend() directly -- found live
-    // while verifying #30: resolveBackend() outside a Worker/DO's own
-    // withBackend() scope always resolves to the LOCAL backend
-    // (engine/backend.ts's own doc comment confirms only "local"
-    // exists there), regardless of whether this call is actually
-    // running in remote mode against a real hosted repo. A direct
-    // read here silently saw an empty/nonexistent local Lane every
-    // time, not this repo's real one.
-    const originLane = (await callTool("lane_get", { repo: resolved.slug, lane_id: laneId })) as Lane | null;
-    const originAskId = theAsk.depends_on?.[0];
-    const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
-    const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
-    await callTool("ask_post", {
-      repo: resolved.slug,
-      lane_id: laneId,
-      kind: "resolve_conflict",
-      from: agent,
-      payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary },
-      depends_on: [],
-    });
-    onLog(`[scripted] ${reason} -- denied ${theAsk.id}, posted resolve_conflict`);
-    return;
+
+    // #6: which conflict_policy mode applies to the paths that
+    // actually collided -- checked before taking any action, same
+    // "resolve first, then act" shape resolvePolicyMode's own
+    // approval-mode check already uses above. coordinator_decides is
+    // the only mode besides the default (first_wins) actually
+    // implemented yet (vote/escalate_human/mediate are each their own
+    // later issue) -- anything else resolved here falls back to
+    // first_wins's own behavior, not an error, since a repo that sets
+    // one of those modes today is explicitly choosing something not
+    // built yet, not asking to be blocked.
+    const conflictPolicy = (await callTool("policy_show", { repo: resolved.slug })) as RepoPolicy;
+    const conflictRule = resolveConflictMode(conflictPolicy, merge.conflicts.map((c) => c.path));
+
+    if (conflictRule.mode === "coordinator_decides") {
+      const conflictBlob = merge.conflicts.map((c) => `--- ${c.path} (has conflict markers) ---\n${c.markedContent}`).join("\n\n");
+      const decisionText = await generateText(backend, COORDINATOR_DECIDES_SYSTEM_PROMPT, `Repo: ${resolved.slug}\nSubmitted changeset's own summary: ${payload.summary}\n\n${conflictBlob}`, onLog);
+      const decision = parseCoordinatorConflictDecision(decisionText);
+      if (decision.outcome === "keep_new") {
+        // Force-applies the new submission's own content for every
+        // conflicting path, ignoring what's already there -- the
+        // coordinator's real merge authority extended to exactly this
+        // call, unilaterally, no window, no further process. Folded
+        // into merge itself (not a separate commit/summarize/
+        // ladder_write_rung/ask_answer copy of the clean-merge path
+        // below) specifically so there's exactly one place that does
+        // that sequence, not two with their own chance to drift.
+        const overrideFiles = payload.files.filter((f) => merge.conflicts.some((c) => c.path === f.path));
+        merge.files = [...merge.files, ...overrideFiles];
+        merge.clean = true;
+        onLog(`[scripted] conflict_policy coordinator_decides: keeping the new submission (${decision.reason})`);
+      } else {
+        // keep_existing: denied, final -- "no additional process"
+        // means exactly that; nothing reposts automatically. Whoever
+        // wants this work redone posts a fresh ask themselves, the
+        // same real authority that made this call in the first place.
+        await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason: `conflict_policy coordinator_decides: kept the existing merged content (${decision.reason})` } });
+        onLog(`[scripted] conflict_policy coordinator_decides: kept the existing content (${decision.reason}) -- denied ${theAsk.id}, no repost`);
+        return;
+      }
+    }
+
+    if (!merge.clean) {
+      await callTool("ask_answer", { repo: resolved.slug, lane_id: laneId, ask_id: theAsk.id, actor: agent, action: "deny", payload: { reason } });
+      // The original "work" ask's own description (not just the
+      // rejected diff) -- lets the resolver treat this as a normal
+      // additive task for whatever wasn't already resolved by the merge.
+      // Through callTool, not resolveBackend() directly -- found live
+      // while verifying #30: resolveBackend() outside a Worker/DO's own
+      // withBackend() scope always resolves to the LOCAL backend
+      // (engine/backend.ts's own doc comment confirms only "local"
+      // exists there), regardless of whether this call is actually
+      // running in remote mode against a real hosted repo. A direct
+      // read here silently saw an empty/nonexistent local Lane every
+      // time, not this repo's real one.
+      const originLane = (await callTool("lane_get", { repo: resolved.slug, lane_id: laneId })) as Lane | null;
+      const originAskId = theAsk.depends_on?.[0];
+      const originAsk = originLane?.history.find((e): e is AskEntry => e.type === "ASK" && e.id === originAskId);
+      const originalDescription = (originAsk?.payload as { description?: string } | undefined)?.description ?? payload.summary;
+      await callTool("ask_post", {
+        repo: resolved.slug,
+        lane_id: laneId,
+        kind: "resolve_conflict",
+        from: agent,
+        payload: { originalDescription, cleanFiles: merge.files, conflicts: merge.conflicts, message: payload.message, summary: payload.summary, conflictMode: conflictRule.mode },
+        depends_on: [],
+      });
+      onLog(`[scripted] ${reason} -- denied ${theAsk.id}, posted resolve_conflict (conflict_policy: ${conflictRule.mode})`);
+      return;
+    }
   }
 
   try {
@@ -904,6 +948,39 @@ interface ResolveConflictPayload {
 // threeWayMerge already did everything a real line-level merge can do
 // automatically; a model only ever sees this for a genuine overlap,
 // with git's own --diff3 markers showing base/ours/theirs inline.
+// #6's coordinator_decides mode: a real but unilateral call, no
+// mediation attempt, no window -- deliberately a different, much
+// simpler prompt than RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT below,
+// which tries to actually reconcile both sides. This one just picks
+// a side (or none). "deny_both" (the issue's own third named outcome,
+// reverting whatever's already merged in addition to denying the new
+// submission) is deliberately NOT implemented here -- it would need a
+// real git revert of already-landed content, a bigger, riskier
+// operation than this first pass takes on; keep_existing covers "the
+// new one loses" without that.
+const COORDINATOR_DECIDES_SYSTEM_PROMPT = `You are a Coordinator in the zz coordination system, with real merge authority, resolving a conflict unilaterally -- no window, no vote, no mediation, your call alone. One or more files have a real git merge conflict -- two changes touched the exact same lines. You never call tools or write JSON here -- you only write plain text in the exact format below.
+
+Each conflicted file below has git's own conflict markers:
+<<<<<<< ours        -- what's currently in the repo
+||||||| base        -- what both sides started from
+=======
+>>>>>>> theirs      -- the newly submitted changeset
+
+Decide which side should actually land: the new submission (overriding what's there), or the existing content (the new submission is denied, final, no further automatic retry).
+
+Output format, exactly:
+DECISION: keep_new | keep_existing
+REASON: <one sentence>
+
+Nothing else -- no prose outside these lines, no explanation, no tool calls.`;
+
+function parseCoordinatorConflictDecision(text: string): { outcome: "keep_new" | "keep_existing"; reason: string } {
+  const decisionMatch = text.match(/^DECISION:\s*(keep_new|keep_existing)/m);
+  const reasonMatch = text.match(/^REASON:\s*(.+)$/m);
+  if (!decisionMatch) throw new Error(`could not parse a DECISION: keep_new|keep_existing line from the model's response -- got:\n${text.slice(0, 1000)}`);
+  return { outcome: decisionMatch[1] as "keep_new" | "keep_existing", reason: reasonMatch?.[1]?.trim() ?? "" };
+}
+
 const RESOLVE_MARKED_CONFLICT_SYSTEM_PROMPT = `You are an agent in the zz coordination system, acting as a contributor. One or more files have a real git merge conflict -- two changes touched the exact same lines. You never call tools or write JSON here -- you only write plain text in the exact format below.
 
 Each conflicted file below has git's own conflict markers:
