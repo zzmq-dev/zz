@@ -154,7 +154,7 @@ export async function createAgentIdentity(db: D1Database, agentUsername: string,
   const identity: AgentIdentity = {
     id: shortId("ident"),
     agent_username: agentUsername,
-    provider: provider as "cloudflare" | "google",
+    provider: provider as "cloudflare" | "google" | "github",
     provider_subject: providerSubject,
     access_token_enc: tokens.accessTokenEnc,
     refresh_token_enc: tokens.refreshTokenEnc,
