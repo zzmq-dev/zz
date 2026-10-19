@@ -33,7 +33,7 @@ export class MaintainerDO extends DurableObject<Env> {
   // passes in its args (kept for shape-compatibility with
   // agent/tools.ts's parameters, not actually branched on).
   private artifactsName = "do";
-  private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName, this.env.DB);
+  private backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, this.artifactsName, this.env.DB, (p) => this.ctx.waitUntil(p));
 
   /** Which Artifacts repo this DO instance actually operates on -- set once, before any tool call, since the DO's own id (from idFromName) doesn't reverse back to the name that created it.
    *
@@ -41,7 +41,7 @@ export class MaintainerDO extends DurableObject<Env> {
   async configure(artifactsName: string): Promise<void> {
     if (this.artifactsName === artifactsName) return;
     this.artifactsName = artifactsName;
-    this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName, this.env.DB);
+    this.backend = createCloudflareBackend(this.ctx.storage, this.env.ARTIFACTS, artifactsName, this.env.DB, (p) => this.ctx.waitUntil(p));
   }
 
   /** The tool surface, by name -- the same ToolDef.execute() contract agent/tools.ts already defines, just reached over RPC instead of an in-process call. */

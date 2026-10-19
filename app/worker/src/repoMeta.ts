@@ -80,27 +80,61 @@ export async function readMetaFile(remote: string, token: { plaintext: string } 
   return readFileAt(fs, dir, headOid, path);
 }
 
-/** Writes/overwrites one or more files on the zz-meta branch in a single commit, preserving every other existing file untouched. */
+type MemFs = ReturnType<typeof createMemFs>;
+
+/**
+ * Recursively writes `files` (arbitrarily nested paths, e.g.
+ * "lanes/ask-abc/history/00007.json") into the tree rooted at
+ * `baseTreeOid` (an empty tree if null), creating or updating nested
+ * subtrees only along the paths actually touched. A sibling file or
+ * whole subtree elsewhere in the base tree is carried forward by its
+ * existing oid, unread and unwritten -- the same reason a commit that
+ * touches one file in a real monorepo doesn't cost proportionally to
+ * the whole repo. #27 needed this: the flat, single-level
+ * implementation writeMetaFiles had until now (reading/rewriting
+ * every root-level entry on every call) would have made every zz-meta
+ * write -- not just Lane exports -- progressively more expensive as
+ * exported Lane history accumulated at the root. Returns the new root
+ * tree's oid.
+ */
+export async function writeFilesIntoTree(fs: MemFs, dir: string, baseTreeOid: string | null, files: { path: string; content: string }[]): Promise<string> {
+  const baseEntries = baseTreeOid ? (await git.readTree({ fs, dir, oid: baseTreeOid })).tree : [];
+  const keep = new Map(baseEntries.map((e) => [e.path, e] as const));
+
+  const directLeaves: { path: string; content: string }[] = [];
+  const nestedBySegment = new Map<string, { path: string; content: string }[]>();
+  for (const f of files) {
+    const slash = f.path.indexOf("/");
+    if (slash === -1) {
+      directLeaves.push(f);
+    } else {
+      const head = f.path.slice(0, slash);
+      const rest = f.path.slice(slash + 1);
+      if (!nestedBySegment.has(head)) nestedBySegment.set(head, []);
+      nestedBySegment.get(head)!.push({ path: rest, content: f.content });
+    }
+  }
+
+  for (const f of directLeaves) {
+    const oid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode(f.content) });
+    keep.set(f.path, { mode: "100644", path: f.path, oid, type: "blob" });
+  }
+  for (const [head, nestedFiles] of nestedBySegment) {
+    const existing = keep.get(head);
+    const childBaseOid = existing && existing.type === "tree" ? existing.oid : null;
+    const childTreeOid = await writeFilesIntoTree(fs, dir, childBaseOid, nestedFiles);
+    keep.set(head, { mode: "040000", path: head, oid: childTreeOid, type: "tree" });
+  }
+
+  return git.writeTree({ fs, dir, tree: Array.from(keep.values()) });
+}
+
+/** Writes/overwrites one or more files (any nesting depth) on the zz-meta branch in a single commit, preserving every other existing file untouched. */
 export async function writeMetaFiles(remote: string, token: { plaintext: string } | string, files: { path: string; content: string }[], message: string): Promise<void> {
   const { fs, dir, headOid } = await scopedBranchCheckout(remote, token);
 
-  const changedPaths = new Set(files.map((f) => f.path));
-  const entries: { mode: string; path: string; oid: string; type: "blob" }[] = [];
-
-  if (headOid) {
-    const headCommit = await git.readCommit({ fs, dir, oid: headOid });
-    const { tree } = await git.readTree({ fs, dir, oid: headCommit.commit.tree });
-    for (const entry of tree) {
-      if (changedPaths.has(entry.path)) continue;
-      entries.push({ mode: entry.mode, path: entry.path, oid: entry.oid, type: "blob" });
-    }
-  }
-  for (const f of files) {
-    const oid = await git.writeBlob({ fs, dir, blob: new TextEncoder().encode(f.content) });
-    entries.push({ mode: "100644", path: f.path, oid, type: "blob" });
-  }
-
-  const treeOid = await git.writeTree({ fs, dir, tree: entries });
+  const baseTreeOid = headOid ? (await git.readCommit({ fs, dir, oid: headOid })).commit.tree : null;
+  const treeOid = await writeFilesIntoTree(fs, dir, baseTreeOid, files);
   const person = { name: "zz-meta", email: "zz-meta@local", timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 };
   const commitOid = await git.writeCommit({ fs, dir, commit: { message, tree: treeOid, parent: headOid ? [headOid] : [], author: person, committer: person } });
   await git.writeRef({ fs, dir, ref: META_REF, value: commitOid, force: true });

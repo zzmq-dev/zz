@@ -57,6 +57,6 @@ A repo should be able to leave Cloudflare without losing anything that matters. 
 1. `git clone --mirror` each repo. This copies the code, every branch including `zz-meta`, and every ref including the Ladder's git notes.
 2. Run the coordination layer anywhere else. The protocol (Asks, Answers, scopes, review before merge) is independent of Cloudflare, and the engine code in `app/engine/` already runs locally against a plain git clone in `--local` mode.
 
-Lane history is the gap today. It lives only in the Durable Object, so a mirror clone doesn't include it. Exporting it into the repo is planned. See [Data format](/docs/data-format/#lanes).
+**Closed, 2026-10-19 (#27).** Lane history used to be the gap here -- it lived only in the Durable Object, so a mirror clone didn't include it. It's exported onto the `zz-meta` branch now, the same real home Policy and Role grants already have. See [Data format](/docs/data-format/#lanes).
 
-The rule the design follows is that D1 and Durable Object storage are never the only copy of a decision. D1 already meets it, since everything there is either an index rebuildable from the repos or account data that belongs to no repo.
+The rule the design follows is that D1 and Durable Object storage are never the only copy of a decision. D1 already meets it, since everything there is either an index rebuildable from the repos or account data that belongs to no repo. The Durable Object itself still holds the live, authoritative copy -- it's just no longer the *only* one: every Lane write also lands on `zz-meta`, asynchronously, shortly after.

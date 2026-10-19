@@ -11,11 +11,11 @@ description: "Where zz stores repos, Ladders, repo settings, Lane state, and acc
 | --- | --- | --- |
 | The repo's default branch | Code and its history | Yes |
 | Git notes in the repo | The [Ladder](/docs/nouns/#ladder) | With `git clone --mirror`, or by fetching `refs/notes/*` |
-| The repo's `zz-meta` branch | Description, Policy, owner, Role grants | Yes |
-| A Durable Object per repo | [Lane](/docs/nouns/#lane), Ask, and Answer state | No |
+| The repo's `zz-meta` branch | Description, Policy, owner, Role grants, [Lane](/docs/nouns/#lane)/Ask/Answer history | Yes |
+| A Durable Object per repo | The live, authoritative copy of Lane/Ask/Answer state | No |
 | Cloudflare D1 | Accounts, tokens, the repo index, the search index | No |
 
-The design goal is that the repo carries everything that matters, so a repo can leave the platform with its history, knowledge, and settings intact. Code, the Ladder, and repo settings meet that goal today. Lane history does not yet. See [Architecture](/docs/architecture/#portability).
+The design goal is that the repo carries everything that matters, so a repo can leave the platform with its history, knowledge, and settings intact. Code, the Ladder, repo settings, and (since #27) Lane history all meet that goal now. See [Architecture](/docs/architecture/#portability).
 
 ## Ladder
 
@@ -118,7 +118,16 @@ History entries are one of:
 
 `repo` holds the server's internal storage name for the repo. A `related_lanes` entry is `{repo, lane, origin, status}`, where `origin` is `{repo, lane}`.
 
-**Planned.** Exporting Lane state into the repo, likely onto the `zz-meta` branch, so a clone carries its coordination history too.
+**Exported onto `zz-meta`, 2026-10-19 (#27).** The Durable Object above is still the live, authoritative copy for every read and write -- this is the portable twin kept alongside it, not a replacement. Append-only by design: storage grows with real activity, not with how large a Lane's history has already gotten, by never rewriting an entry once it's written.
+
+```
+lanes/<lane-id>/header.json            # everything above except "history" -- overwritten each write
+lanes/<lane-id>/history/000000.json    # one file per history entry, in order, never rewritten
+lanes/<lane-id>/history/000001.json
+...
+```
+
+Written asynchronously, shortly after each real Lane write (`worker/src/laneExport.ts`), not synchronously inline with it -- a slow or failed export never blocks or fails the actual protocol write that triggered it, and a failed one is retried automatically the next time anything writes to that Lane (it always exports everything not yet exported, not just what the triggering write added). `worker/src/repoMeta.ts`'s `writeMetaFiles` -- the same function Policy and Role grants already write through -- gained a real recursive tree writer to support this: a nested path like `lanes/<id>/history/...` only touches the subtree actually being written, leaving every other file (another Lane's own history, `meta.json`, `roles.json`) referenced by its existing, unread, unchanged oid.
 
 ## Accounts and the index
 

@@ -18,6 +18,7 @@ import { commitChangesetOnArtifacts, headOid, readFileAtCommit as readFileAtComm
 import { writeRungsBatch, readRung, appendRepoChildren as appendRepoChildrenImpl, rootCommitOid, type SimpleRung, type NotesCache } from "./cloudflareLadderBackend.js";
 import { indexLadderRung, searchLadderIndex } from "./accountsDb.js";
 import { readRepoMetaAndRoles, writeRepoMeta } from "./repoMeta.js";
+import { exportLaneIncrement } from "./laneExport.js";
 import type { RepoPolicy } from "../../engine/types.js";
 import { normalizePolicy } from "../../engine/policy.js";
 
@@ -76,9 +77,56 @@ function collectSearchableResolvedRungs(rung: ResolvedRung, out: ResolvedRung[])
   for (const child of rung.children) collectSearchableResolvedRungs(child, out);
 }
 
-export function createCloudflareBackend(storage: DurableObjectStorage, artifacts: ArtifactsNamespace, artifactsName: string, db: D1Database): Backend {
+export function createCloudflareBackend(storage: DurableObjectStorage, artifacts: ArtifactsNamespace, artifactsName: string, db: D1Database, waitUntil: (promise: Promise<unknown>) => void): Backend {
   const sql = storage.sql;
   sql.exec("CREATE TABLE IF NOT EXISTS lanes (id TEXT PRIMARY KEY, data TEXT NOT NULL)");
+  // #27: how many of this Lane's history entries have already been
+  // exported onto zz-meta -- durable (survives a cold start/eviction,
+  // unlike the exportChain promise below), so a restart never re-
+  // exports an entry twice or silently drops where it left off.
+  sql.exec("CREATE TABLE IF NOT EXISTS lane_export_progress (lane_id TEXT PRIMARY KEY, exported_count INTEGER NOT NULL DEFAULT 0)");
+  function getExportedCount(laneId: string): number {
+    const row = sql.exec("SELECT exported_count FROM lane_export_progress WHERE lane_id = ?", laneId).toArray()[0] as { exported_count: number } | undefined;
+    return row?.exported_count ?? 0;
+  }
+  function setExportedCount(laneId: string, count: number): void {
+    sql.exec("INSERT INTO lane_export_progress (lane_id, exported_count) VALUES (?, ?) ON CONFLICT(lane_id) DO UPDATE SET exported_count = excluded.exported_count", laneId, count);
+  }
+  // Serializes this DO instance's own zz-meta exports against each
+  // other -- concurrent writes to different Lanes in the same repo
+  // would otherwise race on the same zz-meta tree (a read-modify-write
+  // per writeMetaFiles call) and could clobber one another. In-memory,
+  // not durable: survives for this DO's warm lifetime (configure() is
+  // a no-op once already configured for the same repo, so this
+  // closure persists across calls, not rebuilt per request -- see
+  // MaintainerDO.ts's own comment on that fix), and a cold start
+  // simply starts a fresh chain -- safe, since nothing was mid-flight
+  // across an eviction either.
+  let exportChain: Promise<void> = Promise.resolve();
+  function scheduleExport(lane: Lane): void {
+    const fromIndex = getExportedCount(lane.id);
+    const laneId = lane.id;
+    const laneSnapshot = lane; // this specific write's own state, not a live reference re-read later
+    exportChain = exportChain
+      .then(() =>
+        withRepo(artifacts, artifactsName, async (repo, remote) => {
+          const token = await repo.createToken("write", 3600);
+          await exportLaneIncrement(remote, token, laneSnapshot, fromIndex);
+          setExportedCount(laneId, laneSnapshot.history.length);
+        }),
+      )
+      .catch((err) => {
+        // Best-effort: a failed export never blocks or fails the
+        // actual protocol write that triggered it (already committed
+        // to this DO's own SQLite by the time this runs) -- the next
+        // successful export for this Lane naturally catches up from
+        // wherever exported_count was last left, since it always
+        // exports everything from there to the Lane's CURRENT history
+        // length, not just what this one call added.
+        console.error(`lane export failed for ${artifactsName}/${laneId}:`, err);
+      });
+    waitUntil(exportChain);
+  }
 
   // A Lane persisted before the Maintainer->Coordinator rename has
   // `maintainers` baked into its stored JSON, not `committee` -- the
@@ -433,6 +481,7 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
 
     async writeLane(_repo, lane: Lane): Promise<void> {
       writeLaneSync(lane);
+      scheduleExport(lane);
     },
 
     async listLanes(): Promise<Lane[]> {
@@ -443,13 +492,21 @@ export function createCloudflareBackend(storage: DurableObjectStorage, artifacts
     },
 
     async withLane(_repo, laneId: string, mutate: (lane: Lane) => void): Promise<Lane> {
-      return storage.transactionSync(() => {
+      const lane = storage.transactionSync(() => {
         const lane = readLaneSync(laneId);
         if (!lane) throw new Error(`no such lane: ${laneId}`);
         mutate(lane);
         writeLaneSync(lane);
         return lane;
       });
+      // #27: outside the sync transaction on purpose -- scheduleExport
+      // only kicks off a background chain (via waitUntil), it doesn't
+      // await it, so nothing here actually needs transactionSync's own
+      // synchronous guarantee; keeping it separate also means a lane
+      // export is never what makes answer()/ask()'s own atomic Lane
+      // write fail.
+      scheduleExport(lane);
+      return lane;
     },
 
     async readPolicy(): Promise<RepoPolicy> {
