@@ -38,6 +38,13 @@ export interface OAuthEnv {
   GITHUB_OAUTH_CLIENT_SECRET?: string;
   GITHUB_OAUTH_REDIRECT_URI?: string;
   TOKEN_ENCRYPTION_KEY?: string; // base64, 32 bytes, for AES-GCM
+  // zz's own pre-registered OIDC client credential against zzmq.dev's did:
+  // guardian registrar instance -- see guardianOidc.ts, not this generic
+  // three-provider OAuth flow (the federated "Sign in with did:guardian"
+  // flow discovers its own endpoints per domain, rather than having a
+  // fixed authorizeUrl/tokenUrl the way cloudflare/google/github do here).
+  GUARDIAN_OIDC_CLIENT_ID?: string;
+  GUARDIAN_OIDC_CLIENT_SECRET?: string;
 }
 
 export type Provider = "cloudflare" | "google" | "github";

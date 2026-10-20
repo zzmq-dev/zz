@@ -20,7 +20,8 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianIdentity } from "./guardianClient.js";
+import { registerGuardianIdentity, registerGuardianName, setGuardianContactEmail, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
@@ -44,6 +45,7 @@ import {
   fulfillCliLoginSession,
   getAgent,
   getAgentByEmail,
+  getAgentByGuardianDid,
   getAgentToken,
   getRepoBySlug,
   getRepoRoleForPrincipal,
@@ -106,6 +108,10 @@ export interface WebEnv extends OAuthEnv {
   ARTIFACTS: Artifacts;
   DB: D1Database;
   MAINTAINER_DO: DurableObjectNamespace<MaintainerDO>;
+  // Service binding to zz's own did:guardian registrar Worker -- see
+  // guardianClient.ts/guardianOidc.ts's own fetcherFor() for why a plain
+  // fetch() to it (same zone, different Worker) isn't used instead.
+  GUARDIAN_SERVER?: Fetcher;
 }
 
 // --- HTML helpers ---
@@ -810,14 +816,23 @@ async function handleLogin(request: Request, env: WebEnv): Promise<Response> {
     if (me) return redirect(`/${me.username}`);
   }
   const qs = cliNonce ? `?cli_nonce=${encodeURIComponent(cliNonce)}` : "";
+  const err = new URL(request.url).searchParams.get("err");
   return layout(
     "Log in",
     null,
     `${cliNonce ? '<p class="hint">Logging in for the zz CLI -- this browser tab can be closed once it redirects back.</p>' : ""}
+     ${err ? `<p class="hint" style="color:var(--pico-del-color,#c33)">${esc(err)}</p>` : ""}
      <div class="card stack" style="max-width:320px;margin:0 auto">
        <a href="/auth/start/cloudflare${qs}" style="display:block"><button style="width:100%;padding:.85rem 1.1rem">Log in with Cloudflare</button></a>
        <a href="/auth/start/google${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with Google</button></a>
        <a href="/auth/start/github${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Log in with GitHub</button></a>
+     </div>
+     <div class="card stack" style="max-width:320px;margin:1rem auto 0">
+       <form method="post" action="/auth/guardian/start${qs}" class="stack">
+         <label for="guardian-id">Sign in with did:guardian</label>
+         <input id="guardian-id" name="identifier" placeholder="alice@acme.com" required>
+         <button class="secondary" style="width:100%;padding:.85rem 1.1rem" type="submit">Sign in</button>
+       </form>
      </div>`,
     { centerTitle: true },
   );
@@ -830,6 +845,128 @@ async function handleAuthStart(provider: Provider, request: Request, env: WebEnv
   const cookies = [`zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`];
   if (cliNonce) cookies.push(`zz_cli_nonce=${cliNonce}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
   return redirect(url, { cookies });
+}
+
+/**
+ * The shared tail end of every interactive login (the three OAuth
+ * providers, did:guardian, and the name-picker's own success path):
+ * create a session, fulfill a waiting CLI bridge if there is one, mint
+ * a first bearer token on a brand-new agent's first-ever browser login
+ * (shown once -- see the original inline version's own reasoning,
+ * preserved here verbatim), otherwise just land on the profile.
+ * `extraCardsHtml` lets a caller (the name-picker) prepend its own
+ * shown-once secret before this renders.
+ */
+async function finishInteractiveLogin(env: WebEnv, agent: Agent, cliNonce: string | undefined, extraCardsHtml = ""): Promise<Response> {
+  const session = await createSession(env.DB, agent.username, 60 * 60 * 24 * 30);
+
+  if (cliNonce) {
+    const plaintext = generateAgentToken();
+    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
+    const fulfilled = await fulfillCliLoginSession(env.DB, cliNonce, agent.username, plaintext);
+    if (fulfilled) {
+      return layout(
+        "Logged in",
+        agent,
+        `${extraCardsHtml}<div class="card"><p>Logged in as ${formatAgentId(agent.username)}. You can close this tab and return to your terminal.</p></div>`,
+      );
+    }
+  }
+
+  const existingTokens = (await listTokensForAgent(env.DB, agent.username)).filter((t) => !t.revoked_at);
+  if (existingTokens.length === 0) {
+    const plaintext = generateAgentToken();
+    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
+    return layout(
+      "Welcome",
+      agent,
+      `${extraCardsHtml}<div class="card stack">
+         <p>Logged in as ${formatAgentId(agent.username)}. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
+         <div class="clone-row"><pre>${esc(plaintext)}</pre><button class="secondary icon-btn" data-copy="${esc(plaintext)}" title="Copy">⧉</button></div>
+         <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
+       </div>`,
+      { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
+    );
+  }
+
+  if (extraCardsHtml) {
+    return layout("Welcome back", agent, `${extraCardsHtml}<p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>`, {
+      cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)],
+    });
+  }
+  return redirect(`/${agent.username}`, { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
+}
+
+interface PendingLink {
+  provider: Provider;
+  subject: string;
+  accessTokenEnc: string;
+  refreshTokenEnc: string | null;
+  expiresAt: string | null;
+  displayName: string;
+  email: string | null;
+}
+
+const PENDING_LINK_COOKIE = "zz_pending_link";
+
+function pendingLinkCookie(link: PendingLink): string {
+  return `${PENDING_LINK_COOKIE}=${btoa(JSON.stringify(link))}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`;
+}
+
+function readPendingLink(request: Request): PendingLink | null {
+  const raw = (request.headers.get("cookie") ?? "").match(new RegExp(`${PENDING_LINK_COOKIE}=([^;]+)`))?.[1];
+  if (!raw) return null;
+  try {
+    return JSON.parse(atob(raw)) as PendingLink;
+  } catch {
+    return null;
+  }
+}
+
+const CLEAR_PENDING_LINK_COOKIE = `${PENDING_LINK_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+
+/** Binds an OAuth identity to an already-resolved agent -- the shared operation behind both halves of account linking (2.3): proving an existing did:guardian id from the "account not found" interstitial, and connecting a provider from an already-authenticated profile settings page. */
+async function bindProviderIdentity(env: WebEnv, agent: Agent, link: PendingLink): Promise<void> {
+  await createAgentIdentity(env.DB, agent.username, link.provider, link.subject, {
+    accessTokenEnc: link.accessTokenEnc,
+    refreshTokenEnc: link.refreshTokenEnc,
+    expiresAt: link.expiresAt,
+  });
+}
+
+/** A did:guardian identifier's own name/domain, parsed locally just for a reasonable fallback display name on a lazily-created agent -- not the authoritative parse (that's the registrar's own job); good enough for "alice" out of "did:guardian:alice:acme.com", or the bare domain itself for a root identity. */
+function splitGuardianDid(did: string): { name: string | null; domain: string } | null {
+  const parts = did.split(":");
+  if (parts[0] !== "did" || parts[1] !== "guardian" || parts.length < 3) return null;
+  const rest = parts.slice(2);
+  return rest.length === 1 ? { name: null, domain: rest[0] } : { name: rest[0], domain: rest[1] };
+}
+
+/** Finds the local agent for a did:guardian identity, or -- for one zz has never seen before (always a foreign, non-zzmq.dev identity in practice, since every zzmq.dev identity is created through /onboard/guardian-name, which always creates its own local row first) -- lazily creates a minimal one. Reuses all of zz's existing agents-table machinery (tokens, Role grants, attribution) unchanged; no separate identity model for a foreign id. */
+async function resolveOrCreateAgentForDid(env: WebEnv, guardianDid: string): Promise<Agent> {
+  const existing = await getAgentByGuardianDid(env.DB, guardianDid);
+  if (existing) return existing;
+  const parsed = splitGuardianDid(guardianDid);
+  const displayName = parsed?.name ?? parsed?.domain ?? guardianDid;
+  const agent = await createAgent(env.DB, displayName, null, null);
+  await setAgentGuardianDid(env.DB, agent.username, guardianDid);
+  return { ...agent, guardian_did: guardianDid };
+}
+
+/** The shared "didn't resolve" landing page for both a providerless OAuth login (no existing binding) and a did:guardian sign-in attempt that never got as far as an authenticated DID (bad identifier, no credential, unreachable registrar) -- one continuous workflow into creating a new id or trying again, not a separate front-door choice. `pendingLinkSet` is true when there's a real OAuth identity waiting to be bound, which adds the "I already have an id" option. */
+function notFoundInterstitial(reason: string, cliNonce: string | undefined, pendingLinkSet: boolean, cookies: string[] = []): Response {
+  const qs = cliNonce ? `?cli_nonce=${encodeURIComponent(cliNonce)}` : "";
+  return layout(
+    "Account not found",
+    null,
+    `<div class="card stack" style="max-width:420px;margin:0 auto">
+       <p>${esc(reason)}</p>
+       <a href="/onboard/guardian-name${qs}" style="display:block"><button style="width:100%;padding:.85rem 1.1rem">Create a new zzmq.dev id</button></a>
+       ${pendingLinkSet ? `<a href="/login${qs}#guardian-id" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">I already have an id -- sign in to link it</button></a>` : ""}
+       <a href="/login${qs}" style="display:block"><button class="secondary" style="width:100%;padding:.85rem 1.1rem">Go back and try again</button></a>
+     </div>`,
+    { centerTitle: true, cookies },
+  );
 }
 
 async function handleAuthCallback(provider: Provider, request: Request, env: WebEnv): Promise<Response> {
@@ -867,64 +1004,146 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     if (byEmail) {
       agent = byEmail;
       await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
+      await createAgentIdentity(env.DB, agent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
     } else {
-      agent = await createAgent(env.DB, identity.displayName, identity.email, null);
-      // #23: best-effort, same reasoning as doCreateAgent -- createdBy is
-      // null here, so this registers ownerless (no guardian), matching "a
-      // human is nobody's ward from the start."
-      const registration = await registerGuardianIdentity(agent.username);
-      if (registration) {
-        await setAgentGuardianDid(env.DB, agent.username, registration.did);
-        agent = { ...agent, guardian_did: registration.did };
-      }
-    }
-    await createAgentIdentity(env.DB, agent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
-  }
-
-  const session = await createSession(env.DB, agent.username, 60 * 60 * 24 * 30);
-
-  // CLI bridge: a `zz login` browser tab carries a nonce through as a
-  // cookie; fulfill it with a fresh bearer token so the waiting CLI
-  // process can pick it up on its next poll. The web session above is
-  // independent -- this tab also ends up logged in normally if left open.
-  if (cliNonce) {
-    const plaintext = generateAgentToken();
-    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
-    const fulfilled = await fulfillCliLoginSession(env.DB, cliNonce, agent.username, plaintext);
-    if (fulfilled) {
-      return layout(
-        "Logged in",
-        agent,
-        `<div class="card"><p>Logged in as ${formatAgentId(agent.username)}. You can close this tab and return to your terminal.</p></div>`,
+      // No existing binding at all -- this used to auto-create a
+      // zzmq.dev id silently (an auto-hashed name, never shown). Now
+      // it's an explicit choice: create a new id (through the real
+      // name-picker), or prove you already have one and link it. The
+      // OAuth identity itself isn't lost in the meantime -- it rides
+      // along as a short-lived pending-link cookie either way.
+      return notFoundInterstitial(
+        `No zzmq.dev id is linked to this ${provider} login yet.`,
+        cliNonce,
+        true,
+        [pendingLinkCookie({ provider, subject: identity.subject, accessTokenEnc, refreshTokenEnc, expiresAt, displayName: identity.displayName, email: identity.email })],
       );
     }
   }
 
-  // First-ever browser login, no CLI involved: mint a token right
-  // here too, same reasoning as doCreateAgent -- a credential that's
-  // only ever issued from a buried "issue yourself a token" button on
-  // /profile is a credential most people won't find until they
-  // already need it (confirmed live: git push failure asking "how do
-  // I even get a token"). Only on first login (zero existing active
-  // tokens) -- a token is shown-once by design, so minting one on
-  // every return visit would just produce unusable, never-seen tokens.
-  const existingTokens = (await listTokensForAgent(env.DB, agent.username)).filter((t) => !t.revoked_at);
-  if (existingTokens.length === 0) {
-    const plaintext = generateAgentToken();
-    await createAgentToken(env.DB, agent.username, hashAgentToken(plaintext));
-    return layout(
-      "Welcome",
-      agent,
-      `<div class="card stack">
-         <p>Logged in as ${formatAgentId(agent.username)}. Here's a token for <code>git push</code>, the CLI, or any script acting as you -- copy it now, it won't be shown again:</p>
-         <div class="clone-row"><pre>${esc(plaintext)}</pre><button class="secondary icon-btn" data-copy="${esc(plaintext)}" title="Copy">⧉</button></div>
-         <p><a href="/${esc(agent.username)}">Continue to your profile &rarr;</a></p>
-       </div>`,
-      { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] },
-    );
+  return finishInteractiveLogin(env, agent, cliNonce);
+}
+
+function withExtraCookie(response: Response, cookie: string): Response {
+  const headers = new Headers(response.headers);
+  headers.append("set-cookie", cookie);
+  return new Response(response.body, { status: response.status, headers });
+}
+
+/** The login page's "Sign in with did:guardian" form submission -- see guardianOidc.ts's own header for why an unknown domain fails here, before any redirect, rather than bouncing into a foreign error page. */
+async function handleGuardianStart(request: Request, env: WebEnv): Promise<Response> {
+  const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
+  const form = await request.formData();
+  const raw = String(form.get("identifier") ?? "");
+  const parsed = parseGuardianIdentifier(raw);
+  const pendingLinkSet = readPendingLink(request) !== null;
+  if (!parsed) {
+    return notFoundInterstitial(`"${raw}" doesn't look like a did:guardian id -- expected something like alice@acme.com or @acme.com.`, cliNonce, pendingLinkSet);
+  }
+  const redirectUri = `${new URL(request.url).origin}/auth/callback/didguardian`;
+  const state = shortId("state");
+  const result = await buildGuardianAuthorizeUrl(env, parsed.domain, redirectUri, state);
+  if (!result.ok) {
+    return notFoundInterstitial(result.reason, cliNonce, pendingLinkSet);
+  }
+  const cookies = [
+    `zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+    `zz_guardian_domain=${encodeURIComponent(parsed.domain)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+  ];
+  if (cliNonce) cookies.push(`zz_cli_nonce=${cliNonce}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
+  return redirect(result.url, { cookies });
+}
+
+async function handleGuardianAuthCallback(request: Request, env: WebEnv): Promise<Response> {
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieState = cookieHeader.match(/zz_oauth_state=([^;]+)/)?.[1];
+  const domain = cookieHeader.match(/zz_guardian_domain=([^;]+)/)?.[1];
+  const cliNonce = cookieHeader.match(/zz_cli_nonce=([^;]+)/)?.[1];
+  if (!code || !state || !domain || state !== cookieState) {
+    return new Response("Sign-in state mismatch or missing code -- please try again.", { status: 400 });
   }
 
-  return redirect(`/${agent.username}`, { cookies: [sessionCookieHeader(session.id, 60 * 60 * 24 * 30)] });
+  const redirectUri = `${url.origin}/auth/callback/didguardian`;
+  const identity = await exchangeGuardianCode(env, decodeURIComponent(domain), code, redirectUri);
+  if (!identity) {
+    return notFoundInterstitial(`Couldn't verify that did:guardian id against ${decodeURIComponent(domain)}.`, cliNonce, readPendingLink(request) !== null);
+  }
+
+  const agent = await resolveOrCreateAgentForDid(env, identity.did);
+  const pendingLink = readPendingLink(request);
+  if (pendingLink) {
+    await bindProviderIdentity(env, agent, pendingLink);
+    await refreshAgentProfile(env.DB, agent.username, pendingLink.displayName, pendingLink.email);
+  }
+  const response = await finishInteractiveLogin(env, agent, cliNonce);
+  return pendingLink ? withExtraCookie(response, CLEAR_PENDING_LINK_COOKIE) : response;
+}
+
+/** A reasonable starting suggestion for the name-picker -- never authoritative, the registrar's own 409 is what actually enforces uniqueness. */
+function suggestGuardianName(seed: string): string {
+  const slug = seed
+    .toLowerCase()
+    .replace(/@.*/, "")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length >= 3 ? slug.slice(0, 32) : `agent-${shortId("").slice(1, 7)}`;
+}
+
+function guardianNameForm(suggested: string, error: string | null, cliNonce: string | undefined): Response {
+  const qs = cliNonce ? `?cli_nonce=${encodeURIComponent(cliNonce)}` : "";
+  return layout(
+    "Choose your id",
+    null,
+    `<div class="card stack" style="max-width:420px;margin:0 auto">
+       ${error ? `<p class="hint" style="color:var(--pico-del-color,#c33)">${esc(error)}</p>` : ""}
+       <p>Pick a name for your did:guardian id on zzmq.dev -- this is yours permanently, and it's how others (and you, from the CLI) will address it.</p>
+       <form method="post" action="/onboard/guardian-name${qs}" class="stack">
+         <label for="guardian-name">Name</label>
+         <input id="guardian-name" name="name" value="${esc(suggested)}" pattern="[a-z0-9][a-z0-9-]{1,30}[a-z0-9]" required>
+         <button style="width:100%;padding:.85rem 1.1rem" type="submit">Create ${esc(suggested)}@zzmq.dev</button>
+       </form>
+     </div>`,
+    { centerTitle: true },
+  );
+}
+
+async function handleGuardianNameFormGet(request: Request, env: WebEnv): Promise<Response> {
+  const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
+  const pendingLink = readPendingLink(request);
+  const suggested = suggestGuardianName(pendingLink?.email ?? pendingLink?.displayName ?? "");
+  return guardianNameForm(suggested, null, cliNonce);
+}
+
+async function handleGuardianNameFormPost(request: Request, env: WebEnv): Promise<Response> {
+  const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
+  const form = await request.formData();
+  const name = String(form.get("name") ?? "").trim().toLowerCase();
+  if (!GUARDIAN_NAME_RE.test(name)) {
+    return guardianNameForm(name || "alice", "That name must be 3-32 lowercase letters, digits, or hyphens, starting and ending with a letter or digit.", cliNonce);
+  }
+
+  const result = await registerGuardianName(env, name);
+  if (!result.ok) {
+    const message = result.status === 409 ? `"${name}" is already taken -- try another.` : result.message;
+    return guardianNameForm(name, message, cliNonce);
+  }
+
+  const pendingLink = readPendingLink(request);
+  const agent = await createAgent(env.DB, pendingLink?.displayName ?? name, pendingLink?.email ?? null, null);
+  await setAgentGuardianDid(env.DB, agent.username, result.did);
+  const withDid = { ...agent, guardian_did: result.did };
+  if (pendingLink) await bindProviderIdentity(env, withDid, pendingLink);
+  if (pendingLink?.email) await setGuardianContactEmail(env, name, pendingLink.email);
+
+  const secretCard = `<div class="card stack">
+     <p>Your did:guardian login secret -- copy it now, it won't be shown again. You'll need it to sign in with <code>${esc(result.did)}</code> directly (no OAuth provider) later:</p>
+     <div class="clone-row"><pre>${esc(result.login_secret)}</pre><button class="secondary icon-btn" data-copy="${esc(result.login_secret)}" title="Copy">⧉</button></div>
+   </div>`;
+  const response = await finishInteractiveLogin(env, withDid, cliNonce, secretCard);
+  return pendingLink ? withExtraCookie(response, CLEAR_PENDING_LINK_COOKIE) : response;
 }
 
 async function handleLogout(request: Request, env: WebEnv): Promise<Response> {
@@ -970,7 +1189,7 @@ async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | 
   await createAgentToken(env.DB, agent.username, hashAgentToken(token));
   // #23: best-effort -- a brief outage on the registrar's own side never
   // blocks agent creation, the actual load-bearing operation here.
-  const registration = await registerGuardianIdentity(agent.username);
+  const registration = await registerGuardianIdentity(env, agent.username);
   if (registration) {
     await setAgentGuardianDid(env.DB, agent.username, registration.did);
     agent = { ...agent, guardian_did: registration.did };
@@ -3661,6 +3880,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/auth/callback/cloudflare") return handleAuthCallback("cloudflare", request, env);
   if (path === "/auth/callback/google") return handleAuthCallback("google", request, env);
   if (path === "/auth/callback/github") return handleAuthCallback("github", request, env);
+  if (path === "/auth/guardian/start" && request.method === "POST") return handleGuardianStart(request, env);
+  if (path === "/auth/callback/didguardian") return handleGuardianAuthCallback(request, env);
+  if (path === "/onboard/guardian-name" && request.method === "GET") return handleGuardianNameFormGet(request, env);
+  if (path === "/onboard/guardian-name" && request.method === "POST") return handleGuardianNameFormPost(request, env);
   // /profile is kept only as a convenience redirect to your own
   // /<username> page -- see that handler's header for why there's no
   // separate profile route anymore (one route, public or editable

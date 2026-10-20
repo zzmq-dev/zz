@@ -126,6 +126,11 @@ export async function getAgentByEmail(db: D1Database, email: string): Promise<Ag
   return db.prepare("SELECT * FROM agents WHERE email = ? LIMIT 1").bind(email).first<Agent>();
 }
 
+/** The agent a did:guardian identity belongs to, if any -- the canonical lookup for "Sign in with did:guardian" and for `zz work --as` resolving a name to an agent, local or (once seen once) foreign. */
+export async function getAgentByGuardianDid(db: D1Database, guardianDid: string): Promise<Agent | null> {
+  return db.prepare("SELECT * FROM agents WHERE guardian_did = ? LIMIT 1").bind(guardianDid).first<Agent>();
+}
+
 /** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent that agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. #21: `displayName` "" (no name given at creation) uses a random, opaque slug instead of slugifying a name that doesn't exist yet -- the agent chooses its own real display_name later, via agent_set_name; the username itself (frozen at creation, same as every other agent) doesn't wait for that. */
 async function computeUsername(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<string> {
   if (email) return uniqueUsername(db, email);

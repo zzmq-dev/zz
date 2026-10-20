@@ -40,6 +40,19 @@
       "database_id": "340465c5-bd3b-49cc-878b-fbf8e577b99a"
     }
   ],
+  // A plain fetch() from this Worker to https://zzmq.dev/... (the did:
+  // guardian registrar's own routes, same zone, different Worker) reliably
+  // 522s -- confirmed live, a known Workers gotcha where a same-zone
+  // subrequest can deadlock against the zone's own edge routing. A service
+  // binding calls the other Worker directly, in-process, bypassing the
+  // public edge entirely for exactly this one case (see guardianClient.ts/
+  // guardianOidc.ts's own fetcherFor()).
+  "services": [
+    {
+      "binding": "GUARDIAN_SERVER",
+      "service": "zz-guardian-server"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
