@@ -169,6 +169,11 @@ export async function updateIdentityTokens(db: D1Database, identityId: string, t
     .run();
 }
 
+/** The reverse of createAgentIdentity -- disconnects a linked OAuth provider from its own profile settings. Doesn't touch anything else (sessions, tokens, the agent row itself); losing a login method is never itself a reason to tear down the account. */
+export async function deleteAgentIdentity(db: D1Database, agentUsername: string, provider: string): Promise<void> {
+  await db.prepare("DELETE FROM agent_identities WHERE agent_username = ? AND provider = ?").bind(agentUsername, provider).run();
+}
+
 export async function createSession(db: D1Database, agentUsername: string, ttlSeconds: number): Promise<Session> {
   const now = Date.now();
   const session: Session = { id: shortId("sess"), agent_username: agentUsername, created_at: new Date(now).toISOString(), expires_at: new Date(now + ttlSeconds * 1000).toISOString() };

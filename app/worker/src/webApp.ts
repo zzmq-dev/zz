@@ -36,6 +36,7 @@ import {
   setAgentOwnName,
   createCliLoginSession,
   createSession,
+  deleteAgentIdentity,
   deleteRepoRow,
   deleteSession,
   findActiveAgentToken,
@@ -2311,10 +2312,15 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
 
   const linkedIdentities = await listAgentIdentities(env.DB, me.username);
   const linkedProviders = new Set(linkedIdentities.map((i) => i.provider));
+  const lastLoginWarning =
+    "This is your only connected login. If you don't have your did:guardian login secret saved, disconnecting it could lock you out of this account. Disconnect anyway?";
   const linkedLoginsHtml = (Object.keys(OAUTH_PROVIDER_LABELS) as Provider[])
     .map((p) =>
       linkedProviders.has(p)
-        ? `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <span class="badge badge-green">connected</span></li>`
+        ? `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <span class="badge badge-green">connected</span>
+            <form method="post" action="/profile/identities/${p}/disconnect" class="inline">
+              <button type="submit" class="danger"${linkedProviders.size === 1 ? ` onclick="${esc(`return confirm(${JSON.stringify(lastLoginWarning)})`)}"` : ""}>Disconnect</button>
+            </form></li>`
         : `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <a href="/auth/start/${p}?link=true"><button class="secondary">Connect</button></a></li>`,
     )
     .join("");
@@ -2437,6 +2443,16 @@ async function handleRevokeTokenForm(tokenId: string, request: Request, env: Web
   if (token) {
     const owner = await getAgent(env.DB, token.agent_username);
     if (owner && (owner.username === me.username || owner.created_by === me.username)) await revokeAgentToken(env.DB, tokenId);
+  }
+  return redirect(`/${me.username}`);
+}
+
+/** The reverse of the "Linked logins" card's own Connect button -- only ever acts on the caller's own identities, never anyone else's (no username/target param at all, just whichever provider on your own profile). */
+async function handleDisconnectProvider(provider: string, request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  if (provider === "cloudflare" || provider === "google" || provider === "github") {
+    await deleteAgentIdentity(env.DB, me.username, provider);
   }
   return redirect(`/${me.username}`);
 }
@@ -4041,6 +4057,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/profile\/tokens\/([^/]+)\/revoke$/);
     if (m && request.method === "POST") return handleRevokeTokenForm(m[1], request, env);
+  }
+  {
+    const m = path.match(/^\/profile\/identities\/([^/]+)\/disconnect$/);
+    if (m && request.method === "POST") return handleDisconnectProvider(m[1], request, env);
   }
   if (path === "/explore") return handleExplore(request, env);
   if (path === "/work" && request.method === "GET") return handleWorkPage(request, env);
