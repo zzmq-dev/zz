@@ -160,16 +160,22 @@ export async function exchangeCodeForIdentity(provider: Provider, env: OAuthEnv,
   const basic = btoa(`${clientId}:${clientSecret}`);
   const tokenResp = await fetch(config.tokenUrl, {
     method: "POST",
-    // Basic Auth (what CF/Google's own docs confirm) and client_id/
-    // client_secret in the body (what GitHub's own docs confirm,
-    // without explicitly saying Basic Auth also works) -- sent
-    // together so every provider's own documented mechanism is
-    // actually used, not assumed to also accept the other one.
+    // Basic Auth only, per RFC 6749 -- confirmed live this is a real
+    // requirement, not just a style preference: sending client_secret
+    // in the body *as well as* the Basic Auth header made Cloudflare's
+    // own token endpoint reject the request outright (401
+    // invalid_client, "client_secret_basic" configured but
+    // "client_secret_post" was also present in the same request) --
+    // the previous version of this code sent both deliberately,
+    // reasoning that covered more providers' documented mechanisms;
+    // that reasoning was wrong, this is the one that actually works.
+    // client_id stays in the body -- harmless, and some providers
+    // expect it there regardless of how the secret itself is sent.
     // "accept: application/json" is GitHub-specific (its default
     // response is form-urlencoded, not JSON, without this) but
     // harmless for CF/Google, which already return JSON regardless.
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", authorization: `Basic ${basic}` },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: config.redirectUri(env), client_id: clientId, client_secret: clientSecret }),
+    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: config.redirectUri(env), client_id: clientId }),
   });
   if (!tokenResp.ok) throw new Error(`${provider} token exchange failed: ${tokenResp.status} ${await tokenResp.text()}`);
   const tokenJson = (await tokenResp.json()) as { access_token: string; refresh_token?: string; expires_in?: number; error?: string; error_description?: string };

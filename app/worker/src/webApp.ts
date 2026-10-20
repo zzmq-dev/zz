@@ -924,15 +924,34 @@ interface PendingLink {
 
 const PENDING_LINK_COOKIE = "zz_pending_link";
 
+/**
+ * Plain btoa() on a JSON string throws outright the moment it contains any
+ * character outside Latin1 -- confirmed live: a real OAuth provider's own
+ * displayName/email can contain anything (accented letters, non-Latin
+ * scripts, emoji), so this isn't a hypothetical edge case. UTF-8 encode
+ * first, base64 the resulting bytes -- the standard fix, same shape
+ * auth.ts's own encryptSecret/decryptSecret already use for ciphertext.
+ */
+function toBase64Unicode(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+function fromBase64Unicode(b64: string): string {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 function pendingLinkCookie(link: PendingLink): string {
-  return `${PENDING_LINK_COOKIE}=${btoa(JSON.stringify(link))}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`;
+  return `${PENDING_LINK_COOKIE}=${toBase64Unicode(JSON.stringify(link))}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`;
 }
 
 function readPendingLink(request: Request): PendingLink | null {
   const raw = (request.headers.get("cookie") ?? "").match(new RegExp(`${PENDING_LINK_COOKIE}=([^;]+)`))?.[1];
   if (!raw) return null;
   try {
-    return JSON.parse(atob(raw)) as PendingLink;
+    return JSON.parse(fromBase64Unicode(raw)) as PendingLink;
   } catch {
     return null;
   }
