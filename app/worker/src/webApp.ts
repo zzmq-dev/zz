@@ -20,6 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
+import { registerGuardianIdentity } from "./guardianClient.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
@@ -62,6 +63,7 @@ import {
   searchExplore,
   searchLadderIndex,
   searchRepos,
+  setAgentGuardianDid,
   setIngestStatus,
   shortId,
   syncRepoRoleCache,
@@ -867,6 +869,14 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
       await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
     } else {
       agent = await createAgent(env.DB, identity.displayName, identity.email, null);
+      // #23: best-effort, same reasoning as doCreateAgent -- createdBy is
+      // null here, so this registers ownerless (no guardian), matching "a
+      // human is nobody's ward from the start."
+      const registration = await registerGuardianIdentity(agent.username);
+      if (registration) {
+        await setAgentGuardianDid(env.DB, agent.username, registration.did);
+        agent = { ...agent, guardian_did: registration.did };
+      }
     }
     await createAgentIdentity(env.DB, agent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
   }
@@ -955,9 +965,16 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 // than a human being required to supply one up front.
 async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | null | undefined): Promise<{ agent: Agent; token: string }> {
   const trimmed = displayName?.trim() ?? "";
-  const agent = await createAgent(env.DB, trimmed, null, creator.username);
+  let agent = await createAgent(env.DB, trimmed, null, creator.username);
   const token = generateAgentToken();
   await createAgentToken(env.DB, agent.username, hashAgentToken(token));
+  // #23: best-effort -- a brief outage on the registrar's own side never
+  // blocks agent creation, the actual load-bearing operation here.
+  const registration = await registerGuardianIdentity(agent.username);
+  if (registration) {
+    await setAgentGuardianDid(env.DB, agent.username, registration.did);
+    agent = { ...agent, guardian_did: registration.did };
+  }
   return { agent, token };
 }
 

@@ -27,6 +27,17 @@ export interface Agent {
   // <name>` leaves this null; only the actual self-naming act sets
   // it, via agent_set_name).
   named_at: string | null;
+  // #23: the real did:guardian identity for this agent, registered
+  // against zz's own instance (id.zzmq.dev) -- null for every agent
+  // created before this landed (additive, not backfilled -- see the
+  // did:guardian integration's own stated scope). Registered ownerless
+  // (ward.guardians = []) for now, same as every fresh registration --
+  // actually establishing `created_by` as a real, signed guardian
+  // needs a registrar endpoint that signs server-side on an
+  // authenticated ward's behalf (the registrar custodies both
+  // parties' keys, zz doesn't), which doesn't exist yet. Flagged as
+  // the next real step, not silently glossed over -- see guardianClient.ts.
+  guardian_did: string | null;
 }
 
 export interface AgentIdentity {
@@ -126,12 +137,17 @@ async function computeUsername(db: D1Database, displayName: string, email: strin
 
 export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
   const username = await computeUsername(db, displayName, email, createdBy);
-  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy, named_at: null };
+  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy, named_at: null, guardian_did: null };
   await db
     .prepare("INSERT INTO agents (username, display_name, email, created_at, created_by) VALUES (?, ?, ?, ?, ?)")
     .bind(agent.username, agent.display_name, agent.email, agent.created_at, agent.created_by)
     .run();
   return agent;
+}
+
+/** #23: records the real did:guardian identity registered for this agent -- set once, right after createAgent, from guardianClient.ts's own registration call; left null if that call failed (never blocks agent creation itself on an external service being up). */
+export async function setAgentGuardianDid(db: D1Database, username: string, guardianDid: string): Promise<void> {
+  await db.prepare("UPDATE agents SET guardian_did = ? WHERE username = ?").bind(guardianDid, username).run();
 }
 
 /** Refreshes display_name/email on every login, not just signup -- a provider's profile data (especially Cloudflare's, fetched via a second REST call) can be absent or wrong at signup time and correct itself later. Never clears a field the provider stops returning: only overwrites with a real, non-null value. */
