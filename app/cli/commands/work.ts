@@ -285,9 +285,9 @@ async function runClaimedAsk(
 
 export interface WorkOptions {
   agent?: string;
-  /** --as <name>: act as a managed agent instead of yourself -- "<name>" expands to "<your username>[<name>]" and its token comes from the local registry `zz agent create`/`zz agent token` populated (see lib/identity.ts). Mutually exclusive with --agent in practice (both end up setting the same acting identity); --as is the one meant for everyday use, --agent remains for the local/demo path and edge cases (acting as something not in the local registry, e.g. via ZZ_ID). */
+  /** --as <name-or-name@domain>: the id of the actor you want this run to act as -- resolved live against zzmq.dev (or any other registrar given "name@domain"), works if your own login is currently a real, signed guardian of it (see lib/identity.ts). Mutually exclusive with --agent in practice (both end up setting the same acting identity); --as is the one meant for everyday use, --agent remains for the local/demo path and edge cases (e.g. via ZZ_ID). */
   as?: string;
-  /** --register [name]: mints a brand-new did:guardian identity on zzmq.dev, your own login's guardian_did as its real, signed guardian from day one, and uses it for this run -- see lib/identity.ts. Mutually exclusive with --as in practice. */
+  /** --register [name]: mints a brand-new did:guardian identity on zzmq.dev, your own login as its real, signed guardian from day one, and uses it for this run -- see lib/identity.ts. Mutually exclusive with --as in practice. */
   register?: string | boolean;
   repos?: string[];
   scope?: WorkScope;

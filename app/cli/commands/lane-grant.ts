@@ -5,15 +5,11 @@
 // own authority by itself, and "_repo" in particular is created
 // lazily on first post with its committee hardcoded to just the
 // repo's owner. Mirrors lane-propose.ts's shape (callRemoteTool).
-import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import { requireCredentials, resolveMe } from "../lib/credentials.js";
+import { resolveMe } from "../lib/credentials.js";
 import type { Lane } from "../../engine/types.js";
-
-function expandAgentId(raw: string, humanUsername: string): string {
-  return /[@[]/.test(raw) ? raw : `${humanUsername}[${raw}]`;
-}
 
 export interface LaneGrantOptions {
   as?: string;
@@ -34,7 +30,7 @@ export async function laneGrantCmd(slug: string, laneId: string, principal: stri
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const expanded = expandAgentId(resolveMe(principal), requireCredentials().username);
+    const expanded = expandAgentId(resolveMe(principal));
     const lane = (await callRemoteTool(slug, "lane_grant", { lane_id: laneId, principal: expanded, as: role, actor: identity.username })) as Lane;
     console.log(`Added "${expanded}" as ${role} on ${slug}/${laneId} -- coordinators: [${lane.coordinators.join(", ")}], committee: [${lane.committee.join(", ")}]`);
   } finally {

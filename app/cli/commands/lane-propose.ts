@@ -3,19 +3,10 @@
 // every other path that opens a Lane (ask-claim.ts's own claim step,
 // `zz work`'s sharding) always defaults a new Lane's committee to
 // just its proposer. Mirrors ask-claim.ts's shape (callRemoteTool).
-import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import { requireCredentials } from "../lib/credentials.js";
 import type { Lane } from "../../engine/types.js";
-
-// Same bare-name expansion identity.ts's own resolveIdentity() does for
-// --as ("alice" -> "<you>[alice]") -- applied here too so --committee
-// can be given as plain names instead of requiring the full
-// "<you>[name]" form spelled out for each one.
-function expandAgentId(raw: string, humanUsername: string): string {
-  return /[@[]/.test(raw) ? raw : `${humanUsername}[${raw}]`;
-}
 
 export interface LaneProposeOptions {
   as?: string;
@@ -40,8 +31,7 @@ export async function laneProposeCmd(slug: string, name: string, opts: LanePropo
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    const humanUsername = requireCredentials().username;
-    const committee = opts.committee ? opts.committee.split(",").map((s) => expandAgentId(s.trim(), humanUsername)) : undefined;
+    const committee = opts.committee ? opts.committee.split(",").map((s) => expandAgentId(s.trim())) : undefined;
     const lane = (await callRemoteTool(slug, "lane_propose", {
       name,
       objective: opts.objective ?? name,

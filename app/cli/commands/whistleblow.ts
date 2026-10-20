@@ -5,17 +5,11 @@
 // already-merged commit) ROLL it back with a real revert commit. Only
 // this Lane's coordinator can do this; the human-by-hand counterpart
 // to agent/tools.ts's own "whistleblow_resolve" tool.
-import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import { requireCredentials } from "../lib/credentials.js";
 import type { IncidentResult } from "../../engine/lane.js";
 import { ORIGIN_LANE_ID } from "../../engine/lane.js";
-
-// Same bare-name expansion as lane-propose.ts's --committee.
-function expandAgentId(raw: string, humanUsername: string): string {
-  return /[@[]/.test(raw) ? raw : `${humanUsername}[${raw}]`;
-}
 
 export interface WhistleblowOptions {
   lane?: string;
@@ -40,7 +34,7 @@ export async function whistleblowResolve(slug: string, askId: string, opts: Whis
 
   try {
     const laneId = opts.lane ?? ORIGIN_LANE_ID;
-    const targetAgent = expandAgentId(opts.targetAgent, requireCredentials().username);
+    const targetAgent = expandAgentId(opts.targetAgent);
     const result = (await callRemoteTool(slug, "whistleblow_resolve", {
       lane_id: laneId,
       ask_id: askId,

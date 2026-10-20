@@ -47,21 +47,31 @@ export function requireCredentials(): ZzCredentials {
 /**
  * Expands a leading "@me" to your own logged-in username, anywhere it
  * appears as a whole argument or the start of a slug/principal string
- * -- "@me", "@me/mathkit", "@me[claude]", "@me[claude]/mathkit" all
- * resolve, same as the demo docs' own "<me>" placeholder used to mean
- * by hand, minus the shell footgun: "<me>/mathkit" gets intercepted by
- * the shell itself as input/output redirection before zz ever sees it
- * (confirmed live: zsh reports "no such file or directory: me"), and
- * "~/repo" silently tilde-expands to a real filesystem path instead of
- * erroring at all. "@" has no special meaning to bash/zsh in this
- * position, confirmed the same way. No real username can collide with
- * this: every real username is a full email address (contains its own
- * "@" partway through, never starts with one), and a managed agent's
- * username is `<that>[name]`, same shape. A value with no "@me" prefix
- * passes through unchanged -- this is always safe to call speculatively.
+ * -- "@me", "@me/mathkit" resolve, same as the demo docs' own "<me>"
+ * placeholder used to mean by hand, minus the shell footgun: "<me>/
+ * mathkit" gets intercepted by the shell itself as input/output
+ * redirection before zz ever sees it (confirmed live: zsh reports "no
+ * such file or directory: me"), and "~/repo" silently tilde-expands to
+ * a real filesystem path instead of erroring at all. "@" has no special
+ * meaning to bash/zsh in this position, confirmed the same way. No real
+ * username can collide with this: a real username is now always a
+ * literal did:guardian string, which never starts with "@". A value
+ * with no "@me" prefix passes through unchanged -- this is always safe
+ * to call speculatively.
+ *
+ * #26: "@me[name]" (a managed agent's own bracket-chained username) is
+ * retired along with the bracket scheme itself -- a managed agent's
+ * username is now an independently-chosen did:guardian string with no
+ * derivable relationship to its creator's own username, so there's
+ * nothing left to expand to without a real network lookup (this
+ * function is a pure, offline string transform, same as it's always
+ * been). Fails clearly instead of silently producing a broken id.
  */
 export function resolveMe(value: string): string {
-  if (value !== "@me" && !value.startsWith("@me[") && !value.startsWith("@me/")) return value;
+  if (value.startsWith("@me[")) {
+    throw new Error(`"${value}" isn't resolvable offline -- a managed agent's did:guardian id isn't derived from yours. Use its full id directly, or \`zz work --as <name>\` to resolve it first.`);
+  }
+  if (value !== "@me" && !value.startsWith("@me/")) return value;
   const creds = readCredentials();
   if (!creds) throw new Error(`"${value}" needs to resolve to your own username, but you're not logged in -- run \`zz login\` first.`);
   return creds.username + value.slice(3);

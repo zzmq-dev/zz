@@ -411,7 +411,7 @@ repoCmd
 
 repoCmd
   .command("grant <owner/repo> <principal> <role>")
-  .description("grant an Agent (by username, e.g. thoward37@gmail.com[claude]) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
+  .description("grant an Agent (by its did:guardian id, or a bare name/name@domain -- see --as) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
   .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
   .action(async (slug: string, principal: string, role: string, opts: { as?: string }) => {
     await repoGrant(slug, principal, role, { as: opts.as });

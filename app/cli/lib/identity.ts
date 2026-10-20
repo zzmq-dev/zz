@@ -11,9 +11,9 @@
 //     text> -- the same thing, out of an env var (visible in `ps`,
 //     shell history, some CI log capture) and into a file instead.
 //  3. --register [name]: mints a brand-new did:guardian identity on
-//     zzmq.dev, your own login's guardian_did as its real, signed
-//     guardian from day one (not the ownerless registration a bare
-//     human signup gets) -- immediately usable for this run.
+//     zzmq.dev, your own login as its real, signed guardian from day
+//     one (not the ownerless registration a bare human signup gets)
+//     -- immediately usable for this run.
 //  4. --as <name-or-name@domain>: the id of the actor you want this
 //     run to act as -- "the id you have guardian access to," not a
 //     status category of its own (it isn't "your agent" in any
@@ -42,8 +42,15 @@ export interface ResolvedIdentity {
   ephemeral: boolean;
 }
 
+/**
+ * #26: splits on the LAST colon, not the first -- a username is now a
+ * literal did:guardian string, which always contains at least one colon
+ * of its own ("did:guardian:alice:zzmq.dev"); only the token after it is
+ * guaranteed colon-free (zzat-<hex>, see auth.ts's generateAgentToken),
+ * so the last colon is the only reliably correct split point.
+ */
 function parseIdPair(raw: string, source: string): { username: string; token: string } {
-  const idx = raw.indexOf(":");
+  const idx = raw.lastIndexOf(":");
   if (idx === -1) throw new Error(`${source} must be "<username>:<token>", got "${raw}"`);
   return { username: raw.slice(0, idx).trim(), token: raw.slice(idx + 1).trim() };
 }
@@ -96,4 +103,27 @@ export async function releaseIdentity(identity: ResolvedIdentity | null): Promis
   } catch {
     // best-effort
   }
+}
+
+/**
+ * Expands a bare name (or "name@domain") given as a committee member/
+ * principal into its full did:guardian id, so a `--committee`/grant
+ * list can be given as plain names instead of spelling out the full id
+ * for each one. #26: a bare name is no longer "a managed agent chained
+ * off whoever's running the command" -- did:guardian names are scoped
+ * per *registrar*, not per creator, so "alice" always means
+ * did:guardian:alice:zzmq.dev, regardless of who's asking. A pure,
+ * offline string construction (same shape `parseGuardianIdentifier`
+ * builds server-side) -- no guardian/permission check here, this is
+ * only naming who's on a committee, not authorizing anything by itself.
+ * A value that's already a full "did:guardian:..." string passes
+ * through unchanged.
+ */
+export function expandAgentId(raw: string): string {
+  if (raw.startsWith("did:guardian:")) return raw;
+  const at = raw.indexOf("@");
+  if (at === -1) return `did:guardian:${raw}:zzmq.dev`;
+  const name = raw.slice(0, at);
+  const domain = raw.slice(at + 1);
+  return name ? `did:guardian:${name}:${domain}` : `did:guardian:${domain}`;
 }

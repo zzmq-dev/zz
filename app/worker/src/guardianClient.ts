@@ -27,70 +27,15 @@ function guardianFetch(env: GuardianFetchEnv, path: string, init?: RequestInit):
   return env.GUARDIAN_SERVER ? env.GUARDIAN_SERVER.fetch(url, init) : fetch(url, init);
 }
 
-/**
- * did:guardian names are ABNF-constrained to 3-32 lowercase alphanumeric/
- * hyphen characters. zz's own usernames don't fit that at all: a human's is
- * their real email address (`@`, `.`, no length cap); a managed agent's is
- * `${creator}[${name}]`, which inherits the creator's own email plus `[`/`]`
- * and routinely blows past 32 characters once nested a level or two.
- *
- * Rather than a lossy character substitution (tried first, found live: it
- * still left `@`/`.` in place for anything created by a human, and did
- * nothing about the length cap -- confirmed by a real failed registration,
- * not a hypothetical), this hashes the full username deterministically.
- * Preserves global uniqueness (SHA-256 collisions aren't a practical
- * concern here) and satisfies the DID's own syntax unconditionally,
- * independent of whatever zz's own username shape does next. Costs
- * readability -- the did:guardian name won't visually resemble the zz
- * username -- but nothing about this scheme was relying on that; a zz
- * username is still the human-facing identity either way.
- */
-export async function didSafeName(username: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(username));
-  const hex = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-  return `z${hex.slice(0, 24)}`;
-}
-
-export interface GuardianRegistration {
-  did: string;
-  login_secret: string;
-}
-
-/**
- * Registers a new, ownerless did:guardian identity for `username`. Best-
- * effort: never throws -- a brief outage on the registrar's own side should
- * never block zz's own agent-creation flow, which is the actual load-bearing
- * operation here. Returns null (logged, not thrown) on any failure.
- */
-export async function registerGuardianIdentity(env: GuardianFetchEnv, username: string): Promise<GuardianRegistration | null> {
-  try {
-    const resp = await guardianFetch(env, "/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: await didSafeName(username) }),
-    });
-    if (!resp.ok) {
-      console.error(`guardianClient: registration failed for "${username}": ${resp.status} ${await resp.text()}`);
-      return null;
-    }
-    const body = (await resp.json()) as { did: string; login_secret: string };
-    return { did: body.did, login_secret: body.login_secret };
-  } catch (e) {
-    console.error(`guardianClient: registration request failed for "${username}":`, e);
-    return null;
-  }
-}
-
 export type RegisterNameResult = { ok: true; did: string; login_secret: string } | { ok: false; status: number; message: string };
 
 /**
  * Registers a human-chosen name, unmodified -- the interactive name-
- * picker's own call (the login redesign). Unlike registerGuardianIdentity
- * above, this is NOT best-effort: the picker flow doesn't complete until a
- * real name is registered, so a failure has to be shown to the person, not
- * swallowed. Distinguishes the registrar's documented 409 ("name already
- * taken") from any other failure so the picker can say exactly that, not a
- * generic error.
+ * picker's own call (the login redesign). NOT best-effort: the picker
+ * flow doesn't complete until a real name is registered, so a failure
+ * has to be shown to the person, not swallowed. Distinguishes the
+ * registrar's documented 409 ("name already taken") from any other
+ * failure so the picker can say exactly that, not a generic error.
  */
 export async function registerGuardianName(env: GuardianFetchEnv, name: string): Promise<RegisterNameResult> {
   try {
@@ -135,7 +80,17 @@ export async function registerManagedGuardianIdentity(
     return { ok: false, message: "zz's own registrar client credential isn't configured" };
   }
   const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
-  const base = seedName && GUARDIAN_NAME_RE.test(seedName) ? seedName : `agent-${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  // Slugify a given seed rather than discarding it outright the moment it
+  // isn't already did:guardian-name-shaped (spaces, capitals, punctuation
+  // are all a normal thing to type as a display name) -- "Claude Code"
+  // should become the candidate "claude-code", not silently fall through
+  // to a random one just because it wasn't typed pre-sanitized.
+  const slugified = seedName
+    ?.toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  const base = slugified && GUARDIAN_NAME_RE.test(slugified) ? slugified : `agent-${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
   let candidate = base;
   for (let attempt = 0, n = 2; attempt < 20; attempt++) {
     try {

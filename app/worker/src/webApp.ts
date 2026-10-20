@@ -20,7 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianIdentity, registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, GUARDIAN_NAME_RE } from "./guardianClient.js";
 import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
@@ -45,7 +45,6 @@ import {
   fulfillCliLoginSession,
   getAgent,
   getAgentByEmail,
-  getAgentByGuardianDid,
   getAgentToken,
   listAgentIdentities,
   getRepoBySlug,
@@ -66,7 +65,6 @@ import {
   searchExplore,
   searchLadderIndex,
   searchRepos,
-  setAgentGuardianDid,
   setIngestStatus,
   shortId,
   syncRepoRoleCache,
@@ -154,15 +152,22 @@ function laneTagHtml(laneId: string, repoSlug?: string): string {
   return `<a href="${href}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
 }
 
-/** A username, split at its first "[" if it has one: the login part (an email, or another agent's own username for a sub-agent) and the bracket characters themselves both plain, inheriting .agent-id's own color -- only the substring INSIDE the brackets, the part that actually distinguishes this actor in a scenario with several, gets .agent-name. A bare human login (no bracket at all) gets only .agent-id, never .agent-name too: there's no inner distinguishing name to set apart from the rest here, it IS the whole identifying part. */
+/**
+ * #26: `username` is a literal did:guardian string -- renders it as its
+ * "<name>@<domain>" (or bare "@<domain>" for a domain's own root
+ * identity) display form, the name component highlighted the same way
+ * the old bracket-chained version highlighted the part inside `[...]`.
+ * The href stays the literal DID string, never this display form -- per
+ * the standing rule that the email-shaped form is for display and mail
+ * only, never a lookup key or a URL.
+ */
 function formatAgentId(username: string): string {
-  const i = username.indexOf("[");
+  const parsed = splitGuardianDid(username);
   // One wrapping <a> (not two sibling elements) so a flex row's own
   // `gap` (`.row`) only ever applies around the whole id, not inside it.
-  if (i === -1) return `<a href="/${esc(username)}" class="agent-id">${esc(username)}</a>`;
-  const login = username.slice(0, i);
-  const inner = username.slice(i + 1, -1);
-  return `<a href="/${esc(username)}" class="agent-id">${esc(login)}[<span class="agent-name">${esc(inner)}</span>]</a>`;
+  if (!parsed) return `<a href="/${esc(username)}" class="agent-id">${esc(username)}</a>`;
+  const display = parsed.name ? `<span class="agent-name">${esc(parsed.name)}</span>@${esc(parsed.domain)}` : `@${esc(parsed.domain)}`;
+  return `<a href="/${esc(username)}" class="agent-id">${display}</a>`;
 }
 
 /** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
@@ -954,13 +959,11 @@ function splitGuardianDid(did: string): { name: string | null; domain: string } 
 
 /** Finds the local agent for a did:guardian identity, or -- for one zz has never seen before (always a foreign, non-zzmq.dev identity in practice, since every zzmq.dev identity is created through /onboard/guardian-name, which always creates its own local row first) -- lazily creates a minimal one. Reuses all of zz's existing agents-table machinery (tokens, Role grants, attribution) unchanged; no separate identity model for a foreign id. */
 async function resolveOrCreateAgentForDid(env: WebEnv, guardianDid: string): Promise<Agent> {
-  const existing = await getAgentByGuardianDid(env.DB, guardianDid);
+  const existing = await getAgent(env.DB, guardianDid);
   if (existing) return existing;
   const parsed = splitGuardianDid(guardianDid);
   const displayName = parsed?.name ?? parsed?.domain ?? guardianDid;
-  const agent = await createAgent(env.DB, displayName, null, null);
-  await setAgentGuardianDid(env.DB, agent.username, guardianDid);
-  return { ...agent, guardian_did: guardianDid };
+  return createAgent(env.DB, guardianDid, displayName, null, null);
 }
 
 /** The shared "didn't resolve" landing page for both a providerless OAuth login (no existing binding) and a did:guardian sign-in attempt that never got as far as an authenticated DID (bad identifier, no credential, unreachable registrar) -- one continuous workflow into creating a new id or trying again, not a separate front-door choice. `pendingLinkSet` is true when there's a real OAuth identity waiting to be bound, which adds the "I already have an id" option. */
@@ -1160,18 +1163,21 @@ async function handleGuardianNameFormPost(request: Request, env: WebEnv): Promis
     return guardianNameForm(name, message, cliNonce);
   }
 
+  // Unlike a managed agent (doRegisterManagedIdentity), a human here is
+  // creating their own primary account directly -- there's no later
+  // self-naming bootstrap for a human the way #21's is for an agent, so
+  // this falls back to the did:guardian name they just chose rather than
+  // leaving display_name empty with no way to ever set one.
   const pendingLink = readPendingLink(request);
-  const agent = await createAgent(env.DB, pendingLink?.displayName ?? name, pendingLink?.email ?? null, null);
-  await setAgentGuardianDid(env.DB, agent.username, result.did);
-  const withDid = { ...agent, guardian_did: result.did };
-  if (pendingLink) await bindProviderIdentity(env, withDid, pendingLink);
+  const agent = await createAgent(env.DB, result.did, pendingLink?.displayName ?? name, pendingLink?.email ?? null, null);
+  if (pendingLink) await bindProviderIdentity(env, agent, pendingLink);
   if (pendingLink?.email) await setGuardianContactEmail(env, name, pendingLink.email);
 
   const secretCard = `<div class="card stack">
      <p>Your did:guardian login secret -- copy it now, it won't be shown again. You'll need it to sign in with <code>${esc(result.did)}</code> directly (no OAuth provider) later:</p>
      <div class="clone-row"><pre>${esc(result.login_secret)}</pre><button class="secondary icon-btn" data-copy="${esc(result.login_secret)}" title="Copy">⧉</button></div>
    </div>`;
-  const response = await finishInteractiveLogin(env, withDid, cliNonce, secretCard);
+  const response = await finishInteractiveLogin(env, agent, cliNonce, secretCard);
   return pendingLink ? withExtraCookie(response, CLEAR_PENDING_LINK_COOKIE) : response;
 }
 
@@ -1213,16 +1219,7 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 // than a human being required to supply one up front.
 async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | null | undefined): Promise<{ agent: Agent; token: string }> {
   const trimmed = displayName?.trim() ?? "";
-  let agent = await createAgent(env.DB, trimmed, null, creator.username);
-  const token = generateAgentToken();
-  await createAgentToken(env.DB, agent.username, hashAgentToken(token));
-  // #23: best-effort -- a brief outage on the registrar's own side never
-  // blocks agent creation, the actual load-bearing operation here.
-  const registration = await registerGuardianIdentity(env, agent.username);
-  if (registration) {
-    await setAgentGuardianDid(env.DB, agent.username, registration.did);
-    agent = { ...agent, guardian_did: registration.did };
-  }
+  const { agent, token } = await doRegisterManagedIdentity(env, creator, trimmed || undefined, trimmed);
   return { agent, token };
 }
 
@@ -1242,20 +1239,21 @@ async function doMintToken(env: WebEnv, actor: Agent, targetUsername: string): P
 }
 
 /**
- * `zz work --register`: a brand-new managed identity with a real, signed
- * did:guardian guardian (the caller itself) from day one -- unlike
- * doCreateAgent/handleAuthCallback's own registrations, which are always
- * ownerless. The caller needs its own guardian_did already (every agent
- * gets one through the login redesign; there's no bootstrap case where a
- * real human has none).
+ * #23/#26: the one, canonical managed-identity registration -- the
+ * caller as a real, signed guardian from day one (never ownerless), via
+ * the atomic registrar capability. `zz agent create`/the web UI's "add
+ * agent" (doCreateAgent above) and `zz work --register` are two entry
+ * points to this same operation, not two different registration schemes.
+ * `seedName` (slugified, negotiated for uniqueness -- see
+ * registerManagedGuardianIdentity) becomes the did:guardian name itself;
+ * `displayName` is independent and optional -- #21's own "unnamed, self-
+ * names later" convention stays intact regardless of what name the
+ * registrar actually negotiated.
  */
-async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: string | undefined): Promise<{ agent: Agent; token: string; did: string }> {
-  if (!actor.guardian_did) throw new ApiError(400, "you don't have a did:guardian identity yet -- log in via the web app once to get one");
-  const result = await registerManagedGuardianIdentity(env, actor.guardian_did, seedName);
+async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: string | undefined, displayName = ""): Promise<{ agent: Agent; token: string; did: string }> {
+  const result = await registerManagedGuardianIdentity(env, actor.username, seedName);
   if (!result.ok) throw new ApiError(502, result.message);
-  let agent = await createAgent(env.DB, result.name, null, actor.username);
-  await setAgentGuardianDid(env.DB, agent.username, result.did);
-  agent = { ...agent, guardian_did: result.did };
+  const agent = await createAgent(env.DB, result.did, displayName, null, actor.username);
   const token = generateAgentToken();
   await createAgentToken(env.DB, agent.username, hashAgentToken(token));
   return { agent, token, did: result.did };
@@ -1271,15 +1269,15 @@ async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: st
  * first successful resolution, same as a browser-based did:guardian login
  * does (resolveOrCreateAgentForDid). "Am I a guardian" is always checked
  * live against the identity's current operation log, never trusted from
- * whatever agents.guardian_did's own creation-time snapshot says (spec
- * §4.8 -- guardian status is a live reference, not a frozen key).
+ * any cached state (spec §4.8 -- guardian status is a live reference, not
+ * a frozen key).
  */
 async function doResolveManagedIdentity(env: WebEnv, actor: Agent, identifier: string): Promise<{ agent: Agent; token: string }> {
   const parsed = parseGuardianIdentifier(identifier.includes("@") ? identifier : `${identifier}@zzmq.dev`);
   if (!parsed) throw new ApiError(400, `"${identifier}" doesn't look like a valid id`);
   const did = parsed.name ? `did:guardian:${parsed.name}:${parsed.domain}` : `did:guardian:${parsed.domain}`;
 
-  let agent = await getAgentByGuardianDid(env.DB, did);
+  let agent = await getAgent(env.DB, did);
   if (!agent) {
     if (parsed.domain === "zzmq.dev") throw new ApiError(404, `no such id "${identifier}" -- it may not exist yet (see --register)`);
     agent = await resolveOrCreateAgentForDid(env, did);
@@ -1287,7 +1285,7 @@ async function doResolveManagedIdentity(env: WebEnv, actor: Agent, identifier: s
 
   const guardians = await currentGuardians(env, parsed.name, parsed.domain);
   if (!guardians) throw new ApiError(502, `couldn't resolve "${identifier}"`);
-  if (!actor.guardian_did || !guardians.includes(actor.guardian_did)) {
+  if (!guardians.includes(actor.username)) {
     throw new ApiError(403, `you aren't currently a guardian of "${identifier}"`);
   }
 
@@ -1446,12 +1444,20 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // a parent to diff against -- a brand new repo has none, so seed one.
   const readmeContent = `# ${name}\n\n${description ?? ""}\n`;
   const files = [{ path: "README.md", content: readmeContent }];
-  // #21: an unnamed agent (display_name null until it self-names) still
-  // needs *something* real for a commit author/license text -- its own
-  // username is always present and real, unlike a placeholder string.
-  const ownerDisplayName = owner.display_name || owner.username;
+  // #21/#26: an unnamed agent (display_name null until it self-names)
+  // still needs *something* real for a commit author/license text --
+  // its own did:guardian name (not the raw DID string) is always
+  // present and reasonable, unlike a placeholder.
+  const ownerParsedDid = splitGuardianDid(owner.username);
+  const ownerFallbackName = ownerParsedDid?.name ?? ownerParsedDid?.domain ?? owner.username;
+  const ownerDisplayName = owner.display_name || ownerFallbackName;
   if (license) files.push({ path: "LICENSE", content: license.text(ownerDisplayName, new Date().getFullYear()) });
-  const sha = await createInitialCommit(created.remote, token, files, { name: ownerDisplayName, email: owner.email ?? `${owner.username}@zz.local` });
+  // The agent's own real did:guardian email address (forwards to its
+  // contact email, per the registrar's own email-proxying feature) when
+  // it has no separate contact email on file -- a real, resolvable
+  // address, not a fake placeholder.
+  const ownerFallbackEmail = ownerParsedDid ? `${ownerParsedDid.name ?? "root"}@${ownerParsedDid.domain}` : `${owner.username}@zz.local`;
+  const sha = await createInitialCommit(created.remote, token, files, { name: ownerDisplayName, email: owner.email ?? ownerFallbackEmail });
   await ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username });
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
@@ -3980,14 +3986,15 @@ async function handleGitPack(service: GitService, slug: string, request: Request
 /** Returns null for any path this module doesn't own, so index.ts can fall through to its existing diagnostic routes. */
 export async function handleWebRequest(request: Request, env: WebEnv): Promise<Response | null> {
   const url = new URL(request.url);
-  // Decoded once, up front: a username can contain "[", "]", "@" --
-  // none of those are in the WHATWG URL spec's path percent-encode
-  // set, so a conformant browser leaves them literal in `pathname`
-  // (confirmed live: a route built from `agent.username` works as-is).
-  // But a client that DOES percent-encode them anyway (confirmed live:
-  // `encodeURIComponent` on a bracketed username, which some CLI/API
-  // call sites reasonably reach for) would otherwise 404 forever,
-  // since every lookup below (getRepoBySlug, getAgent, ...)
+  // Decoded once, up front: a username (now a literal did:guardian
+  // string, e.g. "did:guardian:alice:zzmq.dev") can contain ":" --
+  // not in the WHATWG URL spec's path percent-encode set, so a
+  // conformant browser leaves it literal in `pathname` (confirmed
+  // live: a route built from `agent.username` works as-is). But a
+  // client that DOES percent-encode it anyway (confirmed live:
+  // `encodeURIComponent`, which some CLI/API call sites reasonably
+  // reach for) would otherwise 404 forever, since every lookup below
+  // (getRepoBySlug, getAgent, ...)
   // compares against the literal, undecoded form stored in D1.
   // Decoding here once means every route matches either form the same
   // way, instead of every individual call site needing to know which

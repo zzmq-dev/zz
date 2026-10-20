@@ -11,7 +11,14 @@ import { randomBytes } from "node:crypto";
 import { RBAC_RANK, type RbacRole } from "./repoMeta.js";
 
 export interface Agent {
-  username: string; // the real primary key -- a human's real email; a managed agent's "<creator's username>[<name>]" (see computeUsername)
+  // #26: the real primary key -- the literal did:guardian identifier
+  // itself (e.g. "did:guardian:alice:zzmq.dev"), for every agent, human
+  // or managed. Negotiated for uniqueness by the registrar (its own
+  // 409-on-taken), not computed/deduped here -- there is no
+  // computeUsername anymore. Display and mail both use the separate
+  // "<name>@<domain>" rendering (webApp.ts's formatAgentId), never this
+  // column directly -- a profile URL is "/<this literal string>".
+  username: string;
   // #21: "" (not NULL -- display_name stays NOT NULL at the schema
   // level, see migration 0015's own header for why) for an agent
   // created with no name (zz agent create, no <name> argument) -- an
@@ -27,17 +34,6 @@ export interface Agent {
   // <name>` leaves this null; only the actual self-naming act sets
   // it, via agent_set_name).
   named_at: string | null;
-  // #23: the real did:guardian identity for this agent, registered
-  // against zz's own instance (id.zzmq.dev) -- null for every agent
-  // created before this landed (additive, not backfilled -- see the
-  // did:guardian integration's own stated scope). Registered ownerless
-  // (ward.guardians = []) for now, same as every fresh registration --
-  // actually establishing `created_by` as a real, signed guardian
-  // needs a registrar endpoint that signs server-side on an
-  // authenticated ward's behalf (the registrar custodies both
-  // parties' keys, zz doesn't), which doesn't exist yet. Flagged as
-  // the next real step, not silently glossed over -- see guardianClient.ts.
-  guardian_did: string | null;
 }
 
 export interface AgentIdentity {
@@ -98,21 +94,6 @@ export function shortId(prefix: string): string {
   return `${prefix}-${randomBytes(4).toString("hex")}`;
 }
 
-function usernameSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "agent";
-}
-
-/** `base`, or `base-2`/`base-3`/... if already taken -- usernames are frozen at creation (createAgent), so collisions are only ever checked once, here. */
-async function uniqueUsername(db: D1Database, base: string): Promise<string> {
-  let candidate = base;
-  let n = 2;
-  while (await db.prepare("SELECT 1 FROM agents WHERE username = ?").bind(candidate).first()) {
-    candidate = `${base}-${n}`;
-    n++;
-  }
-  return candidate;
-}
-
 export async function findAgentIdentity(db: D1Database, provider: string, providerSubject: string): Promise<AgentIdentity | null> {
   return db.prepare("SELECT * FROM agent_identities WHERE provider = ? AND provider_subject = ?").bind(provider, providerSubject).first<AgentIdentity>();
 }
@@ -132,33 +113,19 @@ export async function getAgentByEmail(db: D1Database, email: string): Promise<Ag
   return db.prepare("SELECT * FROM agents WHERE email = ? LIMIT 1").bind(email).first<Agent>();
 }
 
-/** The agent a did:guardian identity belongs to, if any -- the canonical lookup for "Sign in with did:guardian" and for `zz work --as` resolving a name to an agent, local or (once seen once) foreign. */
-export async function getAgentByGuardianDid(db: D1Database, guardianDid: string): Promise<Agent | null> {
-  return db.prepare("SELECT * FROM agents WHERE guardian_did = ? LIMIT 1").bind(guardianDid).first<Agent>();
-}
-
-/** A human's username is just their real email -- nothing else to compute. A managed/synthetic agent has none, so its username chains off whoever created it: `<creator's username>[<this agent's own name>]`, e.g. "thoward37@gmail.com[claude]", or "thoward37@gmail.com[claude][helper]" for an agent that agent itself creates. Bracket notation (not "#", which starts a URL fragment and would never even reach the server) -- `[`/`]` are outside the WHATWG URL spec's path percent-encode set, so they pass through a path segment unencoded. #21: `displayName` "" (no name given at creation) uses a random, opaque slug instead of slugifying a name that doesn't exist yet -- the agent chooses its own real display_name later, via agent_set_name; the username itself (frozen at creation, same as every other agent) doesn't wait for that. */
-async function computeUsername(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<string> {
-  if (email) return uniqueUsername(db, email);
-  const creator = createdBy ? await getAgent(db, createdBy) : null;
-  const slug = displayName ? usernameSlug(displayName) : shortId("agent");
-  const base = creator ? `${creator.username}[${slug}]` : slug;
-  return uniqueUsername(db, base);
-}
-
-export async function createAgent(db: D1Database, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
-  const username = await computeUsername(db, displayName, email, createdBy);
-  const agent: Agent = { username, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy, named_at: null, guardian_did: null };
+/**
+ * #26: `did` is already a real, uniquely-registered did:guardian identifier
+ * by the time this is ever called -- the registrar's own 409 is what
+ * negotiates uniqueness (the name-picker, `--register`, a lazily-resolved
+ * foreign DID), not this function. A plain insert, nothing to compute.
+ */
+export async function createAgent(db: D1Database, did: string, displayName: string, email: string | null, createdBy: string | null): Promise<Agent> {
+  const agent: Agent = { username: did, display_name: displayName, email, created_at: new Date().toISOString(), created_by: createdBy, named_at: null };
   await db
     .prepare("INSERT INTO agents (username, display_name, email, created_at, created_by) VALUES (?, ?, ?, ?, ?)")
     .bind(agent.username, agent.display_name, agent.email, agent.created_at, agent.created_by)
     .run();
   return agent;
-}
-
-/** #23: records the real did:guardian identity registered for this agent -- set once, right after createAgent, from guardianClient.ts's own registration call; left null if that call failed (never blocks agent creation itself on an external service being up). */
-export async function setAgentGuardianDid(db: D1Database, username: string, guardianDid: string): Promise<void> {
-  await db.prepare("UPDATE agents SET guardian_did = ? WHERE username = ?").bind(guardianDid, username).run();
 }
 
 /** Refreshes display_name/email on every login, not just signup -- a provider's profile data (especially Cloudflare's, fetched via a second REST call) can be absent or wrong at signup time and correct itself later. Never clears a field the provider stops returning: only overwrites with a real, non-null value. */
@@ -278,7 +245,7 @@ export async function upsertRepo(db: D1Database, row: { slug: string; artifactsN
     await db.prepare("UPDATE repos SET description = ?, updated_at = ? WHERE slug = ?").bind(row.description, now, existing.slug).run();
     return { ...existing, description: row.description, updated_at: now };
   }
-  const repo: RepoRow = { slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_username: row.ownerUsername, visibility: "public", shard_of_slug: row.shardOfSlug ?? null, created_at: now, updated_at: now };
+  const repo: RepoRow = { slug: row.slug, artifacts_name: row.artifactsName, description: row.description, owner_username: row.ownerUsername, visibility: "public", shard_of_slug: row.shardOfSlug ?? null, ingest_status: "ready", created_at: now, updated_at: now };
   await db
     .prepare("INSERT INTO repos (slug, artifacts_name, description, owner_username, visibility, shard_of_slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .bind(repo.slug, repo.artifacts_name, repo.description, repo.owner_username, repo.visibility, repo.shard_of_slug, repo.created_at, repo.updated_at)

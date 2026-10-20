@@ -16,9 +16,9 @@ import { resolveMe } from "../lib/credentials.js";
 // only types into a Node CLI typecheck for no real benefit (the API
 // boundary is just JSON over HTTP either way). `username` is the only
 // identifier -- there's no separate internal id anymore (see worker
-// migration 0006): a human's is their email; a managed agent's chains
-// off its creator's, e.g. "thoward37@gmail.com[claude]" (see
-// accountsDb.ts's computeUsername).
+// migration 0006) -- and is now a literal did:guardian string for
+// every agent, human or managed, e.g. "did:guardian:alice:zzmq.dev"
+// (see worker migration 0017, #26).
 interface Agent {
   display_name: string; // #21: "" until named -- by a human at creation, or by the agent itself later (named_at then distinguishes which)
   email: string | null;
