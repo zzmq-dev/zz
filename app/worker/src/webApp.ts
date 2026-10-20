@@ -1037,42 +1037,36 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
     return withExtraCookie(redirect(`/${linkAgent.username}`), `zz_link_agent=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
   }
 
-  let agent: Agent;
   if (existing) {
-    agent = (await getAgent(env.DB, existing.agent_username))!;
+    const agent = (await getAgent(env.DB, existing.agent_username))!;
     await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
     await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
-  } else {
-    // A second OAuth provider with the SAME verified email links to
-    // the agent that already owns that email instead of minting a
-    // disconnected duplicate -- confirmed live as a real bug: logging
-    // in with Google, then later with Cloudflare, produced two
-    // separate Agents sharing no history (different provider_subject,
-    // so findAgentIdentity above correctly found nothing -- the gap
-    // was never checking for an existing Agent by email before
-    // falling through to createAgent).
-    const byEmail = identity.email ? await getAgentByEmail(env.DB, identity.email) : null;
-    if (byEmail) {
-      agent = byEmail;
-      await refreshAgentProfile(env.DB, agent.username, identity.displayName, identity.email);
-      await createAgentIdentity(env.DB, agent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
-    } else {
-      // No existing binding at all -- this used to auto-create a
-      // zzmq.dev id silently (an auto-hashed name, never shown). Now
-      // it's an explicit choice: create a new id (through the real
-      // name-picker), or prove you already have one and link it. The
-      // OAuth identity itself isn't lost in the meantime -- it rides
-      // along as a short-lived pending-link cookie either way.
-      return notFoundInterstitial(
-        `No zzmq.dev id is linked to this ${provider} login yet.`,
-        cliNonce,
-        true,
-        [pendingLinkCookie({ provider, subject: identity.subject, accessTokenEnc, refreshTokenEnc, expiresAt, displayName: identity.displayName, email: identity.email })],
-      );
-    }
+    return finishInteractiveLogin(env, agent, cliNonce);
   }
 
-  return finishInteractiveLogin(env, agent, cliNonce);
+  // No known binding for this (provider, subject) yet. A matching email
+  // on file is a *hint*, never sufficient to bind by itself -- a real
+  // bug this used to have (confirmed live, not hypothetical): it auto-
+  // linked a second OAuth provider onto whichever agent happened to own
+  // that email, trusting the provider's own email claim at face value.
+  // An unverified or spoofed email claim from any provider would make
+  // that a real account-takeover path, not just a convenience. Routing
+  // both cases (email matched or not) through the same "prove you own
+  // it" interstitial instead -- the did:guardian login_secret proof is
+  // the actual security boundary here, not the email match, which only
+  // ever shapes the message shown. The already-logged-in "connect a
+  // provider" path (linkAgentUsername, above) is unaffected -- it was
+  // never driven by an email match, only by the caller's own live
+  // session, which is already a real proof of identity.
+  const byEmail = identity.email ? await getAgentByEmail(env.DB, identity.email) : null;
+  return notFoundInterstitial(
+    byEmail
+      ? `An existing zzmq.dev id is already registered with ${identity.email} -- sign in with it directly to confirm it's you and link this ${provider} login.`
+      : `No zzmq.dev id is linked to this ${provider} login yet.`,
+    cliNonce,
+    true,
+    [pendingLinkCookie({ provider, subject: identity.subject, accessTokenEnc, refreshTokenEnc, expiresAt, displayName: identity.displayName, email: identity.email })],
+  );
 }
 
 function withExtraCookie(response: Response, cookie: string): Response {
