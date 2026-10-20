@@ -117,6 +117,12 @@ export async function findAgentIdentity(db: D1Database, provider: string, provid
   return db.prepare("SELECT * FROM agent_identities WHERE provider = ? AND provider_subject = ?").bind(provider, providerSubject).first<AgentIdentity>();
 }
 
+/** Every OAuth provider this agent has linked -- the profile page's own "connect another login" section needs to know which of cloudflare/google/github are already connected, to offer only the ones that aren't. */
+export async function listAgentIdentities(db: D1Database, agentUsername: string): Promise<AgentIdentity[]> {
+  const result = await db.prepare("SELECT * FROM agent_identities WHERE agent_username = ?").bind(agentUsername).all<AgentIdentity>();
+  return result.results;
+}
+
 export async function getAgent(db: D1Database, username: string): Promise<Agent | null> {
   return db.prepare("SELECT * FROM agents WHERE username = ?").bind(username).first<Agent>();
 }

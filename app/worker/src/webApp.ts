@@ -47,6 +47,7 @@ import {
   getAgentByEmail,
   getAgentByGuardianDid,
   getAgentToken,
+  listAgentIdentities,
   getRepoBySlug,
   getRepoRoleForPrincipal,
   getValidSession,
@@ -844,6 +845,15 @@ async function handleAuthStart(provider: Provider, request: Request, env: WebEnv
   const url = buildAuthorizeUrl(provider, env, state);
   const cookies = [`zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`];
   if (cliNonce) cookies.push(`zz_cli_nonce=${cliNonce}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
+  // Linking mode: an already-authenticated agent connecting another
+  // provider from its own profile, not logging in -- carries the
+  // current session's own agent through the OAuth round trip the same
+  // way cli_nonce does, so the callback knows to bind instead of
+  // running its normal login/create logic.
+  if (new URL(request.url).searchParams.get("link") === "true") {
+    const me = await resolveRequestAgent(request, env);
+    if (me) cookies.push(`zz_link_agent=${encodeURIComponent(me.username)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
+  }
   return redirect(url, { cookies });
 }
 
@@ -976,6 +986,7 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
   const cookieHeader = request.headers.get("cookie") ?? "";
   const cookieState = cookieHeader.match(/zz_oauth_state=([^;]+)/)?.[1];
   const cliNonce = cookieHeader.match(/zz_cli_nonce=([^;]+)/)?.[1];
+  const linkAgentUsername = cookieHeader.match(/zz_link_agent=([^;]+)/)?.[1];
   if (!code || !state || state !== cookieState) {
     return new Response("OAuth state mismatch or missing code -- please try logging in again.", { status: 400 });
   }
@@ -985,6 +996,24 @@ async function handleAuthCallback(provider: Provider, request: Request, env: Web
   const expiresAt = identity.expiresInSeconds ? new Date(Date.now() + identity.expiresInSeconds * 1000).toISOString() : null;
   const accessTokenEnc = await encryptSecret(env, identity.accessToken);
   const refreshTokenEnc = identity.refreshToken ? await encryptSecret(env, identity.refreshToken) : null;
+
+  // Linking mode (from profile settings' own "connect another login"):
+  // never a login, always a bind onto the agent that started this OAuth
+  // round trip -- not whatever findAgentIdentity/getAgentByEmail would
+  // otherwise resolve to.
+  if (linkAgentUsername) {
+    const linkAgent = await getAgent(env.DB, decodeURIComponent(linkAgentUsername));
+    if (!linkAgent) return new Response("Your session expired before this connected -- please try again.", { status: 400 });
+    if (existing && existing.agent_username !== linkAgent.username) {
+      return new Response(`This ${provider} login is already connected to a different zzmq.dev id.`, { status: 409 });
+    }
+    if (existing) {
+      await updateIdentityTokens(env.DB, existing.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
+    } else {
+      await createAgentIdentity(env.DB, linkAgent.username, provider, identity.subject, { accessTokenEnc, refreshTokenEnc, expiresAt });
+    }
+    return withExtraCookie(redirect(`/${linkAgent.username}`), `zz_link_agent=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+  }
 
   let agent: Agent;
   if (existing) {
@@ -2199,10 +2228,22 @@ async function agentActivityHtml(agent: Agent, repos: RepoRow[], env: WebEnv): P
   return `<div class="log-feed">${html || '<div class="empty">No activity yet.</div>'}</div>`;
 }
 
+const OAUTH_PROVIDER_LABELS: Record<Provider, string> = { cloudflare: "Cloudflare", google: "Google", github: "GitHub" };
+
 async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   const createdAgents = await listAgentsCreatedBy(env.DB, me.username);
   const allSelf = [me, ...createdAgents];
   const tokenLists = await Promise.all(allSelf.map((a) => listTokensForAgent(env.DB, a.username)));
+
+  const linkedIdentities = await listAgentIdentities(env.DB, me.username);
+  const linkedProviders = new Set(linkedIdentities.map((i) => i.provider));
+  const linkedLoginsHtml = (Object.keys(OAUTH_PROVIDER_LABELS) as Provider[])
+    .map((p) =>
+      linkedProviders.has(p)
+        ? `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <span class="badge badge-green">connected</span></li>`
+        : `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <a href="/auth/start/${p}?link=true"><button class="secondary">Connect</button></a></li>`,
+    )
+    .join("");
 
   // One flat, unified list across you and every agent you manage --
   // no more "your tokens" vs "managed agents' tokens" as two separate
@@ -2232,6 +2273,12 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
        `<p class="hint">You, and every agent you manage, share one token list -- not "yours" vs "theirs" in any authority sense, just one place to issue, rotate, or revoke whatever can authenticate as any of them.</p>
         <ul class="list">${tokenRows || '<li class="empty">No active tokens.</li>'}</ul>`,
        { addModal: "modal-add-token" },
+     )}
+
+     ${card(
+       "Linked logins",
+       `<p class="hint">Connecting a login here binds it to your existing zzmq.dev id -- it never creates a separate one.</p>
+        <ul class="list">${linkedLoginsHtml}</ul>`,
      )}
 
      ${card(
