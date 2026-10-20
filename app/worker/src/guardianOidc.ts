@@ -106,6 +106,35 @@ export interface GuardianIdentity {
   did: string; // the verified sub claim -- the full did:guardian:... string
 }
 
+/**
+ * The current guardian set for a did:guardian identity, local or foreign --
+ * not exposed as a convenience field on the DID Document itself (method-
+ * internal state, per the spec), but derivable from data that's already
+ * fully public regardless: the operation log (GET .../log), which already
+ * carries every guardian_transfer's own incoming/outgoing DIDs in plain
+ * content. This is a plain reducer over that log, not a new disclosure --
+ * no cryptographic verification needed for this read-only check, the same
+ * trust zz already extends to its own registrar calls elsewhere. Needed for
+ * `zz work --as`'s own live guardian check (spec §4.8: a live reference,
+ * never a cached snapshot).
+ */
+export async function currentGuardians(env: GuardianFetchEnv, name: string | null, domain: string): Promise<string[] | null> {
+  try {
+    const path = `/.well-known/guardian/${name ?? "_"}/log`;
+    const resp = await guardianFetch(env, `https://${domain}${path}`);
+    if (!resp.ok) return null;
+    const log = (await resp.json()) as { op: { type: string; incoming?: string[] } }[];
+    let guardians: string[] = [];
+    for (const entry of log) {
+      if (entry.op.type === "custodial_create" || entry.op.type === "guardian_transfer") guardians = entry.op.incoming ?? [];
+      else if (entry.op.type === "guardian_relinquish") guardians = [];
+    }
+    return guardians;
+  } catch {
+    return null;
+  }
+}
+
 export async function exchangeGuardianCode(env: GuardianCredentialEnv & GuardianFetchEnv, domain: string, code: string, redirectUri: string): Promise<GuardianIdentity | null> {
   const credential = credentialFor(env, domain);
   if (!credential) return null;

@@ -16,7 +16,7 @@ export interface VoteTallyOptions {
 }
 
 export async function voteTally(slug: string, askId: string, opts: VoteTallyOptions): Promise<void> {
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

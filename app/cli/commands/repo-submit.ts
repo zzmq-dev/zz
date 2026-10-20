@@ -34,7 +34,7 @@ export interface RepoSubmitOptions {
 }
 
 export async function repoSubmit(slug: string, laneId: string, askId: string, opts: RepoSubmitOptions): Promise<void> {
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   // --as mints a fresh token for this one-shot command -- clean it up

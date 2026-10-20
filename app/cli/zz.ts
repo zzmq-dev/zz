@@ -229,7 +229,8 @@ askCmd
 program
   .command("work [repo]")
   .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [repo] is shorthand for --repos <repo> (a single owner/repo); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
-  .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- expands to "<your username>[claude]", using the token `zz agent create`/`zz agent token` already saved locally for it (see `zz agent --help`). Omit to act as yourself (your own `zz login` session).')
+  .option("--as <name-or-name@domain>", 'act as the id you want this run to act as, e.g. "--as alice" (zzmq.dev) or "--as alice@acme.com" (any other registrar) -- works if your own login is currently a real, signed guardian of it (checked live), fails clearly otherwise. Omit to act as yourself (your own `zz login` session).')
+  .option("--register [name]", "mint a brand-new did:guardian identity on zzmq.dev, your own login as its real guardian from day one, and use it for this run -- <name> is a proposed name, negotiated for uniqueness (auto-suffixed on conflict) rather than failing outright; omit it to have one proposed for you")
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--scope <scope>", "coordinator, contributor, committee (merge and voting, never open-scope work), or all (default: all)", "all")
@@ -245,7 +246,7 @@ program
     "--assist",
     "a human-in-the-loop TUI instead of the headless loop: pick a claimable work/changeset_review ask from the repos you're watching (same resolution as `zz top`), chat with the model about its draft/recommendation, then explicitly submit it back as a real ANSWER. Never clones anything until you've picked an ask. Ignores --stdio/--poll-ms/--max-turns.",
   )
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean; wait: boolean; ask?: string }) => {
+  .action(async (repo: string | undefined, opts: { as?: string; register?: string | boolean; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean; wait: boolean; ask?: string }) => {
     // Commander's --no-<x> convention: this option surfaces as `wait`,
     // defaulting true, false only when --no-wait was actually passed --
     // never a `noWait` field despite the flag's own spelling.
@@ -274,6 +275,7 @@ program
     }
     await work({
       as: opts.as,
+      register: opts.register,
       agent: opts.agent,
       repos: repo ? [repo] : opts.repos,
       scope: opts.scope as "coordinator" | "contributor" | "committee" | "all" | undefined,

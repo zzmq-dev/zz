@@ -52,7 +52,7 @@ export async function repoList(query?: string): Promise<void> {
 // revoked when it's done, never a standing credential.
 export async function repoDelete(slug: string, opts: { yes?: boolean; as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
   try {
     if (!opts.yes) {
@@ -76,7 +76,7 @@ export async function repoDelete(slug: string, opts: { yes?: boolean; as?: strin
 export async function repoGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
   principal = resolveMe(principal);
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
   try {
     const [owner, name] = splitSlug(slug);

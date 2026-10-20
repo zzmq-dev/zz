@@ -31,7 +31,7 @@ function commitSource(sha?: string): RungSource {
 
 export async function ladderEdit(slug: string, path: string, opts: LadderEditOptions): Promise<void> {
   slug = resolveMe(slug);
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

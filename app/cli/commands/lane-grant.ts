@@ -21,7 +21,7 @@ export interface LaneGrantOptions {
 
 export async function laneGrantCmd(slug: string, laneId: string, principal: string, role: string, opts: LaneGrantOptions): Promise<void> {
   if (role !== "coordinator" && role !== "committee") throw new Error(`role must be "coordinator" or "committee" -- got "${role}".`);
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

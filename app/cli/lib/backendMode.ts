@@ -17,6 +17,8 @@ export interface BackendModeOptions {
   local?: boolean;
   /** Act as a managed agent instead of yourself -- see identity.ts's resolveIdentity. Ignored in local mode (there's no remote identity to mint). */
   as?: string;
+  /** Mint a brand-new managed identity instead -- see identity.ts's resolveIdentity. Ignored in local mode. */
+  register?: string | boolean;
   /** Default true: remote mode requires a real identity (resolveIdentity throws via requireCredentials() if you're not logged in), which is correct for work/review -- they can't post/commit as nobody. `zz top` is read-only and the spec explicitly wants "remote, not logged in" to work with zero config (an empty dashboard, not a crash) -- it passes false so a missing login falls back to `identity: null` instead of throwing. */
   requireIdentity?: boolean;
 }
@@ -37,10 +39,10 @@ export async function resolveCliBackendMode(options: BackendModeOptions): Promis
   let identity: ResolvedIdentity | null = null;
   if (useRemote) {
     if (requireIdentity) {
-      identity = await resolveIdentity(options.as);
+      identity = await resolveIdentity({ as: options.as, register: options.register });
     } else {
       try {
-        identity = await resolveIdentity(options.as);
+        identity = await resolveIdentity({ as: options.as, register: options.register });
       } catch {
         // Not logged in (and requireIdentity is false, so this is fine)
         // -- stays anonymous, same as local mode's null identity.

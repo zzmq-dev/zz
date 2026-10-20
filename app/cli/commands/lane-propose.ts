@@ -27,7 +27,7 @@ export interface LaneProposeOptions {
 }
 
 export async function laneProposeCmd(slug: string, name: string, opts: LaneProposeOptions): Promise<void> {
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

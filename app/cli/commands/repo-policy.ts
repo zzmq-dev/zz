@@ -72,7 +72,7 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
   const expiryHours = opts.expiryHours ? Number(opts.expiryHours) : undefined;
   const retentionTtlHours = opts.retentionTtlHours ? Number(opts.retentionTtlHours) : undefined;
 
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

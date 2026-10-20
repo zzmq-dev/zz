@@ -38,7 +38,7 @@ export async function askPost(repoSlug: string, laneId: string, options: AskPost
   }
 
   if (options.remote) {
-    const identity = await resolveIdentity(options.as);
+    const identity = await resolveIdentity({ as: options.as });
     setActiveToken(identity.token);
     try {
       const posted = (await callRemoteTool(repoSlug, "ask_post", { lane_id: laneId, kind, from: identity.username, payload, priority: options.priority })) as AskEntry;

@@ -25,7 +25,7 @@ export async function askAnswer(slug: string, askId: string, action: string, opt
   if (!["complete", "deny", "veto", "vote"].includes(action)) {
     throw new Error(`action must be one of "complete", "deny", "veto", "vote" -- got "${action}".`);
   }
-  const identity = await resolveIdentity(opts.as);
+  const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
   let cleanedUp = false;

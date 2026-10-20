@@ -20,8 +20,8 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianIdentity, registerGuardianName, setGuardianContactEmail, GUARDIAN_NAME_RE } from "./guardianClient.js";
-import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode } from "./guardianOidc.js";
+import { registerGuardianIdentity, registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
@@ -1239,6 +1239,61 @@ async function doMintToken(env: WebEnv, actor: Agent, targetUsername: string): P
   const plaintext = generateAgentToken();
   await createAgentToken(env.DB, target.username, hashAgentToken(plaintext));
   return { agent: target, token: plaintext };
+}
+
+/**
+ * `zz work --register`: a brand-new managed identity with a real, signed
+ * did:guardian guardian (the caller itself) from day one -- unlike
+ * doCreateAgent/handleAuthCallback's own registrations, which are always
+ * ownerless. The caller needs its own guardian_did already (every agent
+ * gets one through the login redesign; there's no bootstrap case where a
+ * real human has none).
+ */
+async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: string | undefined): Promise<{ agent: Agent; token: string; did: string }> {
+  if (!actor.guardian_did) throw new ApiError(400, "you don't have a did:guardian identity yet -- log in via the web app once to get one");
+  const result = await registerManagedGuardianIdentity(env, actor.guardian_did, seedName);
+  if (!result.ok) throw new ApiError(502, result.message);
+  let agent = await createAgent(env.DB, result.name, null, actor.username);
+  await setAgentGuardianDid(env.DB, agent.username, result.did);
+  agent = { ...agent, guardian_did: result.did };
+  const token = generateAgentToken();
+  await createAgentToken(env.DB, agent.username, hashAgentToken(token));
+  return { agent, token, did: result.did };
+}
+
+/**
+ * `zz work --as <name-or-name@domain>`: resolves a did:guardian identity --
+ * on zzmq.dev or any other registrar -- the caller is currently a real,
+ * signed guardian of, and mints a fresh token for it. A bare zzmq.dev name
+ * that doesn't already have a local agent row is a clear failure (those
+ * are only ever created through the name-picker or --register, never
+ * here); a foreign DID gets a minimal local agent row created lazily on
+ * first successful resolution, same as a browser-based did:guardian login
+ * does (resolveOrCreateAgentForDid). "Am I a guardian" is always checked
+ * live against the identity's current operation log, never trusted from
+ * whatever agents.guardian_did's own creation-time snapshot says (spec
+ * §4.8 -- guardian status is a live reference, not a frozen key).
+ */
+async function doResolveManagedIdentity(env: WebEnv, actor: Agent, identifier: string): Promise<{ agent: Agent; token: string }> {
+  const parsed = parseGuardianIdentifier(identifier.includes("@") ? identifier : `${identifier}@zzmq.dev`);
+  if (!parsed) throw new ApiError(400, `"${identifier}" doesn't look like a valid id`);
+  const did = parsed.name ? `did:guardian:${parsed.name}:${parsed.domain}` : `did:guardian:${parsed.domain}`;
+
+  let agent = await getAgentByGuardianDid(env.DB, did);
+  if (!agent) {
+    if (parsed.domain === "zzmq.dev") throw new ApiError(404, `no such id "${identifier}" -- it may not exist yet (see --register)`);
+    agent = await resolveOrCreateAgentForDid(env, did);
+  }
+
+  const guardians = await currentGuardians(env, parsed.name, parsed.domain);
+  if (!guardians) throw new ApiError(502, `couldn't resolve "${identifier}"`);
+  if (!actor.guardian_did || !guardians.includes(actor.guardian_did)) {
+    throw new ApiError(403, `you aren't currently a guardian of "${identifier}"`);
+  }
+
+  const token = generateAgentToken();
+  await createAgentToken(env.DB, agent.username, hashAgentToken(token));
+  return { agent, token };
 }
 
 /** Only a managed agent, and only by the human/agent that created it -- never a bare login account (that's a much bigger "delete my whole account" action, not built here) and never by some other creator's say-so. Refuses if the agent owns a repo, holds a repo Role grant, or created an agent that still exists -- those are live state that would be orphaned, not just Lane history (which stays exactly as it is either way: deleting the account row never rewrites it). */
@@ -2576,6 +2631,27 @@ async function handleApiMintToken(username: string, request: Request, env: WebEn
     const me = await requireApiAgent(request, env);
     const { agent, token } = await doMintToken(env, me, username);
     return json({ agent, token }, 201);
+  });
+}
+
+/** `zz work --register [name]` -- see doRegisterManagedIdentity. */
+async function handleApiRegisterManagedIdentity(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json().catch(() => ({}))) as { name?: string };
+    const { agent, token, did } = await doRegisterManagedIdentity(env, me, body.name);
+    return json({ agent, token, did }, 201);
+  });
+}
+
+/** `zz work --as <name-or-name@domain>` -- see doResolveManagedIdentity. */
+async function handleApiResolveManagedIdentity(request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const body = (await request.json().catch(() => ({}))) as { identifier?: string };
+    if (!body.identifier) throw new ApiError(400, "identifier is required");
+    const { agent, token } = await doResolveManagedIdentity(env, me, body.identifier);
+    return json({ agent, token });
   });
 }
 
@@ -3961,6 +4037,8 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/me/set-name" && request.method === "POST") return handleApiSetOwnName(request, env);
   if (path === "/api/agents" && request.method === "POST") return handleApiCreateAgent(request, env);
   if (path === "/api/agents" && request.method === "GET") return handleApiListAgents(request, env);
+  if (path === "/api/me/managed-identity/register" && request.method === "POST") return handleApiRegisterManagedIdentity(request, env);
+  if (path === "/api/me/managed-identity/resolve" && request.method === "POST") return handleApiResolveManagedIdentity(request, env);
   if (path === "/api/agents/search" && request.method === "GET") return handleApiSearchAgents(request, env);
   if (path === "/api/repos" && request.method === "POST") return handleApiCreateRepo(request, env);
   if (path === "/api/repos" && request.method === "GET") return handleApiListRepos(request, env);

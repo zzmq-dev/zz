@@ -113,6 +113,55 @@ export async function registerGuardianName(env: GuardianFetchEnv, name: string):
 /** Client-side pre-check mirroring the registrar's own name ABNF (packages/server/src/registrar.ts's NAME_RE) -- UX sugar only, the registrar stays authoritative. */
 export const GUARDIAN_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 
+export type RegisterManagedResult = { ok: true; did: string; name: string; login_secret: string } | { ok: false; message: string };
+
+/**
+ * `zz work --register`: a brand-new managed identity, the caller's own
+ * guardian_did as its real, signed guardian from day one (the atomic
+ * registrar capability, authenticated the same way as setGuardianContactEmail
+ * above). `seedName` is a proposed name, negotiated for uniqueness here
+ * (auto-suffixed on a 409, same pattern as accountsDb.ts's own
+ * uniqueUsername) rather than failing outright on the first collision --
+ * omitted, a random candidate is generated the same way. Bounded to 20
+ * attempts; a 409 storm that long is not a real-world case this needs to
+ * handle gracefully, just not hang forever on.
+ */
+export async function registerManagedGuardianIdentity(
+  env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string },
+  guardianDid: string,
+  seedName?: string,
+): Promise<RegisterManagedResult> {
+  if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) {
+    return { ok: false, message: "zz's own registrar client credential isn't configured" };
+  }
+  const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
+  const base = seedName && GUARDIAN_NAME_RE.test(seedName) ? seedName : `agent-${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  let candidate = base;
+  for (let attempt = 0, n = 2; attempt < 20; attempt++) {
+    try {
+      const resp = await guardianFetch(env, "/register", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Basic ${basic}` },
+        body: JSON.stringify({ name: candidate, guardian_did: guardianDid }),
+      });
+      if (resp.status === 409) {
+        candidate = `${base}-${n}`;
+        n++;
+        continue;
+      }
+      if (!resp.ok) {
+        const body = (await resp.json().catch(() => null)) as { error?: string } | null;
+        return { ok: false, message: body?.error ?? `registration failed (${resp.status})` };
+      }
+      const body = (await resp.json()) as { did: string; login_secret: string };
+      return { ok: true, did: body.did, name: candidate, login_secret: body.login_secret };
+    } catch (e) {
+      return { ok: false, message: `couldn't reach the registrar: ${e instanceof Error ? e.message : String(e)}` };
+    }
+  }
+  return { ok: false, message: `couldn't find a free name starting from "${base}" after 20 attempts` };
+}
+
 /**
  * Wires a contact email for a just-created identity, right after
  * registration -- before any interactive session with the registrar
