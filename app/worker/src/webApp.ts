@@ -836,7 +836,7 @@ async function handleLogin(request: Request, env: WebEnv): Promise<Response> {
      </div>
      <div class="card stack" style="max-width:320px;margin:1rem auto 0">
        <form method="post" action="/auth/guardian/start${qs}" class="stack">
-         <label for="guardian-id">Sign in with did:guardian</label>
+         <label for="guardian-id">Sign in with your Guardian ID</label>
          <input id="guardian-id" name="identifier" placeholder="alice, or alice@acme.com" required>
          <button class="secondary" style="width:100%;padding:.85rem 1.1rem" type="submit">Sign in</button>
        </form>
@@ -1084,7 +1084,7 @@ async function handleGuardianStart(request: Request, env: WebEnv): Promise<Respo
   const parsed = parseGuardianIdentifier(raw);
   const pendingLinkSet = readPendingLink(request) !== null;
   if (!parsed) {
-    return notFoundInterstitial(`"${raw}" doesn't look like a did:guardian id -- expected something like alice (your own zzmq.dev id), alice@acme.com, or @acme.com.`, cliNonce, pendingLinkSet);
+    return notFoundInterstitial(`"${raw}" doesn't look like a Guardian ID -- expected something like alice (your own zzmq.dev id), alice@acme.com, or @acme.com.`, cliNonce, pendingLinkSet);
   }
   const redirectUri = `${new URL(request.url).origin}/auth/callback/didguardian`;
   const state = shortId("state");
@@ -1115,7 +1115,7 @@ async function handleGuardianAuthCallback(request: Request, env: WebEnv): Promis
   const redirectUri = `${url.origin}/auth/callback/didguardian`;
   const identity = await exchangeGuardianCode(env, decodeURIComponent(domain), code, redirectUri);
   if (!identity) {
-    return notFoundInterstitial(`Couldn't verify that did:guardian id against ${decodeURIComponent(domain)}.`, cliNonce, readPendingLink(request) !== null);
+    return notFoundInterstitial(`Couldn't verify that Guardian ID against ${decodeURIComponent(domain)}.`, cliNonce, readPendingLink(request) !== null);
   }
 
   const agent = await resolveOrCreateAgentForDid(env, identity.did);
@@ -1145,7 +1145,7 @@ function guardianNameForm(suggested: string, error: string | null, cliNonce: str
     null,
     `<div class="card stack" style="max-width:420px;margin:0 auto">
        ${error ? `<p class="hint" style="color:var(--pico-del-color,#c33)">${esc(error)}</p>` : ""}
-       <p>Pick a name for your did:guardian id on zzmq.dev -- this is yours permanently, and it's how others (and you, from the CLI) will address it.</p>
+       <p>Pick a name for your Guardian ID on zzmq.dev -- this is yours permanently, and it's how others (and you, from the CLI) will address it.</p>
        <form method="post" action="/onboard/guardian-name${qs}" class="stack">
          <label for="guardian-name">Name</label>
          <input id="guardian-name" name="name" value="${esc(suggested)}" pattern="[a-z0-9][a-z0-9-]{1,30}[a-z0-9]" required>
@@ -2361,7 +2361,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   const linkedIdentities = await listAgentIdentities(env.DB, me.username);
   const linkedProviders = new Set(linkedIdentities.map((i) => i.provider));
   const lastLoginWarning =
-    "This is your only connected login. If you don't have your did:guardian login secret saved, disconnecting it could lock you out of this account. Disconnect anyway?";
+    "This is your only connected login. If you don't have your Guardian ID login secret saved, disconnecting it could lock you out of this account. Disconnect anyway?";
   const linkedLoginsHtml = (Object.keys(OAUTH_PROVIDER_LABELS) as Provider[])
     .map((p) =>
       linkedProviders.has(p)
@@ -2375,10 +2375,10 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   // Only offered for an identity zz itself can act on at its own
   // registrar -- a foreign-registrar id or the bare-domain root never
   // gets this row (ownGuardianName's own guard, see its definition).
-  const reissueWarning = "This immediately replaces your did:guardian login secret -- the old one stops working right away. Continue?";
+  const reissueWarning = "This immediately replaces your Guardian ID login secret -- the old one stops working right away. Continue?";
   const ownName = ownGuardianName(me.username);
   const guardianSecretRowHtml = ownName
-    ? `<li class="row">did:guardian login secret
+    ? `<li class="row">Guardian ID login secret
          <form method="post" action="/profile/login-secret/reissue" class="inline">
            <button type="submit" class="secondary" onclick="${esc(`return confirm(${JSON.stringify(reissueWarning)})`)}">Regenerate</button>
          </form></li>`

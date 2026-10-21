@@ -230,7 +230,7 @@ program
   .command("work [repo]")
   .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [repo] is shorthand for --repos <repo> (a single owner/repo); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
   .option("--as <name-or-name@domain>", 'act as the id you want this run to act as, e.g. "--as alice" (zzmq.dev) or "--as alice@acme.com" (any other registrar) -- works if your own login is currently a real, signed guardian of it (checked live), fails clearly otherwise. Omit to act as yourself (your own `zz login` session).')
-  .option("--register [name]", "mint a brand-new did:guardian identity on zzmq.dev, your own login as its real guardian from day one, and use it for this run -- <name> is a proposed name, negotiated for uniqueness (auto-suffixed on conflict) rather than failing outright; omit it to have one proposed for you")
+  .option("--register [name]", "mint a brand-new Guardian ID on zzmq.dev, your own login as its real guardian from day one, and use it for this run -- <name> is a proposed name, negotiated for uniqueness (auto-suffixed on conflict) rather than failing outright; omit it to have one proposed for you")
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
   .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--scope <scope>", "coordinator, contributor, committee (merge and voting, never open-scope work), or all (default: all)", "all")
@@ -411,7 +411,7 @@ repoCmd
 
 repoCmd
   .command("grant <owner/repo> <principal> <role>")
-  .description("grant an Agent (by its did:guardian id, or a bare name/name@domain -- see --as) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
+  .description("grant an Agent (by its Guardian ID, or a bare name/name@domain -- see --as) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
   .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
   .action(async (slug: string, principal: string, role: string, opts: { as?: string }) => {
     await repoGrant(slug, principal, role, { as: opts.as });

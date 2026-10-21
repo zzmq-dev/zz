@@ -69,7 +69,7 @@ export function requireCredentials(): ZzCredentials {
  */
 export function resolveMe(value: string): string {
   if (value.startsWith("@me[")) {
-    throw new Error(`"${value}" isn't resolvable offline -- a managed agent's did:guardian id isn't derived from yours. Use its full id directly, or \`zz work --as <name>\` to resolve it first.`);
+    throw new Error(`"${value}" isn't resolvable offline -- a managed agent's Guardian ID isn't derived from yours. Use its full id directly, or \`zz work --as <name>\` to resolve it first.`);
   }
   if (value !== "@me" && !value.startsWith("@me/")) return value;
   const creds = readCredentials();
