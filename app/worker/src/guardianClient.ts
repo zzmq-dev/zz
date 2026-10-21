@@ -127,6 +127,38 @@ export async function registerManagedGuardianIdentity(
  * failure here -- a contact email can always be set up later from
  * profile settings, same registrar endpoint, same verification-link flow.
  */
+export type ReissueLoginSecretResult = { ok: true; login_secret: string } | { ok: false; message: string };
+
+/**
+ * Regenerates an agent's own did:guardian login secret -- the one real
+ * recovery path for "I never saved it" or "I think it leaked." Same
+ * trusted-client credential as setGuardianContactEmail above (the person
+ * is already authenticated to zz's own session, not to this registrar
+ * directly), and the registrar's own endpoint invalidates the old secret
+ * the instant this succeeds -- never best-effort, a failure here has to
+ * reach the person asking for it, not be swallowed.
+ */
+export async function reissueGuardianLoginSecret(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string): Promise<ReissueLoginSecretResult> {
+  if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) {
+    return { ok: false, message: "zz's own registrar client credential isn't configured" };
+  }
+  try {
+    const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
+    const resp = await guardianFetch(env, `/.well-known/guardian/${name}/login-secret`, {
+      method: "POST",
+      headers: { authorization: `Basic ${basic}` },
+    });
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, message: body?.error ?? `reissue failed (${resp.status})` };
+    }
+    const body = (await resp.json()) as { login_secret: string };
+    return { ok: true, login_secret: body.login_secret };
+  } catch (e) {
+    return { ok: false, message: `couldn't reach the registrar: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export async function setGuardianContactEmail(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string, forwardTo: string): Promise<void> {
   if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) return;
   try {

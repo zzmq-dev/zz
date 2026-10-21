@@ -20,7 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, GUARDIAN_NAME_RE } from "./guardianClient.js";
 import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
@@ -1195,6 +1195,50 @@ async function handleGuardianNameFormPost(request: Request, env: WebEnv): Promis
   return pendingLink ? withExtraCookie(response, CLEAR_PENDING_LINK_COOKIE) : response;
 }
 
+/**
+ * Only did:guardian identities zz itself can act on behalf of (zzmq.dev's
+ * own, name-bearing ones -- zz holds no trusted-client credential at any
+ * foreign registrar, and the bare-domain root identity has no login
+ * secret at all) ever get offered "Regenerate login secret." Shared
+ * between the profile page's own rendering and the POST handler so
+ * neither can show/act on this for an identity it doesn't apply to.
+ */
+function ownGuardianName(username: string): string | null {
+  const parsed = splitGuardianDid(username);
+  return parsed && parsed.domain === "zzmq.dev" && parsed.name ? parsed.name : null;
+}
+
+async function handleReissueLoginSecret(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const name = ownGuardianName(me.username);
+  if (!name) return redirect(`/${me.username}`);
+
+  const result = await reissueGuardianLoginSecret(env, name);
+  if (!result.ok) {
+    return layout(
+      "Couldn't reissue login secret",
+      null,
+      `<div class="card stack" style="max-width:420px;margin:0 auto">
+         <p class="hint" style="color:var(--pico-del-color,#c33)">${esc(result.message)}</p>
+         <a href="/${esc(me.username)}"><button class="secondary" style="width:100%">Back to profile</button></a>
+       </div>`,
+      { centerTitle: true },
+    );
+  }
+
+  return layout(
+    "New login secret",
+    null,
+    `<div class="card stack" style="max-width:480px;margin:0 auto">
+       <p>Your old did:guardian login secret no longer works. Copy this new one now -- it won't be shown again. You'll need it to sign in with <code>${esc(me.username)}</code> directly (no OAuth provider):</p>
+       <div class="clone-row"><pre>${esc(result.login_secret)}</pre><button class="secondary icon-btn" data-copy="${esc(result.login_secret)}" title="Copy">⧉</button></div>
+       <a href="/${esc(me.username)}"><button style="width:100%;padding:.85rem 1.1rem">Done</button></a>
+     </div>`,
+    { centerTitle: true },
+  );
+}
+
 async function handleLogout(request: Request, env: WebEnv): Promise<Response> {
   const sessionId = readSessionCookie(request);
   if (sessionId) await deleteSession(env.DB, sessionId);
@@ -2324,6 +2368,17 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
         : `<li class="row">${OAUTH_PROVIDER_LABELS[p]} <a href="/auth/start/${p}?link=true"><button class="secondary">Connect</button></a></li>`,
     )
     .join("");
+  // Only offered for an identity zz itself can act on at its own
+  // registrar -- a foreign-registrar id or the bare-domain root never
+  // gets this row (ownGuardianName's own guard, see its definition).
+  const reissueWarning = "This immediately replaces your did:guardian login secret -- the old one stops working right away. Continue?";
+  const ownName = ownGuardianName(me.username);
+  const guardianSecretRowHtml = ownName
+    ? `<li class="row">did:guardian login secret
+         <form method="post" action="/profile/login-secret/reissue" class="inline">
+           <button type="submit" class="secondary" onclick="${esc(`return confirm(${JSON.stringify(reissueWarning)})`)}">Regenerate</button>
+         </form></li>`
+    : "";
 
   // One flat, unified list across you and every agent you manage --
   // no more "your tokens" vs "managed agents' tokens" as two separate
@@ -2358,7 +2413,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
      ${card(
        "Linked logins",
        `<p class="hint">Connecting a login here binds it to your existing zzmq.dev id -- it never creates a separate one.</p>
-        <ul class="list">${linkedLoginsHtml}</ul>`,
+        <ul class="list">${linkedLoginsHtml}${guardianSecretRowHtml}</ul>`,
      )}
 
      ${card(
@@ -4062,6 +4117,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     const m = path.match(/^\/profile\/identities\/([^/]+)\/disconnect$/);
     if (m && request.method === "POST") return handleDisconnectProvider(m[1], request, env);
   }
+  if (path === "/profile/login-secret/reissue" && request.method === "POST") return handleReissueLoginSecret(request, env);
   if (path === "/explore") return handleExplore(request, env);
   if (path === "/work" && request.method === "GET") return handleWorkPage(request, env);
   if (path === "/work/claim" && request.method === "POST") return handleWorkClaimForm(request, env);
