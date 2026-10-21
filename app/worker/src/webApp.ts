@@ -747,6 +747,59 @@ document.querySelectorAll('[data-copy]').forEach(function (btn) {
     });
   });
 });
+
+// Creating a real Lane (a real git repo, initial commit, Ladder, and
+// origin Lane, not a quick DB row) genuinely takes a few real seconds
+// -- a plain form POST gave no feedback for that whole wait beyond the
+// browser's own tab spinner, which looked indistinguishable from
+// having frozen (confirmed as a real reported UX complaint). Posts to
+// the same JSON API the CLI already uses (/api/repos, same-origin
+// session cookie works here the same way it works for every other
+// fetch call on this page) instead of a page-reloading form, so the
+// dialog can show a real, persistent "creating" state for the whole
+// wait, then navigate once it actually succeeds.
+var createRepoForm = document.getElementById('create-repo-form');
+if (createRepoForm) {
+  createRepoForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var btn = createRepoForm.querySelector('button[type="submit"]');
+    var cancelBtn = createRepoForm.querySelector('button[type="button"]');
+    var progressEl = createRepoForm.querySelector('[data-create-repo-progress]');
+    var errEl = createRepoForm.querySelector('[data-create-repo-error]');
+    var data = new FormData(createRepoForm);
+    btn.disabled = true;
+    cancelBtn.disabled = true;
+    btn.textContent = 'Creating...';
+    progressEl.hidden = false;
+    errEl.hidden = true;
+    fetch('/api/repos', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: data.get('name'), description: data.get('description') || undefined, license: data.get('license') || undefined }),
+    })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (result) {
+        if (result.ok) {
+          window.location.href = '/' + result.body.slug;
+          return;
+        }
+        btn.disabled = false;
+        cancelBtn.disabled = false;
+        btn.textContent = 'Create';
+        progressEl.hidden = true;
+        errEl.textContent = result.body.error || 'Something went wrong -- try again.';
+        errEl.hidden = false;
+      })
+      .catch(function () {
+        btn.disabled = false;
+        cancelBtn.disabled = false;
+        btn.textContent = 'Create';
+        progressEl.hidden = true;
+        errEl.textContent = "Couldn't reach the server -- try again.";
+        errEl.hidden = false;
+      });
+  });
+}
 `;
 
 function layout(title: string, agent: Agent | null, body: string, opts: { cookies?: string[]; titleHtml?: string; h1Html?: string; centerTitle?: boolean } = {}): Response {
@@ -2644,13 +2697,15 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
 
      <dialog id="modal-create-repo" class="modal"><div class="modal-body">
        <h3>Start a new Lane</h3>
-       <form method="post" action="/profile/repos" class="stack">
+       <form id="create-repo-form" class="stack">
          <input name="name" placeholder="lane-name" required pattern="[A-Za-z0-9._-]+">
          <input name="description" placeholder="description">
          <select name="license">
            <option value="">No license</option>
            ${LICENSE_ORDER.map((k) => `<option value="${esc(k)}">${esc(LICENSES[k].name)}</option>`).join("")}
          </select>
+         <p class="hint" data-create-repo-progress hidden>Creating your Lane -- this takes a few seconds (real git history plus its own Ladder and origin Lane get set up for real, not simulated).</p>
+         <p class="hint" style="color:var(--pico-del-color,#c33)" data-create-repo-error hidden></p>
          <div class="modal-actions">
            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Create</button>
@@ -2736,19 +2791,6 @@ async function handleRbacRevokeForm(repoSlug: string, request: Request, env: Web
     throw err;
   }
   return redirect(`/${repoSlug}/settings`);
-}
-
-async function handleCreateRepoForm(request: Request, env: WebEnv): Promise<Response> {
-  const me = await resolveRequestAgent(request, env);
-  if (!me) return redirect("/login");
-  const form = await request.formData();
-  try {
-    const repo = await doCreateRepo(env, me, String(form.get("name") ?? "").trim(), String(form.get("description") ?? "").trim() || null, String(form.get("license") ?? "").trim() || null);
-    return redirect(`/${repo.slug}`);
-  } catch (err) {
-    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
-    throw err;
-  }
 }
 
 async function handleAskForm(request: Request, env: WebEnv): Promise<Response> {
@@ -3589,20 +3631,36 @@ async function walkTreeForZip(repo: ArtifactsRepo, treeHash: string, prefix: str
 async function getRepoAccessContext(slug: string, env: WebEnv): Promise<{ repoRow: RepoRow; meta: Awaited<ReturnType<typeof readRepoMeta>>; lane: Lane } | null> {
   const repoRow = await getRepoBySlug(env.DB, slug);
   if (!repoRow) return null;
-  using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
-  const token = await repo.createToken("read", 300);
-  const info = await repo.info();
-  let { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
-  if (!meta) {
-    await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
-    ({ meta, roles } = await readRepoMetaAndRoles(info.remote, token));
+  try {
+    using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
+    const token = await repo.createToken("read", 300);
+    const info = await repo.info();
+    let { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
+    if (!meta) {
+      await ensureMeta(info.remote, token, { description: repoRow.description ?? "", owner: repoRow.owner_username });
+      ({ meta, roles } = await readRepoMetaAndRoles(info.remote, token));
+    }
+    // #41: repo-level RBAC reads the origin Lane's own owners/
+    // coordinators/viewers now, not roles.json directly -- `roles` is
+    // only still read above to feed ensureOriginLaneRoles's one-time
+    // migration fallback for a repo that hasn't been touched since.
+    const lane = await ensureOriginLaneRoles(env, repoRow, roles);
+    return { repoRow, meta, lane };
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    // A real, confirmed-live failure mode: a D1 repos row surviving
+    // its own backing Artifacts repo's deletion (doDeleteRepo's own
+    // comment on exactly this already calls it "an orphaned D1 row
+    // from some earlier delete that cleared the Artifacts repo but
+    // failed before this row" -- same tolerance applied here, not
+    // just there). Before this, visiting such a Lane's page threw a
+    // raw, unhandled ArtifactsError all the way to the top-level fetch
+    // handler (a bare 500 "Worker threw exception", confirmed live)
+    // instead of the same clean 404 every other "no such Lane" path
+    // already gives. Treated as "doesn't really exist" here, same as
+    // repoRow itself being missing above -- not re-thrown.
+    return null;
   }
-  // #41: repo-level RBAC reads the origin Lane's own owners/
-  // coordinators/viewers now, not roles.json directly -- `roles` is
-  // only still read above to feed ensureOriginLaneRoles's one-time
-  // migration fallback for a repo that hasn't been touched since.
-  const lane = await ensureOriginLaneRoles(env, repoRow, roles);
-  return { repoRow, meta, lane };
 }
 
 // Git has no session cookie -- it authenticates over Basic Auth on
@@ -4387,7 +4445,6 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   }
   if (path === "/profile/tokens" && request.method === "POST") return handleTokenAddForm(request, env);
   if (path === "/work/ask" && request.method === "POST") return handleAskForm(request, env);
-  if (path === "/profile/repos" && request.method === "POST") return handleCreateRepoForm(request, env);
   {
     const m = path.match(/^\/profile\/tokens\/([^/]+)\/revoke$/);
     if (m && request.method === "POST") return handleRevokeTokenForm(m[1], request, env);
