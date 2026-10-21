@@ -1408,7 +1408,7 @@ async function doDeleteAgent(env: WebEnv, actor: Agent, targetUsername: string):
   const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, targetUsername), listRepoRolesForAgent(env.DB, targetUsername)]);
   const nonShardOwned = owned.filter((r) => !r.shard_of_slug);
   if (nonShardOwned.length) {
-    throw new ApiError(409, `can't delete "${targetUsername}": owns ${nonShardOwned.length} non-shard repo(s) (${nonShardOwned.map((r) => r.slug).join(", ")}) -- transfer or delete those first`);
+    throw new ApiError(409, `can't delete "${targetUsername}": owns ${nonShardOwned.length} non-shard Lane(s) (${nonShardOwned.map((r) => r.slug).join(", ")}) -- transfer or delete those first`);
   }
 
   const connected = new Map<string, string>(); // slug -> artifacts_name, every repo this agent has a tracked connection to
@@ -1513,7 +1513,7 @@ function buildInitialLadderRungs(opts: { description: string | null; ownerName: 
 }
 
 async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null, licenseKey: string | null): Promise<RepoRow> {
-  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "repo name must match [A-Za-z0-9._-]+");
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "name must match [A-Za-z0-9._-]+");
   const artifactsName = shortId("repo");
   const slug = `${ownerUrlSegment(owner)}/${slugify(name)}`;
   const license = licenseKey ? LICENSES[licenseKey] : null;
@@ -1666,7 +1666,7 @@ function laneTierFor(role: RbacRole): "owner" | "coordinator" | "viewer" {
 
 async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string, role: RbacRole): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   if (!(await getAgent(env.DB, principal))) throw new ApiError(404, `no such agent "${principal}"`);
 
   // No more "or any agent I created" indirection -- peers means the
@@ -1694,7 +1694,7 @@ async function doRbacGrant(env: WebEnv, actor: Agent, repoSlug: string, principa
 /** Removes one grant by its exact stored `principal` value -- doesn't require it to resolve to a current agent, so a stale/orphaned grant can still be cleaned up. Tries all three tiers (a principal's exact current tier isn't known to the caller, and lane_revoke is a no-op for a list they're not actually on). */
 async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, principal: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   const lane = await requireLaneOwner(env, repo, null, actor, repoSlug);
   const stub = doStub(env, repo.artifacts_name);
   await stub.configure(repo.artifacts_name);
@@ -1708,12 +1708,12 @@ async function doRevokeGrant(env: WebEnv, actor: Agent, repoSlug: string, princi
 
 async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visibility: "public" | "private"): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
   const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
-  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!meta) throw new ApiError(404, "Lane has no metadata yet");
   await requireLaneOwner(env, repo, roles, actor, repoSlug);
   await writeRepoMeta(info.remote, token, { ...meta, policy: { ...meta.policy, visibility } });
   await updateRepoVisibility(env.DB, repo.slug, visibility);
@@ -1731,12 +1731,12 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
 /** Same two-places-at-once shape doSetVisibility already uses (zz-meta's meta.json is the real source of truth; the D1 column is a read-side cache the repo page and every listing/search query actually read from) -- description was previously set once at creation (doCreateRepo) and never editable again. */
 async function doSetDescription(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
   const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
-  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!meta) throw new ApiError(404, "Lane has no metadata yet");
   await requireLaneOwner(env, repo, roles, actor, repoSlug);
   await writeRepoMeta(info.remote, token, { ...meta, description });
   await updateRepoDescription(env.DB, repo.slug, description);
@@ -1745,14 +1745,14 @@ async function doSetDescription(env: WebEnv, actor: Agent, repoSlug: string, des
 /** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
 async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerUsername: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   const newOwner = await getAgent(env.DB, newOwnerUsername);
   if (!newOwner) throw new ApiError(404, "no such agent");
   using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
   const token = await artifactsRepo.createToken("write", 3600);
   const info = await artifactsRepo.info();
   const { meta } = await readRepoMetaAndRoles(info.remote, token);
-  if (!meta) throw new ApiError(404, "repo has no metadata yet");
+  if (!meta) throw new ApiError(404, "Lane has no metadata yet");
   const lane = await requireLaneOwner(env, repo, null, actor, repoSlug);
 
   await writeRepoMeta(info.remote, token, { ...meta, owner: newOwner.username });
@@ -1771,7 +1771,7 @@ async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, 
 
 async function doDeleteRepo(env: WebEnv, actor: Agent, repoSlug: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
 
   try {
     await requireLaneOwner(env, repo, null, actor, repoSlug);
@@ -1924,7 +1924,7 @@ async function deleteShardTreeOf(env: WebEnv, parentSlug: string): Promise<Shard
 /** Owner-of-the-parent is the one check that matters -- every shard being wiped is a scratch workspace that exists only because of this repo's own task delegation, not a separately-owned repo someone else gets a say over. */
 async function doCleanupShards(env: WebEnv, actor: Agent, repoSlug: string): Promise<ShardCleanupResult> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   await requireLaneOwner(env, repo, null, actor, repoSlug);
   return deleteShardTreeOf(env, repoSlug);
 }
@@ -2158,7 +2158,7 @@ async function getClaimableForViewer(env: WebEnv, viewerUsername: string): Promi
 
 async function doClaimAsk(env: WebEnv, actor: Agent, repoSlug: string, laneId: string, askId: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   const stub = doStub(env, repo.artifacts_name);
   await stub.configure(repo.artifacts_name);
   await stub.callTool("ask_claim", { repo: repo.artifacts_name, lane_id: laneId, ask_id: askId, actor: actor.username });
@@ -2189,14 +2189,14 @@ async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> 
     me,
     `${card(
       "Claimable",
-      `<p class="hint">Every open Ask across every repo you can see that you're permitted to act on -- the same query \`zz work\` runs, just for a human clicking instead of an agent looping.</p>
+      `<p class="hint">Every open Ask across every Lane you can see that you're permitted to act on -- the same query \`zz work\` runs, just for a human clicking instead of an agent looping.</p>
        <ul class="list">${rows || '<li class="empty">Nothing claimable right now.</li>'}</ul>`,
     )}
 
      ${card(
-       "Post an ask to a repo's root lane",
+       "Post an ask to a Lane's origin",
        `<form method="post" action="/work/ask" class="stack">
-          <input name="repo_slug" placeholder="owner/repo-name" required>
+          <input name="repo_slug" placeholder="owner/name" required>
           <textarea name="description" placeholder="what do you need done?" required></textarea>
           <button type="submit">Post ASK</button>
         </form>`,
@@ -2240,7 +2240,7 @@ async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Respo
     me,
     `<div class="card stack">
        <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane ${laneTagHtml(laneId)}).</p>
-       ${resolvedAsk ? workInstructions(repoSlug, laneId, askId, resolvedAsk) : '<p class="hint">Could not load this Ask\'s details -- check the repo page\'s Asks tab.</p>'}
+       ${resolvedAsk ? workInstructions(repoSlug, laneId, askId, resolvedAsk) : '<p class="hint">Could not load this Ask\'s details -- check its own page\'s Asks tab.</p>'}
        <p><a href="/work">&larr; Back to Work</a></p>
      </div>`,
   );
@@ -2248,7 +2248,7 @@ async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Respo
 
 async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string, decompose?: boolean): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such repo");
+  if (!repo) throw new ApiError(404, "no such Lane");
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
   await stub.configure(repo.artifacts_name);
   // The origin Lane isn't the same thing as the Ladder's root rung
@@ -2678,7 +2678,7 @@ async function handleTrackForm(repoSlug: string, tracking: boolean, request: Req
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) return new Response("no such repo", { status: 404 });
+  if (!repo) return new Response("no such Lane", { status: 404 });
   if (tracking) await trackRepo(env.DB, me.username, repoSlug);
   else await untrackRepo(env.DB, me.username, repoSlug);
   return redirect(`/${repoSlug}`);
@@ -2719,7 +2719,7 @@ async function handleApiTrack(repoSlug: string, tracking: boolean, request: Requ
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
     const repo = await getRepoBySlug(env.DB, repoSlug);
-    if (!repo) throw new ApiError(404, "no such repo");
+    if (!repo) throw new ApiError(404, "no such Lane");
     if (tracking) await trackRepo(env.DB, me.username, repoSlug);
     else await untrackRepo(env.DB, me.username, repoSlug);
     return json({ ok: true });
@@ -2846,7 +2846,7 @@ async function handleApiListRepos(request: Request, env: WebEnv): Promise<Respon
 async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
-    if (!ctx) throw new ApiError(404, "no such repo");
+    if (!ctx) throw new ApiError(404, "no such Lane");
     return json({ repo: ctx.repoRow, meta: ctx.meta, lane: ctx.lane });
   });
 }
@@ -2865,7 +2865,7 @@ async function handleApiSetIngestStatus(slug: string, request: Request, env: Web
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
     const repo = await getRepoBySlug(env.DB, slug);
-    if (!repo) throw new ApiError(404, "no such repo");
+    if (!repo) throw new ApiError(404, "no such Lane");
     if (repo.owner_username !== me.username) throw new ApiError(403, `${me.username} is not the owner of ${slug}`);
     const body = (await request.json()) as { status?: string };
     if (body.status !== "ready" && body.status !== "ingesting") throw new ApiError(400, 'status must be "ready" or "ingesting"');
@@ -2877,7 +2877,7 @@ async function handleApiSetIngestStatus(slug: string, request: Request, env: Web
 async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
-    if (!ctx) throw new ApiError(404, "no such repo");
+    if (!ctx) throw new ApiError(404, "no such Lane");
     const lane = await getRootLane(env, ctx.repoRow.artifacts_name);
     return json({ lane });
   });
@@ -2975,7 +2975,7 @@ async function maybeDisposeShardAfterAnswer(env: WebEnv, shardRepo: RepoRow, lan
 async function handleApiCallTool(slug: string, toolName: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const repo = await getRepoBySlug(env.DB, slug);
-    if (!repo) throw new ApiError(404, "no such repo");
+    if (!repo) throw new ApiError(404, "no such Lane");
     const canAnonRead = repo.visibility === "public" && ANON_READ_TOOLS.has(toolName);
     const me = canAnonRead ? await resolveRequestAgent(request, env) : await requireApiAgent(request, env);
 
@@ -3290,8 +3290,8 @@ function pathBreadcrumbHtml(slug: string, ref: string, path: string, lastIsLink:
 /** `ref` is a branch name, tag, or commit sha -- repo.log/readTree/readFile all resolve any of the three directly, so a tree reached from a historical commit's own page stays pinned to that commit rather than jumping to HEAD, and the ref lives in the URL path (not a query param) so the page itself is the permalink. */
 async function handleTree(slug: string, ref: string, path: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
-  if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
+  if (!ctx) return new Response("no such Lane", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such Lane", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   using repo = await env.ARTIFACTS.get(ctx.repoRow.artifacts_name);
@@ -3436,8 +3436,8 @@ function needGitAuthResponse(): Response {
 
 async function handleRepoPage(me: Agent | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
-  if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
+  if (!ctx) return new Response("no such Lane", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such Lane", { status: 404 });
   const { repoRow, meta, lane } = ctx;
 
   // Started here, awaited down below where they're actually used --
@@ -3580,7 +3580,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
              </div>
              <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
     },
-    { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty repo.</li>'}</ul>` },
+    { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>` },
     { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
   ].filter((t): t is { id: string; label: string; html: string } => t !== null);
 
@@ -3616,7 +3616,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
          <p>${autolinkText(meta?.description ?? repoRow.description ?? "")}</p>
          ${
            me && !isOwner
-             ? `<form method="post" action="/${esc(slug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this repo" : "Track this repo"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
+             ? `<form method="post" action="/${esc(slug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this Lane" : "Track this Lane"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
              : ""
          }
          ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
@@ -3633,8 +3633,8 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
            <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
          </div>
        </div>
-       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz repo clone ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
-       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this repo's Asks, same as any other agent.</p>
+       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz lane checkout ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
+       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this Lane's Asks, same as any other agent.</p>
        <a href="${origin}/${esc(slug)}/archive.zip" style="display:inline-block;margin-bottom:.75rem"><button class="secondary">Download .zip</button></a>
        <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
        ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
@@ -3654,7 +3654,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   const me = await resolveRequestAgent(request, env);
   if (!me) return redirect("/login");
   const ctx = await getRepoAccessContext(slug, env);
-  if (!ctx) return new Response("no such repo", { status: 404 });
+  if (!ctx) return new Response("no such Lane", { status: 404 });
   const { meta, lane } = ctx;
   if (!laneHasOwner(lane, me.username)) return new Response("Owners only", { status: 403 });
 
@@ -3696,7 +3696,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
     `${card(
       "Description",
       `<form method="post" action="/${esc(slug)}/settings/description" class="stack">
-        <textarea name="description" rows="2" placeholder="What is this repo?" style="width:100%">${esc(meta?.description ?? "")}</textarea>
+        <textarea name="description" rows="2" placeholder="What is this Lane?" style="width:100%">${esc(meta?.description ?? "")}</textarea>
         <button type="submit" class="secondary" style="align-self:flex-start">Save</button>
       </form>`,
     )}
@@ -3709,7 +3709,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
 
      ${card(
        "Visibility",
-       `<p class="hint">Public repos are readable by anyone; private repos need an explicit role grant above to even view.</p>
+       `<p class="hint">Public Lanes are readable by anyone; private ones need an explicit role grant above to even view.</p>
         <form method="post" action="/${esc(slug)}/settings/visibility" class="row">
           <select name="visibility"><option value="public"${visibility === "public" ? " selected" : ""}>public</option><option value="private"${visibility === "private" ? " selected" : ""}>private</option></select>
           <button type="submit" class="secondary">Save</button>
@@ -3731,7 +3731,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
               : ""
           }
           <form method="post" action="/${esc(slug)}/settings/delete" onsubmit="return confirm('Permanently delete ${esc(slug).replace(/'/g, "\\'")}? This cannot be undone.')">
-            <button type="submit" class="danger">Delete repo</button>
+            <button type="submit" class="danger">Delete Lane</button>
           </form>
         </div>`,
        { extraClass: "danger-zone" },
@@ -3760,8 +3760,8 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
 // permalink the way GitHub's does, even in this minimal form.
 async function handleCommit(slug: string, sha: string, request: Request, env: WebEnv): Promise<Response> {
   const ctx = await getRepoAccessContext(slug, env);
-  if (!ctx) return new Response("no such repo", { status: 404 });
-  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such repo", { status: 404 });
+  if (!ctx) return new Response("no such Lane", { status: 404 });
+  if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such Lane", { status: 404 });
   const me = await resolveRequestAgent(request, env);
 
   // Started here, awaited down by the render -- a separate DO
