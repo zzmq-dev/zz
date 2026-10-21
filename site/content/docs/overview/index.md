@@ -20,7 +20,7 @@ A Lane is a workstream. It holds a queue of requests, called [Asks](/docs/nouns/
 A typical change moves through a Lane like this:
 
 1. Someone posts a `work` Ask describing a task in plain language.
-2. An agent claims it, forks a [shard](/docs/nouns/#shard) of the repo, makes the change there, and submits it back for review.
+2. An agent claims it, opens its own Lane for the work, makes the change there, and submits it back for review.
 3. Someone, human or agent, reviews it -- reviewing is open to any Agent, not a privileged role.
 4. The Lane's [coordinator](/docs/nouns/#coordinator) merges it and updates the Ladder.
 
@@ -53,7 +53,7 @@ Everything in a Lane happens through two verbs. An `ASK` requests something and 
 
 ## Status
 
-`zz` is early and changing quickly. Working today are hosted repos with git access, accounts and managed agents, Roles, Lanes and Asks, the work loop with shards and decomposition, review and merge, Ladders with cross-repo search, the CLI and its dashboards, and the web app. VETO, Lazy consensus, Vote, and a first incident-response runbook (STOP/DROP/ROLL) are built at demo-level rigor too — see [Protocol](/docs/protocol/#further-verbs) and [Demos](/docs/demos/).
+`zz` is early and changing quickly. Working today are hosted repos with git access, accounts and managed agents, Roles, Lanes and Asks, the work loop with delegated Lanes and decomposition, review and merge, Ladders with cross-repo search, the CLI and its dashboards, and the web app. VETO, Lazy consensus, Vote, and a first incident-response runbook (STOP/DROP/ROLL) are built at demo-level rigor too — see [Protocol](/docs/protocol/#further-verbs) and [Demos](/docs/demos/).
 
 Planned: HOLD; Trust scoring; Policy beyond visibility and review; cascades across many repos; an MCP server; and agents that run unattended on Cloudflare. Pages in these docs mark planned features as **Planned**.
 

@@ -65,7 +65,7 @@ Repo settings live on an orphan branch named `zz-meta`, separate from the code's
 }
 ```
 
-`shard_of` appears only on a [shard](/docs/nouns/#shard) and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Coordinators and above. `policy.policy_change`/`policies` are [Policy](/docs/governance/#policy)'s own approval rules — `policy_change` governs changing Policy itself, `policies` is path-scoped rules for everything else, shown here at a new repo's own defaults.
+`shard_of` appears only on a delegated Lane's own repo and names its immediate parent. `visibility` is `public` or `private`. A public repo can be read by anyone and written only by Coordinators and above. `policy.policy_change`/`policies` are [Policy](/docs/governance/#policy)'s own approval rules — `policy_change` governs changing Policy itself, `policies` is path-scoped rules for everything else, shown here at a new repo's own defaults.
 
 ### `roles.json`
 
@@ -135,7 +135,7 @@ D1 holds what belongs to no single repo:
 
 - **Agents and identities.** One row per Agent, human or managed, keyed by username, plus which login provider (Cloudflare or Google) each human signed in with.
 - **Tokens and sessions.** Hashed bearer tokens, web sessions, and pending `zz login` handshakes.
-- **The repo index.** Every repo's slug, owner, description, visibility, shard parent, and a cache of its Role grants, for search and listing. The `zz-meta` branch is the source of truth for anything cached here.
+- **The repo index.** Every repo's slug, owner, description, visibility, which repo (if any) it was forked from, and a cache of its Role grants, for search and listing. The `zz-meta` branch is the source of truth for anything cached here.
 - **Tracking.** The repos each Agent has chosen to watch.
 - **The Ladder search index.** A full-text index of rung summaries across all repos, which `ladder_search` and the explore page query. It can be rebuilt from the Ladders with `ladder_reindex`.
 
@@ -148,6 +148,6 @@ With `--local`, `zz` keeps everything on your machine:
 | `~/.zz/repos/<owner>/<repo>/` | A git clone. Its Ladder lives in the clone's git notes. |
 | `~/.zz/state/<owner>/<repo>/.zz/zz.db` | Lane state in SQLite, in the format shown above. |
 
-Shard names keep their brackets everywhere except on disk, where `repo[task]` becomes `repo__task`.
+A delegated Lane's own repo name keeps its brackets everywhere except on disk, where `repo[task]` becomes `repo__task`.
 
 An earlier design considered a committed `.zz/` directory with decision records, votes, trust scores, and a fuller `policy.yaml` -- superseded by what's documented above.

@@ -60,7 +60,7 @@ Signing and attesting every merge is real overhead that most repos won't want by
 
 ## Open: the vouch graph
 
-Not fully designed here on purpose -- still the next thing to work out in full. What's settled enough to build on: it's a graph recorded natively in Lane history (an established Coordinator explicitly vouching for a new contributor; a shard inheriting some baseline standing from its origin repo), not external key-signing mechanics. GitHub-bootstrapped trust (above) is naturally one *kind* of edge into this graph -- an external, verified-history-sourced vouch, alongside native ones -- not a separate, competing mechanism.
+Not fully designed here on purpose -- still the next thing to work out in full. What's settled enough to build on: it's a graph recorded natively in Lane history (an established Coordinator explicitly vouching for a new contributor; a delegated Lane inheriting some baseline standing from its origin repo), not external key-signing mechanics. GitHub-bootstrapped trust (above) is naturally one *kind* of edge into this graph -- an external, verified-history-sourced vouch, alongside native ones -- not a separate, competing mechanism.
 
 **One edge type is concrete enough to specify now: trust inherited through the agent-creation chain itself.** Checked directly against real prior art first -- the closest existing work ([Sigstore-style provenance for AI agents](https://nolabs.ai/blog/sigstore-ai-agent-provenance)) attests each agent invocation as a discrete, independent unit; it doesn't propagate trust from a creating principal to spawned agents. That's a real gap, not something to copy in.
 

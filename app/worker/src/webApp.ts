@@ -1408,7 +1408,7 @@ async function doDeleteAgent(env: WebEnv, actor: Agent, targetUsername: string):
   const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, targetUsername), listRepoRolesForAgent(env.DB, targetUsername)]);
   const nonShardOwned = owned.filter((r) => !r.shard_of_slug);
   if (nonShardOwned.length) {
-    throw new ApiError(409, `can't delete "${targetUsername}": owns ${nonShardOwned.length} non-shard Lane(s) (${nonShardOwned.map((r) => r.slug).join(", ")}) -- transfer or delete those first`);
+    throw new ApiError(409, `can't delete "${targetUsername}": owns ${nonShardOwned.length} Lane(s) of its own (${nonShardOwned.map((r) => r.slug).join(", ")}) -- transfer or delete those first`);
   }
 
   const connected = new Map<string, string>(); // slug -> artifacts_name, every repo this agent has a tracked connection to
@@ -2695,7 +2695,7 @@ async function handleCleanupShardsForm(repoSlug: string, request: Request, env: 
   // clicking the button again.
   if (result.failed.length > 0) {
     const lines = result.failed.map((f) => `  ${f.slug}: ${f.error}`).join("\n");
-    return new Response(`Deleted ${result.deleted} shard(s), but ${result.failed.length} failed and are still there -- try again:\n\n${lines}`, { status: 207, headers: { "content-type": "text/plain; charset=utf-8" } });
+    return new Response(`Deleted ${result.deleted} related Lane(s), but ${result.failed.length} failed and are still there -- try again:\n\n${lines}`, { status: 207, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
   return redirect(`/${repoSlug}/settings`);
 }
@@ -3630,7 +3630,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const resolvedShardTree = await shardTree;
   const shardsHtml =
     resolvedShardTree.length > 0
-      ? `<details class="summary-detail"><summary>Shards</summary><ul class="list">${shardGroupedListHtml(resolvedShardTree, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml)}</ul></details>`
+      ? `<details class="summary-detail"><summary>Related Lanes</summary><ul class="list">${shardGroupedListHtml(resolvedShardTree, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml, "related Lane")}</ul></details>`
       : "";
 
   const [ownerUsername, repoNameSegment] = slug.split("/");
@@ -3752,8 +3752,8 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
           </form>
           ${
             directShards.length > 0
-              ? `<form method="post" action="/${esc(slug)}/settings/cleanup-shards" onsubmit="return confirm('Permanently delete every shard of ${esc(slug).replace(/'/g, "\\'")} (and any shards of those shards)? This cannot be undone.')">
-            <button type="submit" class="danger">Clean up shards</button>
+              ? `<form method="post" action="/${esc(slug)}/settings/cleanup-shards" onsubmit="return confirm('Permanently delete every Lane split off from ${esc(slug).replace(/'/g, "\\'")} (and any split from those)? This cannot be undone.')">
+            <button type="submit" class="danger">Clean up related Lanes</button>
           </form>`
               : ""
           }

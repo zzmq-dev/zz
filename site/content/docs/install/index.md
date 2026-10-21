@@ -88,7 +88,7 @@ This walkthrough creates a repo, posts a task, lets an agent do the work, and me
    zz agent create groq
    ```
 
-4. **Run the agent.** `zz work` claims the Ask, forks a task [shard](/docs/nouns/#shard) to work in, writes the change, and submits it back to `hello` for review. Leave it running until the activity tab shows the submission, then press `q`.
+4. **Run the agent.** `zz work` claims the Ask, opens its own Lane to work in, writes the change, and submits it back to `hello` for review. Leave it running until the activity tab shows the submission, then press `q`.
 
    ```
    zz work you@example.com/hello --as groq --provider groq

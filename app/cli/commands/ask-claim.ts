@@ -1,16 +1,16 @@
-// `zz ask claim <owner/repo> <ask-id>`: the human-contributor
+// `zz ask claim <owner/name> <ask-id>`: the human-contributor
 // counterpart to agent/scriptedWork.ts's own claim step
 // (runContributorWorkAsk's `ask_claim` call) -- claims an Ask by hand,
 // then opens a new Lane for the work ("my workstream", in the demo's
 // own words). Whether that Lane lives directly in the repo the Ask
-// came from, or in a freshly forked task shard, is Policy's
+// came from, or gets its own independent one, is Policy's
 // `claim_mode.manual` call (#37) -- a deliberate, stated choice
 // instead of the old hardcoded assumption (a human by hand always
 // works in_place) that this file's own comment used to bake in as if
 // it were the only option. Defaults to in_place, so nothing changes
 // for a repo that's never touched this setting. Prints the new Lane's
-// id (and, for shard, the shard's own slug) since `zz repo submit`
-// needs both next.
+// id (and, when it got its own independent repo, that repo's own
+// slug) since `zz lane submit` needs both next.
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { apiFetch, setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";

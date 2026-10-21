@@ -418,7 +418,7 @@ lane
 lane
   .command("access-grant <owner/name> <principal> <role>")
   .description("grant an Agent (by its Guardian ID, or a bare name/name@domain -- see --as) an origin-tier Role -- owner, coordinator, contributor, or viewer. Needs Owner yourself.")
-  .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on something a managed agent you created owns directly (e.g. via fork-promotion), not you")
+  .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on something a managed agent you created owns directly (e.g. a delegated Lane promoted to its own independent one), not you")
   .action(async (slug: string, principal: string, role: string, opts: { as?: string }) => {
     await laneAccessGrant(slug, principal, role, { as: opts.as });
   });
@@ -434,7 +434,7 @@ lane
   .command("delete <owner/name>")
   .description("permanently delete a Lane and everything backing it -- real git history, Ladder, every other Lane in it. Needs Owner yourself.")
   .option("-y, --yes", "skip the type-the-name-to-confirm prompt")
-  .option("--as <name>", "act as a managed agent instead of yourself -- for deleting something a managed agent you created owns directly (e.g. via fork-promotion), not you")
+  .option("--as <name>", "act as a managed agent instead of yourself -- for deleting something a managed agent you created owns directly (e.g. a delegated Lane promoted to its own independent one), not you")
   .action(async (slug: string, opts: { yes?: boolean; as?: string }) => {
     await laneDelete(slug, { yes: opts.yes, as: opts.as });
   });

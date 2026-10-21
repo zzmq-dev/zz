@@ -339,7 +339,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
     // comment).
     setEntries([
       { role: "system", content: `Task: ${describeAsk(selected.ask)}` },
-      ...(selected.alreadyClaimed ? [{ role: "system" as const, content: "Resuming -- you already hold this claim. Drafting against the current state of your shard." }] : []),
+      ...(selected.alreadyClaimed ? [{ role: "system" as const, content: "Resuming -- you already hold this claim. Drafting against the current state of your Lane." }] : []),
     ]);
     setLiveLabel("");
     setLiveText("");
@@ -460,7 +460,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
       }
       if (cmd === "commit" && workResultRef.current) {
         if (!authedCloneUrlFor) {
-          pushEntry("system", "Local mode has no shard to commit to independently -- /submit when ready.");
+          pushEntry("system", "Local mode has no independent Lane to commit to -- /submit when ready.");
           return;
         }
         setBusy(true);

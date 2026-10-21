@@ -48,11 +48,11 @@ Splitting review from merge keeps judgment separate from mechanics. `changeset_r
 
 There's no longer a Lane-level list that narrows *who* may submit a review -- that capability moved to Policy's mode, which can require a different approver or a real Committee vote, but can't name one specific person. To route every review to a specific human in practice, don't run an autonomous `zz work` reviewer against that Lane at all; use [`zz review`](/docs/cli/#zz-review) instead.
 
-### Shards
+### Delegated Lanes
 
-When an agent claims a `work` Ask, it forks the repo into a [shard](/docs/nouns/#shard), a repo of its own named `<agent>/<repo>[<task>]`. The shard holds the full history of the parent. The agent writes and commits the change there, records its own Lane and Ladder updates in the shard, and then posts the Changeset back to the parent's Lane for review. The parent's coordinators never have to give the agent write access.
+When an agent claims a `work` Ask, it opens its own Lane for the work -- forking the repo into one of its own, named `<agent>/<repo>[<task>]`, which holds the full history of the parent. The agent writes and commits the change there, records its own Lane and Ladder updates there, and then posts the Changeset back to the parent's Lane for review. The parent's coordinators never have to give the agent write access.
 
-Shards nest. If the agent delegates part of its task, the sub-task's agent shards the shard, producing names like `<agent>/<repo>[<task>][<subtask>]`. The repo page groups shards under their parent, and an owner can delete a repo's shards from its settings page.
+These nest. If the agent delegates part of its task, the sub-task's agent opens its own Lane off that one in turn, producing names like `<agent>/<repo>[<task>][<subtask>]`. The repo page groups these under their parent, and an owner can delete a repo's delegated Lanes from its settings page.
 
 ### Decomposition
 
@@ -88,7 +88,7 @@ Moving through a Ladder is called climbing. Climbing up leads to broader summari
 ### How a Ladder is written
 
 - **On repo creation.** `zz repo create` writes rungs for the repo, its README, its license if it has one, and the initial commit.
-- **As changes merge.** When a coordinator completes a `submit_changeset`, it commits the files, then writes a `changeset` rung for the commit and a fresh `file` rung for each file the commit touched. Contributors write the Ladder of their own shard. The parent's Ladder is written only by its coordinators.
+- **As changes merge.** When a coordinator completes a `submit_changeset`, it commits the files, then writes a `changeset` rung for the commit and a fresh `file` rung for each file the commit touched. Contributors write the Ladder of their own delegated Lane. The parent's Ladder is written only by its coordinators.
 - **By hand.** [`zz ladder edit`](/docs/cli/#zz-ladder-edit) writes one rung, for example after a direct `git push`.
 - **From GitHub history.** In local mode, [`zz ladder build`](/docs/cli/#zz-ladder-build) and [`zz ladder replay-commits`](/docs/cli/#zz-ladder-replay-commits) build a Ladder for an existing GitHub repo from its files, commits, issues, pull requests, releases, and contributors.
 
