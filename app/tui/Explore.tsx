@@ -47,14 +47,17 @@ function IdleLogo({ columns }: { columns: number }) {
   );
 }
 
-interface RepoHit {
-  slug: string;
-  description: string | null;
+interface LaneHit {
+  repo_slug: string;
+  lane_id: string;
+  name: string;
+  objective: string;
 }
 
-interface RepoPreview {
-  slug: string;
-  description: string | null;
+interface LanePreview {
+  repoSlug: string;
+  name: string;
+  objective: string;
   ladderSummary: string | null;
   childCount: number;
   laneCount: number | null;
@@ -71,26 +74,26 @@ async function callToolAnon<T>(slug: string, tool: string, args: Record<string, 
   return data.result;
 }
 
-async function loadPreview(hit: RepoHit): Promise<RepoPreview> {
+async function loadPreview(hit: LaneHit): Promise<LanePreview> {
   try {
     const [tree, lanes] = await Promise.all([
-      callToolAnon<{ summary: string; children: unknown[] } | null>(hit.slug, "ladder_tree"),
-      callToolAnon<unknown[]>(hit.slug, "lane_list"),
+      callToolAnon<{ summary: string; children: unknown[] } | null>(hit.repo_slug, "ladder_tree"),
+      callToolAnon<unknown[]>(hit.repo_slug, "lane_list"),
     ]);
-    return { slug: hit.slug, description: hit.description, ladderSummary: tree?.summary ?? null, childCount: tree?.children.length ?? 0, laneCount: lanes.length, error: null };
+    return { repoSlug: hit.repo_slug, name: hit.name, objective: hit.objective, ladderSummary: tree?.summary ?? null, childCount: tree?.children.length ?? 0, laneCount: lanes.length, error: null };
   } catch (err) {
-    return { slug: hit.slug, description: hit.description, ladderSummary: null, childCount: 0, laneCount: null, error: err instanceof Error ? err.message : String(err) };
+    return { repoSlug: hit.repo_slug, name: hit.name, objective: hit.objective, ladderSummary: null, childCount: 0, laneCount: null, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
 function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: string) => Promise<void>; onEditingChange: (editing: boolean) => void; maxRows: number }) {
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<RepoHit[]>([]);
+  const [results, setResults] = useState<LaneHit[]>([]);
   const [selected, setSelected] = useState(0);
   const [status, setStatus] = useState("press / to search");
   const [tracked, setTracked] = useState<Set<string>>(new Set());
-  const [preview, setPreview] = useState<RepoPreview | null>(null);
+  const [preview, setPreview] = useState<LanePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const { isRawModeSupported } = useStdin();
   const { columns } = useTerminalSize();
@@ -112,11 +115,11 @@ function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: 
         // allowAnonymous: this has to work with no `zz login` session
         // at all -- that's the whole point of remote Explore existing
         // (see top.ts's own header comment).
-        const data = await apiFetch<{ repos: RepoHit[] }>("GET", `/api/explore/search?q=${encodeURIComponent(query)}`, undefined, undefined, true);
+        const data = await apiFetch<{ lanes: LaneHit[] }>("GET", `/api/explore/search?q=${encodeURIComponent(query)}`, undefined, undefined, true);
         if (cancelled) return;
-        setResults(data.repos);
+        setResults(data.lanes);
         setSelected(0);
-        setStatus(data.repos.length === 0 ? "no matches" : `${data.repos.length} match${data.repos.length === 1 ? "" : "es"}`);
+        setStatus(data.lanes.length === 0 ? "no matches" : `${data.lanes.length} match${data.lanes.length === 1 ? "" : "es"}`);
       } catch (err) {
         if (!cancelled) setStatus(`search failed: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -142,12 +145,12 @@ function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: 
         return;
       }
       if (preview) {
-        if (input === "t" && !tracked.has(preview.slug)) {
-          setStatus(`tracking ${preview.slug}...`);
-          onTrack(preview.slug)
+        if (input === "t" && !tracked.has(preview.repoSlug)) {
+          setStatus(`tracking ${preview.repoSlug}...`);
+          onTrack(preview.repoSlug)
             .then(() => {
-              setTracked((t) => new Set(t).add(preview.slug));
-              setStatus(`tracking ${preview.slug} -- switch to the lanes/ladder tabs to watch it`);
+              setTracked((t) => new Set(t).add(preview.repoSlug));
+              setStatus(`tracking ${preview.repoSlug} -- switch to the lanes/ladder tabs to watch it`);
             })
             .catch((err) => setStatus(`track failed: ${err instanceof Error ? err.message : String(err)}`));
         } else if (key.escape || key.backspace || key.delete) {
@@ -179,12 +182,12 @@ function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: 
     return (
       <Box flexDirection="column">
         <Text bold color={PINK}>
-          {preview?.slug ?? "loading..."}
+          {preview?.name ?? "loading..."}
         </Text>
         {previewLoading && <Text color={MUTED}>loading preview...</Text>}
         {preview && (
           <>
-            {preview.description && <Text color={MUTED}>{preview.description}</Text>}
+            {preview.objective && <Text color={MUTED}>{preview.objective}</Text>}
             {preview.error ? (
               <Text color={YELLOW}>couldn't load a preview: {preview.error}</Text>
             ) : (
@@ -194,11 +197,11 @@ function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: 
                 <Text color={MUTED}>{preview.childCount} top-level entr{preview.childCount === 1 ? "y" : "ies"} in the Ladder</Text>
               </Box>
             )}
-            {tracked.has(preview.slug) && <Text color={GREEN}>✓ tracked</Text>}
+            {tracked.has(preview.repoSlug) && <Text color={GREEN}>✓ tracked</Text>}
           </>
         )}
         <Box marginTop={1}>
-          <Text color={MUTED}>{preview && !tracked.has(preview.slug) ? "t: track   " : ""}esc/backspace: back to results</Text>
+          <Text color={MUTED}>{preview && !tracked.has(preview.repoSlug) ? "t: track   " : ""}esc/backspace: back to results</Text>
         </Box>
         {status && <Text color={MUTED}>{status}</Text>}
       </Box>
@@ -215,16 +218,16 @@ function RemoteExplore({ onTrack, onEditingChange, maxRows }: { onTrack: (slug: 
       <Text color={MUTED}>{status}</Text>
       <Box flexDirection="column" marginTop={1}>
         {results.map((r, i) => (
-          <Box key={r.slug}>
+          <Box key={`${r.repo_slug}/${r.lane_id}`}>
             <Text bold={i === selected} color={i === selected ? PINK : undefined}>
               {i === selected ? "> " : "  "}
-              {r.slug}
+              {r.name}
             </Text>
-            {tracked.has(r.slug) && <Text color={GREEN}> ✓ tracked</Text>}
-            {r.description && (
+            {tracked.has(r.repo_slug) && <Text color={GREEN}> ✓ tracked</Text>}
+            {r.objective && (
               <Text color={MUTED} wrap="truncate-end">
                 {" "}
-                -- {r.description}
+                -- {r.objective}
               </Text>
             )}
           </Box>

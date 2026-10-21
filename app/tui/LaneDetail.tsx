@@ -235,7 +235,7 @@ export function LaneDetail({ repo, laneId, snapshots, maxRows, identity, onPostA
   return (
     <Box flexDirection="column">
       <Text bold color={CYAN} wrap="truncate-end">
-        {unclaimedMode ? "unclaimed across all watched repos" : `${repo}/${laneId} -- ${snapshot?.lane.status ?? "unknown"}`}
+        {unclaimedMode ? "unclaimed across all watched Lanes" : `${repo}/${laneId} -- ${snapshot?.lane.status ?? "unknown"}`}
       </Text>
       <Text color={MUTED} wrap="truncate-end">
         filter: status=[<Text color={statusFilter === "all" ? MUTED : PINK}>{statusFilter}</Text>](s) -- {entries.length} of {allEntries.length} ask{allEntries.length === 1 ? "" : "s"}

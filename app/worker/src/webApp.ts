@@ -3096,7 +3096,7 @@ async function handleApiPostAsk(slug: string, request: Request, env: WebEnv): Pr
 async function handleApiExploreSearch(request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
   const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
-  if (!q) return json({ repos: [], agents: [] });
+  if (!q) return json({ lanes: [], agents: [], ladderHits: [] });
   return json(await searchExplore(env.DB, q, 8, me?.username ?? null));
 }
 

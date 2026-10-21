@@ -292,7 +292,7 @@ export function AssistApp(props: AssistAppProps): React.ReactElement {
   // It DOES ensure/sync the parent repo's own clone first (remote
   // mode), though -- found live: a submit_changeset's three-way merge
   // reads the parent's local HEAD directly (threeWayMerge.ts), and a
-  // clone from an earlier session (Stage 1's own `zz repo clone`, say)
+  // clone from an earlier session (Stage 1's own `zz lane checkout`, say)
   // just sits wherever it was left otherwise. `zz work`'s own
   // autonomous loop calls ensureCloned once at startup and syncClone
   // before every claimed ask for exactly this reason (work.ts);
