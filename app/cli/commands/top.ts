@@ -75,7 +75,7 @@ export async function top(options: TopOptions): Promise<void> {
 
   // A plain "work" ask (payload.description), same shape `zz ask post`
   // itself posts -- just into whichever lane was actually selected,
-  // not always "_repo". Remote mode goes through the real protocol
+  // not always "origin". Remote mode goes through the real protocol
   // tool (callRemoteTool); local mode calls the engine primitive
   // directly -- NOT through remoteBackend, which throws on purpose for
   // every write method (see remoteBackend.ts's own notSupported) since

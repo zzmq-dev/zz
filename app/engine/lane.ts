@@ -17,16 +17,22 @@ import { resolvePolicyMode } from "./policy.js";
 
 // The repo-wide Lane every other Lane traces back to -- never
 // completes, always open, the one a bare `zz ask post`/`zz work`
-// targets by default. Named and exported here (not just a bare "_repo"
+// targets by default. Named and exported here (not just a bare
 // literal scattered across call sites) specifically so this, the
-// Lane-identity sense of that string, reads as its own distinct thing
-// from the other two unrelated jobs "_repo" used to also do: the
-// Ladder's own root rung path (REPO_RUNG_PATH, engine/ladder.ts -- a
-// different system, happens to share this value, deliberately not
-// unified with this) and a repo's Policy document's self-governance
-// key (now RepoPolicy.policy_change, engine/types.ts -- renamed for
-// exactly this reason). See https://github.com/zzmq-dev/zz/issues/35.
-export const ORIGIN_LANE_ID = "_repo";
+// Lane-identity sense of this id, reads as its own distinct thing
+// from the other two unrelated jobs the old "_repo" literal used to
+// also do: the Ladder's own root rung path (REPO_RUNG_PATH,
+// engine/ladder.ts -- a different system, kept as "_repo", not
+// renamed, deliberately not unified with this) and a repo's Policy
+// document's self-governance key (now RepoPolicy.policy_change,
+// engine/types.ts -- renamed for exactly this reason). Issue #60
+// finished the job #35 started: #35 named the concept ("the origin
+// Lane") everywhere without changing the id's own literal value;
+// #60 is this value actually becoming "origin" -- every prior
+// instance was test data (confirmed, not assumed), so this is a
+// clean rename, not a migration. See
+// https://github.com/zzmq-dev/zz/issues/35 and /issues/60.
+export const ORIGIN_LANE_ID = "origin";
 
 /**
  * #32: a repo's Owners/Coordinators (the origin Lane's own owners/

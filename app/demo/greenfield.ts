@@ -10,7 +10,7 @@
 import { ensureCloned, resolveRepo } from "../cli/lib/repo.js";
 import { registerLocalBackendFactory } from "../engine/backend.js";
 import { createLocalBackend } from "../engine/localBackend.js";
-import { ask, answer, mergeLaneLadder, proposeLane } from "../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, ORIGIN_LANE_ID } from "../engine/lane.js";
 
 registerLocalBackendFactory(createLocalBackend);
 import { commitChangeset, type ChangesetFile } from "../engine/changeset.js";
@@ -26,9 +26,11 @@ const COORDINATOR = "zz-coordinator";
 export async function ensureRepoLane(slug: string) {
   const repo = resolveRepo(slug);
   ensureCloned(repo);
-  let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
+  // ORIGIN_LANE_ID, not REPO_RUNG_PATH -- see webApp.ts's doCreateRepo
+  // for the same latent bug, found the same way.
+  let repoLane = readLane(repo.stateDir, ORIGIN_LANE_ID);
   if (!repoLane) {
-    repoLane = await proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    repoLane = await proposeLane(repo.slug, { id: ORIGIN_LANE_ID, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
     const review = await ask(repo.slug, repoLane.id, { kind: "review_request", from: COORDINATOR });
     await answer(repo.slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
   }

@@ -42,7 +42,7 @@ The audit read every design doc's built-and-planned state and spot-checked the c
 
 Two more issues came out of the same after-demo planning conversation, not findings against the five but real gaps in the actual roadmap: reconstructing Lane history from `git log` on import ([issue 29](https://github.com/zzmq-dev/zz/issues/29)) and tying Lane coordinators/committee to repo Role grants directly, a standing "known gap" in Governance that had never been tracked ([issue 32](https://github.com/zzmq-dev/zz/issues/32)).
 
-**Confirmed already fine, stated explicitly rather than assumed:** Policy's `_repo`/`policies`/five-mode system is fully built and matches its own docs, verified directly against `engine/lane.ts`, `engine/policy.ts`, and `engine/types.ts` -- though the open local plan describing this as still unbuilt is now stale and should be retired so it stops implying otherwise. Claims-for-dedup-not-locks, OCC's fast path, and [Prior art](/docs/prior-art/) all actively reinforce the five rather than merely surviving a check against them.
+**Confirmed already fine, stated explicitly rather than assumed:** Policy's `policy_change`/`policies`/five-mode system is fully built and matches its own docs, verified directly against `engine/lane.ts`, `engine/policy.ts`, and `engine/types.ts` -- though the open local plan describing this as still unbuilt is now stale and should be retired so it stops implying otherwise. Claims-for-dedup-not-locks, OCC's fast path, and [Prior art](/docs/prior-art/) all actively reinforce the five rather than merely surviving a check against them.
 
 ## The fix, and what it cost
 

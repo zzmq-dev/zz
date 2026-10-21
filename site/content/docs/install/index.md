@@ -76,7 +76,7 @@ This walkthrough creates a repo, posts a task, lets an agent do the work, and me
    zz repo create hello --description "A place to try zz"
    ```
 
-2. **Post an [Ask](/docs/nouns/#ask).** A `work` Ask is a task described in plain language. It lands in the repo's root [Lane](/docs/nouns/#lane), `_repo`.
+2. **Post an [Ask](/docs/nouns/#ask).** A `work` Ask is a task described in plain language. It lands in the repo's root [Lane](/docs/nouns/#lane), `origin`.
 
    ```
    zz ask post you@example.com/hello --remote --description "Add hello.js exporting a greet(name) function"

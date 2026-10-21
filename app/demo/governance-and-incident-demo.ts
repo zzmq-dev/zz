@@ -64,7 +64,7 @@ async function main() {
   const malloryId = await identityFor(mallory);
   const danId = await identityFor(dan);
 
-  // The root "_repo" Lane is normally created lazily, the first time
+  // The root "origin" Lane is normally created lazily, the first time
   // something posts to it -- either through the dedicated
   // `/api/repos/.../ask` REST route (zz ask post --remote, the web
   // app's own ask form), or, since #43, through handleApiCallTool's
@@ -72,7 +72,7 @@ async function main() {
   // Lane. Created explicitly here anyway, since coordinators needs to
   // default to [[human]], which is what
   // makes "only the coordinator can resolve a whistleblow" demonstrable.
-  await callRemoteTool(slug, "lane_propose", { repo: slug, id: "_repo", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
+  await callRemoteTool(slug, "lane_propose", { repo: slug, id: "origin", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
 
   // ---------------------------------------------------------------
   section("Scenario A: Committee Vote on a Policy change");
@@ -195,14 +195,14 @@ async function main() {
   console.log(`   Tainted commit: ${badSha}`);
 
   step("mallory also posts an (unrelated) work Ask into the root Lane -- this is what DROP will cancel once the incident is confirmed");
-  const pendingWork = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: "_repo", kind: "work", from: mallory, payload: { description: "Add a new feature" } })) as AskEntry;
+  const pendingWork = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: "origin", kind: "work", from: mallory, payload: { description: "Add a new feature" } })) as AskEntry;
   console.log(`   Ask ${pendingWork.id}, still unanswered`);
 
   step("dan notices the leaked secret and files a whistleblow report -- anyone can file one, filing it doesn't act on it yet");
   setActiveToken(danId.token);
   const wbAsk = (await callRemoteTool(slug, "ask_post", {
     repo: slug,
-    lane_id: "_repo",
+    lane_id: "origin",
     kind: "whistleblow",
     from: dan,
     payload: { reportKind: "tainted", targetAgent: mallory, targetCommit: badSha, reason: "Leaked a live-looking API key in README.md" },
@@ -211,7 +211,7 @@ async function main() {
 
   step("dan (not this Lane's coordinator) tries to resolve it himself -- rejected: only the coordinator can run the runbook");
   try {
-    await callRemoteTool(slug, "whistleblow_resolve", { repo: slug, lane_id: "_repo", ask_id: wbAsk.id, actor: dan, target_agent: mallory, target_commit: badSha, reason: "Leaked a live-looking API key in README.md" });
+    await callRemoteTool(slug, "whistleblow_resolve", { repo: slug, lane_id: "origin", ask_id: wbAsk.id, actor: dan, target_agent: mallory, target_commit: badSha, reason: "Leaked a live-looking API key in README.md" });
     console.log("   UNEXPECTED: that should have failed");
   } catch (e) {
     console.log(`   Rejected as expected: ${(e as Error).message.slice(0, 100)}`);
@@ -221,7 +221,7 @@ async function main() {
   setActiveToken(requireCredentials().token);
   const result = (await callRemoteTool(slug, "whistleblow_resolve", {
     repo: slug,
-    lane_id: "_repo",
+    lane_id: "origin",
     ask_id: wbAsk.id,
     actor: human,
     target_agent: mallory,
@@ -229,7 +229,7 @@ async function main() {
     reason: "Leaked a live-looking API key in README.md",
   })) as IncidentResult;
 
-  const rootLane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "_repo" })) as Lane;
+  const rootLane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "origin" })) as Lane;
   console.log(`   STOP: root Lane status is now "${rootLane.status}"`);
   console.log(`   DROP: denied ${result.dropped.length} other pending ask(s) from mallory (${result.dropped.join(", ") || "none"})`);
   console.log(result.rolled ? `   ROLL: reverted ${result.rolled.commit} as a real new commit ${result.rolled.revertCommit}` : "   ROLL: nothing to revert");

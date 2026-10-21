@@ -26,7 +26,7 @@ import {
 } from "../../engine/ingest.js";
 import { resolveModelBackend, type ModelBackend } from "../../engine/model.js";
 import type { Provider } from "../lib/resolveChatBackend.js";
-import { ask, answer, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
+import { ask, answer, mergeLaneLadder, proposeLane, ORIGIN_LANE_ID } from "../../engine/lane.js";
 import type { Rung } from "../../engine/ladder.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
 import { readAnchor } from "../../engine/ladderNotes.js";
@@ -144,9 +144,13 @@ export async function buildDependency(repoDir: string, stateDir: string, origin:
 
 /** The repo's own long-lived Lane: proposed once, transitioned to active, and never merged -- everything onboarded under a repo (the file tree, every ask/release/contributor/dependency, and ladder-sync.ts's own re-summarize-a-changed-file writes) has it as origin. Idempotent: a second call (ladder-sync.ts, run against an already-built repo) finds the existing Lane via readLane and reuses it rather than proposing a duplicate. */
 export async function resolveRepoLaneOrigin(slug: string, stateDir: string): Promise<LaneRef> {
-  let repoLane = readLane(stateDir, REPO_RUNG_PATH);
+  // ORIGIN_LANE_ID, not REPO_RUNG_PATH -- a real, previously latent bug
+  // the two only ever shared a literal value by coincidence (both were
+  // "_repo" before #60's rename, now "origin" vs "_repo" respectively,
+  // see webApp.ts's doCreateRepo for the same bug found the same way).
+  let repoLane = readLane(stateDir, ORIGIN_LANE_ID);
   if (!repoLane) {
-    repoLane = await proposeLane(slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    repoLane = await proposeLane(slug, { id: ORIGIN_LANE_ID, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
     const review = await ask(slug, repoLane.id, { kind: "review_request", from: AGENT });
     await answer(slug, repoLane.id, review, { from: COORDINATOR, action: "grant" });
   }

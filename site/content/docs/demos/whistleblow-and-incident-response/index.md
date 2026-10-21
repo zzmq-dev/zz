@@ -65,7 +65,7 @@ An abridged transcript from an actual run:
 ## Run sheet — by hand
 
 ```
-zz ask post <owner/repo> _repo --remote --as dan --kind whistleblow \
+zz ask post <owner/repo> origin --remote --as dan --kind whistleblow \
   --payload '{"reportKind":"tainted","targetAgent":"<mallory-username>","targetCommit":"<sha>","reason":"..."}'
 
 # dan trying to resolve his own report fails:

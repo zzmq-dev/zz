@@ -80,7 +80,7 @@ async function main() {
   const malloryId = await resolveIdentity({ as: mallory });
   const danId = await resolveIdentity({ as: dan });
 
-  await callRemoteTool(slug, "lane_propose", { repo: slug, id: "_repo", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
+  await callRemoteTool(slug, "lane_propose", { repo: slug, id: "origin", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
 
   // ---------------------------------------------------------------
   section("Scenario A: a real Committee actually votes on a Policy change");
@@ -139,14 +139,14 @@ async function main() {
     author_email: `${mallory}@zzmq.dev`,
   })) as { commitOid: string };
   console.log(`   Tainted commit: ${badSha}`);
-  const pendingWork = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: "_repo", kind: "work", from: mallory, payload: { description: "Add a new feature" } })) as AskEntry;
+  const pendingWork = (await callRemoteTool(slug, "ask_post", { repo: slug, lane_id: "origin", kind: "work", from: mallory, payload: { description: "Add a new feature" } })) as AskEntry;
   console.log(`   Ask ${pendingWork.id}, still unanswered -- this is what DROP will cancel`);
 
   step("dan (SCRIPTED -- filing a report is just reporting an observed fact) files a whistleblow");
   setActiveToken(danId.token);
   const wbAsk = (await callRemoteTool(slug, "ask_post", {
     repo: slug,
-    lane_id: "_repo",
+    lane_id: "origin",
     kind: "whistleblow",
     from: dan,
     payload: { reportKind: "tainted", targetAgent: mallory, targetCommit: badSha, reason: "A commit to README.md looks like it leaked something that reads as an API key." },
@@ -156,10 +156,10 @@ async function main() {
   step(`${human} (a real model, acting as the repo's coordinator) investigates and decides whether to act`);
   const ownerToken = requireCredentials().token;
   const wbPrompt =
-    `You are ${human}, the coordinator of the root Lane "_repo" in repo "${slug}". ` +
+    `You are ${human}, the coordinator of the root Lane "origin" in repo "${slug}". ` +
     `There is an open whistleblow Ask (id "${wbAsk.id}") -- use lane_get to read its payload, which names a suspect commit. ` +
     `Investigate before acting: use git_show_file with sha "${badSha}" and path "README.md" to see what that commit actually contains, and judge for yourself whether the report is accurate. ` +
-    `If it is, resolve the report for real with whistleblow_resolve: repo "${slug}", lane_id "_repo", ask_id "${wbAsk.id}", actor "${human}", target_agent "${mallory}", target_commit "${badSha}", and a reason in your own words. ` +
+    `If it is, resolve the report for real with whistleblow_resolve: repo "${slug}", lane_id "origin", ask_id "${wbAsk.id}", actor "${human}", target_agent "${mallory}", target_commit "${badSha}", and a reason in your own words. ` +
     `This runs the real incident runbook (stop the Lane, drop the reported Agent's other pending work, revert the commit) -- only call it if your own investigation actually supports it.`;
   await runLiveAgent(
     ownerToken,
@@ -168,12 +168,12 @@ async function main() {
     wbPrompt,
     toolsNamed("lane_get", "git_show_file", "whistleblow_resolve"),
     async () => {
-      const lane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "_repo" })) as Lane;
+      const lane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "origin" })) as Lane;
       return lane.status === "stopped";
     },
   );
 
-  const rootLane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "_repo" })) as Lane;
+  const rootLane = (await callRemoteTool(slug, "lane_get", { repo: slug, lane_id: "origin" })) as Lane;
   console.log(`   root Lane status: "${rootLane.status}"`);
   const revertedReadme = (await callRemoteTool(slug, "git_show_file", { repo: slug, sha: "HEAD", path: "README.md" })) as string;
   console.log(`   README.md back to its pre-taint content: ${revertedReadme === currentReadme ? "yes" : "NO -- check manually"}`);

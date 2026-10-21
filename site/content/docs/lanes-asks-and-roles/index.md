@@ -49,7 +49,7 @@ In the UX -- CLI help text, web app copy, docs written for someone using the sys
 
 ## Origin Lanes vs. work Lanes: a real lifecycle distinction, entirely undesigned until now
 
-An **origin Lane** -- what the code currently spells `_repo` -- never completes. A **work Lane** is different in kind: it exists for one Ask, has a real beginning and end, and needs an actual answer to "then what" -- dispose of it, keep it for auditability, or dispose of it after some retention window. `LaneStatus` already declares `"merged" | "closed" | "vetoed" | "stopped"` (`engine/types.ts`), but a full-repo check found **zero call sites that ever set any of them** -- the lifecycle is declared and entirely dead. A clean gap, nothing built yet to contradict.
+An **origin Lane** -- id `origin` (formerly `_repo`, see below) -- never completes. A **work Lane** is different in kind: it exists for one Ask, has a real beginning and end, and needs an actual answer to "then what" -- dispose of it, keep it for auditability, or dispose of it after some retention window. `LaneStatus` already declares `"merged" | "closed" | "vetoed" | "stopped"` (`engine/types.ts`), but a full-repo check found **zero call sites that ever set any of them** -- the lifecycle is declared and entirely dead. A clean gap, nothing built yet to contradict.
 
 ## The database model already has the right shape, on the wrong table
 

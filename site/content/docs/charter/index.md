@@ -57,7 +57,7 @@ Every real triage incident from tonight is directly checkable against this: the 
 
 Since it fits none of the three existing sources, it's a genuine fourth one -- not a competing, independently-maintained store, but a fourth input to the same computed-view mechanism the contributors guide already uses. The guide becomes "assembled live from Principles, Policy, Insights, and Charter," still one non-duplicative projection, not a second drift-prone copy of anything.
 
-**Governed by Policy's existing edit-gate pattern, without living inside Policy's content.** Policy already has a `_repo`-scoped rule governing changes to Policy itself (Owner bypasses, anyone else is held to whatever the rule says). Editing the Charter reuses that exact mechanism -- its own rule, same shape, same bypass -- without the Charter's actual text ever being stored inside the `RepoPolicy` document. Policy governs the edit. It never holds the content.
+**Governed by Policy's existing edit-gate pattern, without living inside Policy's content.** Policy already has a `policy_change`-scoped rule governing changes to Policy itself (Owner bypasses, anyone else is held to whatever the rule says). Editing the Charter reuses that exact mechanism -- its own rule, same shape, same bypass -- without the Charter's actual text ever being stored inside the `RepoPolicy` document. Policy governs the edit. It never holds the content.
 
 ## How a Charter actually gets used -- ambiently, not by one role
 
@@ -85,4 +85,4 @@ Charter, checked ambiently at review and grooming time by whoever's actually inv
 ## Open questions
 
 - How grooming actually attaches Charter context to an ask at post time, mechanically -- a model call against today's file-level Ladder (the Ladder-RAG doc's own "simple version" framing), or something that needs the fuller retrieval design first. Tracked as part of [the implementation plan](/docs/plans/directed-selection-implementation/).
-- Whether a Charter edit needing review (per its own `_repo`-style gate) is just an ordinary Policy-gated changeset like any other. Leaning toward yes -- Charter's content is special, but editing it isn't a special kind of merge.
+- Whether a Charter edit needing review (per its own `policy_change`-style gate) is just an ordinary Policy-gated changeset like any other. Leaning toward yes -- Charter's content is special, but editing it isn't a special kind of merge.

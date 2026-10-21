@@ -317,7 +317,7 @@ export interface Lane {
   // repo-level "coordinator" never added anyone to a Lane's own
   // coordinators list, so it never actually let them merge anything
   // (#32's "permission-model gotcha"). Meaningful only on the origin
-  // Lane (the repo-wide one, id "_repo") -- an ordinary work Lane
+  // Lane (the repo-wide one, id "origin") -- an ordinary work Lane
   // just leaves both empty, since it has no repo-level authority of
   // its own to hold.
   //

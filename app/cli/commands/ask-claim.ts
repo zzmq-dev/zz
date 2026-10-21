@@ -18,7 +18,7 @@ import type { AskEntry, Lane, RepoPolicy } from "../../engine/types.js";
 import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface AskClaimOptions {
-  /** Which Lane the ask lives in -- defaults to the origin Lane, "_repo". */
+  /** Which Lane the ask lives in -- defaults to the origin Lane, "origin". */
   lane?: string;
   /** --as <name>: claim as a managed agent instead of yourself -- see WorkOptions.as (work.ts) / lib/identity.ts for the full resolution order. */
   as?: string;

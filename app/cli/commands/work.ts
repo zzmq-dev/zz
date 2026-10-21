@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { render } from "ink";
 import { ensureCloned, resolveRepo, fetchClone, withIsolatedRepo, type ResolvedRepo } from "../lib/repo.js";
 import { readConfig } from "../lib/config.js";
-import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
+import { ask, answer, ASK_SCOPE, mergeLaneLadder, proposeLane, ORIGIN_LANE_ID } from "../../engine/lane.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
 import { resolveBackend as resolveStorageBackend } from "../../engine/backend.js";
 import { claimableAcrossRepos, type WorkScope } from "../../engine/workqueue.js";
@@ -48,7 +48,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Bootstraps a repo's origin Lane ("_repo") the first time any agent
+// Bootstraps a repo's origin Lane ("origin") the first time any agent
 // looks at it, making that agent its coordinator -- the local-clone
 // equivalent of "fork and you're the coordinator of your own
 // workspace" (see site/content/remote-backend/index.md's eventual
@@ -61,9 +61,11 @@ function sleep(ms: number): Promise<void> {
 // claim/retry turns before an agent worked around it by hand.
 async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
   const storage = resolveStorageBackend();
-  let repoLane = await storage.readLane(repo.slug, REPO_RUNG_PATH);
+  // ORIGIN_LANE_ID, not REPO_RUNG_PATH -- see webApp.ts's doCreateRepo
+  // for the same latent bug, found the same way.
+  let repoLane = await storage.readLane(repo.slug, ORIGIN_LANE_ID);
   if (!repoLane) {
-    repoLane = await proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
+    repoLane = await proposeLane(repo.slug, { id: ORIGIN_LANE_ID, repo: repo.slug, name: repo.name, objective: `the ${repo.slug} repository`, scope: ["**"], proposedBy: agent, coordinators: [agent] });
     const review = await ask(repo.slug, repoLane.id, { kind: "review_request", from: agent });
     await answer(repo.slug, repoLane.id, review, { from: agent, action: "grant" });
   }
@@ -98,10 +100,12 @@ async function ensureRepoLane(repo: ResolvedRepo, agent: string) {
 // validateAnchorSources' requirement that *some* real commit source
 // be present.
 async function ensureRepoLaneRemote(repo: ResolvedRepo, agent: string): Promise<Lane> {
-  let repoLane = (await callRemoteTool(repo.slug, "lane_get", { lane_id: REPO_RUNG_PATH })) as Lane | null;
+  // ORIGIN_LANE_ID, not REPO_RUNG_PATH -- see webApp.ts's doCreateRepo
+  // for the same latent bug, found the same way.
+  let repoLane = (await callRemoteTool(repo.slug, "lane_get", { lane_id: ORIGIN_LANE_ID })) as Lane | null;
   if (!repoLane) {
     repoLane = (await callRemoteTool(repo.slug, "lane_propose", {
-      id: REPO_RUNG_PATH,
+      id: ORIGIN_LANE_ID,
       name: repo.name,
       objective: `the ${repo.slug} repository`,
       scope: ["**"],
@@ -157,8 +161,8 @@ export const SYSTEM_PROMPT = `You are an agent in the zz coordination system. Yo
 The ask you've been handed was already filtered for you: it's one you're actually permitted to act on (open to anyone, or in a Lane where you're a coordinator). Whether you may take a *further* coordinator-only action on some OTHER Lane (granting a claim, writing into its Ladder) depends on whether you appear in that Lane's \`coordinators\` -- check with lane_get if you're ever unsure; the action will simply fail otherwise.
 
 Conventions:
-- The repo's root is one long-lived Lane, the origin Lane, id "_repo", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" rung yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
-- To work on something substantial, propose your own Lane (lane_propose) with the origin Lane ("_repo", or whatever Lane you're inside) as origin_lane, then post child Asks into it for the sub-work, using ask_post's depends_on when one piece of work can't start until another finishes. You're that new Lane's coordinator by default.
+- The repo's root is one long-lived Lane, the origin Lane, id "origin", which never completes. If your task touches a repo other than the one your current Ask lives in, and that repo has no "_repo" rung yet (ladder_read it to check), create it yourself: call ladder_write_rung on that repo with a single rung { path: "_repo", kind: "repo", summary, sources: [], children: [...whatever files you're adding as its first content...] } -- the same way any other rung is written, just this one bootstraps the repo. Everything else you add to that repo later can go through ladder_write_rung's normal merge behavior.
+- To work on something substantial, propose your own Lane (lane_propose) with the origin Lane ("origin", or whatever Lane you're inside) as origin_lane, then post child Asks into it for the sub-work, using ask_post's depends_on when one piece of work can't start until another finishes. You're that new Lane's coordinator by default.
 - Decompose aggressively: whenever a task splits into pieces that don't depend on each other, post them as separate sub-Asks rather than one big one, even if you could do it all yourself in one pass. Then leave them in the queue -- don't immediately claim and work through all of them yourself. Two things make this worth doing, not just permissible: another agent polling the same repo can pick up any sub-Ask you leave open (that's the whole point of posting into a queue instead of a private to-do list), and each sub-Ask you (or someone else) later claims starts with a small, focused context instead of one agent accumulating everything about the whole task into a single, ever-growing conversation.
 - Only call ladder_write_rung for a Lane whose scope actually covers the rung's path and that you coordinate. If the right place to write is a different Lane's Ladder (e.g. the repo's own), post an Ask to that Lane instead of writing directly.
 - When updating a rung that already exists (ladder_read first), judge whether the change is actually material. A cosmetic change (formatting, whitespace, a rename with no behavior change) should leave the existing description essentially untouched -- do not append a note about a trivial change just because one happened.

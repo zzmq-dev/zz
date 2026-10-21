@@ -107,7 +107,7 @@ A Committee Vote is one way Policy changes — the other is the repo's **Owner**
 zz repo policy set <owner/repo> --path README.md --mode vote_quorum
 
 # a Coordinator (not Owner) tries the same thing -- rejected, since changing
-# Policy itself ("_repo") defaults to requiring a vote:
+# Policy itself ("policy_change") defaults to requiring a vote:
 zz repo policy set <owner/repo> --path README.md --mode direct --as mallory
 # -> "...isn't Owner, and .../Policy itself requires "vote_quorum" to change..."
 
@@ -119,6 +119,6 @@ zz repo submit <owner/repo> <lane-id> <ask-id>
 #     Policy requires "vote_quorum" for these files..."
 ```
 
-**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`_repo`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Coordinator or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
+**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`policy_change`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Coordinator or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
 
 Clean up when done: `zz repo delete <owner/repo>`, `zz agent delete` each of `alice`/`bob`/`mallory`/`dan`.

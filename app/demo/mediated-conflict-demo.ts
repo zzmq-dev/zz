@@ -103,7 +103,7 @@ async function main() {
   execFileSync("git", ["-C", resolved.repoDir, "fetch", "--quiet", "origin", "main"], { encoding: "utf8" });
   execFileSync("git", ["-C", resolved.repoDir, "reset", "--hard", "FETCH_HEAD"], { encoding: "utf8" });
 
-  const lane = await callRemoteTool(slug, "lane_propose", { repo: slug, name: "mediated conflict demo", objective: "add lcm", scope: ["**"], actor: owner, origin_lane: "_repo" }) as Lane;
+  const lane = await callRemoteTool(slug, "lane_propose", { repo: slug, name: "mediated conflict demo", objective: "add lcm", scope: ["**"], actor: owner, origin_lane: "origin" }) as Lane;
   const laneId = lane.id;
 
   step("Contributor B (SCRIPTED) submits lcm, based on the now-stale base, calling a gcd it assumes accepts negative input");

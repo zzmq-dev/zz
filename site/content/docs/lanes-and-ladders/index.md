@@ -32,7 +32,7 @@ See [Data format](/docs/data-format/#lanes) for the stored shape.
 
 ### The root Lane
 
-Every repo has a [root Lane](/docs/nouns/#root-lane) with the id `_repo`. It is created along with the repo, its coordinator is the repo's owner, and it never completes. `zz ask post` posts new tasks here, so finished work on those tasks comes back here for review and merge.
+Every repo has a [root Lane](/docs/nouns/#root-lane) with the id `origin`. It is created along with the repo, its coordinator is the repo's owner, and it never completes. `zz ask post` posts new tasks here, so finished work on those tasks comes back here for review and merge.
 
 ### Coordinators and the Committee
 

@@ -1558,7 +1558,16 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // (not just "no history yet", genuinely no Lane at all), which is
   // why a freshly created repo looked completely unreachable from zz
   // top's protocol/lanes tabs, not just empty -- confirmed live.
-  await stub.callTool("lane_propose", { repo: artifactsName, id: REPO_RUNG_PATH, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username, owners: [owner.username] });
+  //
+  // id: ORIGIN_LANE_ID, not REPO_RUNG_PATH -- a real, previously
+  // latent bug this rename exposed: these two constants mean
+  // genuinely different things (the Lane's own id vs. the Ladder's
+  // root rung path) and only ever happened to share the same literal
+  // value ("_repo") before #60's rename. Using the wrong one here
+  // silently still "worked" purely by that coincidence -- confirmed
+  // live, caught by this exact call producing a Lane id of "_repo"
+  // after the rename instead of the new "origin".
+  await stub.callTool("lane_propose", { repo: artifactsName, id: ORIGIN_LANE_ID, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username, owners: [owner.username] });
 
   return row;
 }
@@ -3016,7 +3025,7 @@ async function handleApiCallTool(slug: string, toolName: string, request: Reques
     }
     // policy_set is the UNGATED write path -- an Owner may always call
     // it (the designed escape hatch), and anyone Coordinator+ may when
-    // Policy's own "_repo" rule says "direct". Anything stricter
+    // Policy's own "policy_change" rule says "direct". Anything stricter
     // (self_review/other_approver/vote_quorum/vote_expiring) refuses
     // this tool outright: changing Policy then has to go through the
     // same Ask/Vote protocol a real changeset already does (post a
@@ -3506,7 +3515,7 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   // reordered; grouping by the thing an Answer actually answers is
   // what Activity (a live-feed-style read, deliberately flat and
   // chronological) can't do and this tab exists to. Every Lane, not
-  // just "_repo" -- a governance Lane's own vote_request/changeset_review
+  // just the origin Lane -- a governance Lane's own vote_request/changeset_review
   // Asks live elsewhere, and this used to only ever show the root one.
   const flatProtocol = flattenProtocol(lanes);
   const answersByAsk = new Map<string, AnswerEntry[]>();

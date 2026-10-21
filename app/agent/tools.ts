@@ -363,13 +363,13 @@ const laneProposeTool: ToolDef = {
       origin_lane: { type: "string", description: "The lane id this one originates from, if any" },
       origin_repo: { type: "string", description: "The repo origin_lane lives in, if different from `repo` -- set this for a real cross-repo dependency (e.g. this Lane exists because of a fix in another repo's Lane), not just this repo's own history" },
       actor: { type: "string", description: "Your agent id -- becomes this Lane's coordinator" },
-      id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "_repo", the origin Lane every other Lane in a repo traces back to.' },
+      id: { type: "string", description: 'Explicit lane id -- omit for a generated one. Used for well-known ids, e.g. "origin", the origin Lane every other Lane in a repo traces back to.' },
       committee: { type: "array", items: { type: "string" }, description: "Who must cast a ballot on a vote_request -- defaults to just you if omitted. Set this explicitly to actually seat a multi-member Committee. changeset_review no longer uses this; it's open-scope, any agent may submit one." },
       owners: {
         type: "array",
         items: { type: "string" },
         description:
-          'Repo-level Owner tier (#41) -- meaningful only when this IS the origin Lane ("_repo"); an ordinary work Lane has no repo-level authority of its own and should omit this. Defaults to empty, NOT to [actor] -- unlike coordinators, proposing a Lane does not make you its owner.',
+          'Repo-level Owner tier (#41) -- meaningful only when this IS the origin Lane ("origin"); an ordinary work Lane has no repo-level authority of its own and should omit this. Defaults to empty, NOT to [actor] -- unlike coordinators, proposing a Lane does not make you its owner.',
       },
       viewers: { type: "array", items: { type: "string" }, description: "Repo-level explicit-read-access tier (#41) -- same origin-Lane-only caveat as owners. Grants read access to a private repo." },
     },
@@ -396,7 +396,7 @@ const laneProposeTool: ToolDef = {
 const laneGrant: ToolDef = {
   name: "lane_grant",
   description:
-    'Adds an agent to an EXISTING Lane\'s owners/coordinators/viewers/committee -- the only way to do this after the Lane was first proposed (lane_propose\'s own params only apply at creation). owner/coordinator/viewer are the repo-level Role hierarchy (#41), meaningful on the origin Lane ("_repo"); committee is the unrelated voting axis any Lane can have. Granting "owner" requires already holding owner; granting anything else requires owner or coordinator.',
+    'Adds an agent to an EXISTING Lane\'s owners/coordinators/viewers/committee -- the only way to do this after the Lane was first proposed (lane_propose\'s own params only apply at creation). owner/coordinator/viewer are the repo-level Role hierarchy (#41), meaningful on the origin Lane ("origin"); committee is the unrelated voting axis any Lane can have. Granting "owner" requires already holding owner; granting anything else requires owner or coordinator.',
   parameters: {
     type: "object",
     properties: {

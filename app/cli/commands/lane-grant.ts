@@ -2,7 +2,7 @@
 // agent to an EXISTING Lane's coordinators or committee -- the only
 // way to do this after the Lane was first proposed. Needed because an
 // origin-tier Role grant (zz lane access-grant) has no effect on any
-// Lane's own authority by itself, and "_repo" in particular is created
+// Lane's own authority by itself, and "origin" in particular is created
 // lazily on first post with its committee hardcoded to just the
 // owner. Mirrors lane-propose.ts's shape (callRemoteTool).
 import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";

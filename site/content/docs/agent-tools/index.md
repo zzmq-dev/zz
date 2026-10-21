@@ -14,7 +14,7 @@ POST https://zzmq.dev/api/repos/<owner>/<repo>/tools/<tool name>
 Authorization: Bearer <token>
 Content-Type: application/json
 
-{ "lane_id": "_repo", "ask_id": "ask-1a2b3c4d5e", "actor": "you@example.com[claude]" }
+{ "lane_id": "origin", "ask_id": "ask-1a2b3c4d5e", "actor": "you@example.com[claude]" }
 ```
 
 The response is `{"result": ...}`, or an HTTP error with `{"error": "..."}`. The server fills in `repo` from the URL. Any `actor` or `from` argument must equal the username of the token's owner.
@@ -61,8 +61,8 @@ Tokens come from `zz login`, `zz agent create`, or `zz agent token`. On a public
 
 | Tool | Does |
 | --- | --- |
-| `policy_show` | Read a repo's current Policy document -- `_repo` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Unrestricted read. |
-| `policy_set` | Write a direct change to Policy: `repo_rule` replaces `_repo`, `path_rule` upserts one `policies` entry. The UNGATED path -- only an Owner may call it regardless of what `_repo` says, or anyone else when `_repo` is "direct" (enforced server-side, not inside the tool itself). Anyone else gets refused and has to go through the existing protocol instead: post an Ask (`changeset_review` for `self_review`/`other_approver`, `vote_request` for `vote_quorum`/`vote_expiring`) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real. See [Governance](/docs/governance/#policy). |
+| `policy_show` | Read a repo's current Policy document -- `policy_change` (the rule for changing Policy itself) and `policies` (path-glob rules for everything else). Unrestricted read. |
+| `policy_set` | Write a direct change to Policy: `repo_rule` replaces `policy_change`, `path_rule` upserts one `policies` entry. The UNGATED path -- only an Owner may call it regardless of what `policy_change` says, or anyone else when `policy_change` is "direct" (enforced server-side, not inside the tool itself). Anyone else gets refused and has to go through the existing protocol instead: post an Ask (`changeset_review` for `self_review`/`other_approver`, `vote_request` for `vote_quorum`/`vote_expiring`) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real. See [Governance](/docs/governance/#policy). |
 
 ### Code
 
@@ -81,7 +81,7 @@ The server enforces each Ask kind's scope when an Ask is claimed or answered: `c
 
 `zz work` adds a second layer. It gives the model `commit_changeset`, `ladder_write_rung`, and `policy_set` only while working a coordinator-scope Ask. A contributor's model never sees them.
 
-A `submit_changeset`'s own completion is a third layer on top of both: the merge backstop re-resolves Policy against the files it actually touches and refuses to let it complete without whatever that specific path's rule requires -- a review, a different approver, or a resolved vote -- regardless of which tool handed it the ask or what scope check already passed to get there. `policy_set` itself gets a role-based gate server-side (Owner always; anyone else only when `_repo` says "direct") rather than an Ask/Answer-scope check, since there's no Ask involved in a direct write.
+A `submit_changeset`'s own completion is a third layer on top of both: the merge backstop re-resolves Policy against the files it actually touches and refuses to let it complete without whatever that specific path's rule requires -- a review, a different approver, or a resolved vote -- regardless of which tool handed it the ask or what scope check already passed to get there. `policy_set` itself gets a role-based gate server-side (Owner always; anyone else only when `policy_change` says "direct") rather than an Ask/Answer-scope check, since there's no Ask involved in a direct write.
 
 ## How `zz work` uses the tools
 

@@ -166,7 +166,7 @@ const askCmd = program.command("ask").description("post Asks into a Lane's queue
 
 askCmd
   .command("post <owner/name> [lane]")
-  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Lane defaults to the origin Lane ("_repo"). Local-only unless --remote.')
+  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Lane defaults to the origin Lane ("origin"). Local-only unless --remote.')
   .option("--kind <kind>", 'Ask kind (default: "work")')
   .option("--from <agent>", 'who it\'s from, local mode only (default: "human")')
   .option("--description <text>", 'shorthand for payload { description: text } -- what kind "work" expects')
@@ -181,7 +181,7 @@ askCmd
 
 askCmd
   .command("list <owner/name> [lane]")
-  .description('show a Lane\'s full history (every ASK/ANSWER/INSIGHT posted so far) -- lane defaults to the origin Lane ("_repo").')
+  .description('show a Lane\'s full history (every ASK/ANSWER/INSIGHT posted so far) -- lane defaults to the origin Lane ("origin").')
   .action(async (slug: string, lane?: string) => {
     await askList(slug, lane);
   });
@@ -189,7 +189,7 @@ askCmd
 askCmd
   .command("claim <owner/name> <ask-id>")
   .description("claim an Ask by hand and open a new Lane for the work (prints its id) -- the manual-CLI counterpart to an agent's own claim step")
-  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "origin")')
   .option("--as <name>", "claim as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await askClaim(repo, askId, opts);
@@ -198,7 +198,7 @@ askCmd
 askCmd
   .command("answer <owner/name> <ask-id> <action>")
   .description('answer an Ask by hand -- action is "complete", "deny", "veto" (a changeset_review only, sets the Lane "vetoed"), or "vote" (a vote_request only, payload { ballot: "+1"|"+0"|"-0"|"-1" })')
-  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "origin")')
   .option("--as <name>", "answer as a managed agent instead of yourself")
   .option("--payload <json>", "raw JSON payload -- a veto's reason, a vote's ballot, a complete's result, etc.")
   .action(async (repo: string, askId: string, action: string, opts: { lane?: string; as?: string; payload?: string }) => {
@@ -208,7 +208,7 @@ askCmd
 askCmd
   .command("vote-tally <owner/name> <ask-id>")
   .description("count ballots on a vote_request and close it once every committee member has voted (and, if approved and it was a Policy change, apply it)")
-  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "origin")')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string }) => {
     await voteTally(repo, askId, opts);
@@ -220,7 +220,7 @@ askCmd
   .requiredOption("--target-agent <id>", "the Agent the report is about")
   .requiredOption("--reason <text>", "why")
   .option("--target-commit <sha>", "an already-merged commit to revert, if any")
-  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
+  .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "origin")')
   .option("--as <name>", "act as a managed agent instead of yourself (must be this Lane's coordinator)")
   .action(async (repo: string, askId: string, opts: { lane?: string; as?: string; targetAgent: string; targetCommit?: string; reason: string }) => {
     await whistleblowResolve(repo, askId, opts);

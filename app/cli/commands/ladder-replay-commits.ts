@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 import { ensureCloned, resolveRepo } from "../lib/repo.js";
 import { commitFileChanges, fileContentAtCommit, listCommitsChronological, type CommitRow, type FileChangeRow } from "../../engine/ingest.js";
 import { resolveModelBackend, type ModelBackend } from "../../engine/model.js";
-import { ask, mergeLaneLadder, proposeLane } from "../../engine/lane.js";
+import { ask, mergeLaneLadder, proposeLane, ORIGIN_LANE_ID } from "../../engine/lane.js";
 import { runWorkerLoop } from "../../engine/workqueue.js";
 import type { Rung } from "../../engine/ladder.js";
 import { REPO_RUNG_PATH } from "../../engine/ladder.js";
@@ -128,9 +128,11 @@ export async function ladderReplayCommits(slug: string, options: ReplayOptions):
   console.error(`model backend: ${model.name}`);
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
 
-  let repoLane = readLane(repo.stateDir, REPO_RUNG_PATH);
+  // ORIGIN_LANE_ID, not REPO_RUNG_PATH -- see webApp.ts's doCreateRepo
+  // for the same latent bug, found the same way.
+  let repoLane = readLane(repo.stateDir, ORIGIN_LANE_ID);
   if (!repoLane) {
-    repoLane = await proposeLane(repo.slug, { id: REPO_RUNG_PATH, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
+    repoLane = await proposeLane(repo.slug, { id: ORIGIN_LANE_ID, repo: slug, name: slug, objective: `the ${slug} repository`, scope: ["**"], proposedBy: COORDINATOR, coordinators: [COORDINATOR] });
   }
   const repoOrigin: LaneRef = { repo: slug, lane: repoLane.id };
 

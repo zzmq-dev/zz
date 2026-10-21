@@ -204,7 +204,7 @@ This is the UNGATED write path: an Owner may always use it, no vote, no review �
 zz ask claim <owner/repo> <ask-id> [--lane <id>] [--as <name>]
 ```
 
-Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its origin. Prints the new Lane's id (and, if Policy's `claim_mode.manual` is `shard`, the shard repo's own slug), which `zz repo submit` needs. `--lane` names the Lane the Ask lives in (default `_repo`).
+Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its origin. Prints the new Lane's id (and, if Policy's `claim_mode.manual` is `shard`, the shard repo's own slug), which `zz repo submit` needs. `--lane` names the Lane the Ask lives in (default `origin`).
 
 ### zz ask post
 
@@ -212,7 +212,7 @@ Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its orig
 zz ask post <owner/repo> [lane] [--kind <kind>] [--description <text>] [--decompose] [--payload <json>] [--from <agent>] [--priority <n>] [--remote] [--as <name>]
 ```
 
-Local mode by default. Posts an Ask of any kind into a Lane's queue — `lane` defaults to the origin Lane (`_repo`), the one a server-hosted repo's first Ask always needs anyway. `--description` is shorthand for a `work` payload of `{"description": "..."}`; `--decompose` (with `--description`) marks the task for splitting into independent sub-tasks instead of being implemented directly — picked up by the autonomous `zz work` loop only, not `--assist`. Higher `--priority` values sort first. `--remote` posts to a real hosted repo instead of the local backend — needed for any kind, including `work`, against a server-hosted repo (`--from` doesn't apply there; it's always the resolved `--as` identity). Replaces the retired `zz repo ask`.
+Local mode by default. Posts an Ask of any kind into a Lane's queue — `lane` defaults to the origin Lane (`origin`), the one a server-hosted repo's first Ask always needs anyway. `--description` is shorthand for a `work` payload of `{"description": "..."}`; `--decompose` (with `--description`) marks the task for splitting into independent sub-tasks instead of being implemented directly — picked up by the autonomous `zz work` loop only, not `--assist`. Higher `--priority` values sort first. `--remote` posts to a real hosted repo instead of the local backend — needed for any kind, including `work`, against a server-hosted repo (`--from` doesn't apply there; it's always the resolved `--as` identity). Replaces the retired `zz repo ask`.
 
 ### zz ask list
 
@@ -220,7 +220,7 @@ Local mode by default. Posts an Ask of any kind into a Lane's queue — `lane` d
 zz ask list <owner/repo> [lane]
 ```
 
-Prints every ASK, ANSWER, and INSIGHT in a Lane's history, oldest first — `lane` defaults to the origin Lane (`_repo`). Replaces the retired `zz repo asks`, which only ever showed the origin Lane.
+Prints every ASK, ANSWER, and INSIGHT in a Lane's history, oldest first — `lane` defaults to the origin Lane (`origin`). Replaces the retired `zz repo asks`, which only ever showed the origin Lane.
 
 ### zz ask answer
 
@@ -412,7 +412,7 @@ Proposes a Lane by hand. `--committee` is the one way to seat an explicit multi-
 zz lane grant <owner/repo> <lane-id> <principal> <role> [--as <name>]
 ```
 
-Adds `<principal>` to an EXISTING Lane's `coordinators` or `committee` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `_repo` is created the first time anything is posted to it, with its committee and coordinators hardcoded to just the repo's owner, so a Coordinator granted afterward can claim open-scope work there but can never vote or merge any of it without this.
+Adds `<principal>` to an EXISTING Lane's `coordinators` or `committee` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `origin` is created the first time anything is posted to it, with its committee and coordinators hardcoded to just the repo's owner, so a Coordinator granted afterward can claim open-scope work there but can never vote or merge any of it without this.
 
 ### zz ladder build
 

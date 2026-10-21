@@ -13,7 +13,7 @@ import type { AnswerEntry } from "../../engine/types.js";
 import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
 export interface AskAnswerOptions {
-  /** Which Lane the ask lives in -- defaults to the origin Lane, "_repo". */
+  /** Which Lane the ask lives in -- defaults to the origin Lane, "origin". */
   lane?: string;
   /** --as <name>: answer as a managed agent instead of yourself. */
   as?: string;

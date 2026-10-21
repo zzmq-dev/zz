@@ -49,7 +49,7 @@ A workstream with its own queue of [Asks](#ask) and its own history. A Lane comb
 
 ### Root Lane
 
-The long-lived Lane every repo has, with the id `_repo`. New tasks posted with `zz ask post` land here, and the root Lane's coordinator is the one who merges changes and writes the repo's [Ladder](#ladder). It never completes. [Lanes and Ladders](/docs/lanes-and-ladders/#the-root-lane).
+The long-lived Lane every repo has, with the id `origin`. New tasks posted with `zz ask post` land here, and the root Lane's coordinator is the one who merges changes and writes the repo's [Ladder](#ladder). It never completes. [Lanes and Ladders](/docs/lanes-and-ladders/#the-root-lane).
 
 ### Coordinator
 
@@ -127,7 +127,7 @@ The response to an Ask: `grant`, `deny`, or `complete`. An Answer is what change
 
 ### Policy
 
-A repo's governance settings: `visibility` (`public` or `private`), `_repo` (the rule for changing Policy itself), and `policies` (path-scoped rules for everything else — which modes apply, and to what). See [Governance](/docs/governance/#policy) and [Data format](/docs/data-format/#zz-meta-branch). Budgets and escalation rules are **planned**.
+A repo's governance settings: `visibility` (`public` or `private`), `policy_change` (the rule for changing Policy itself), and `policies` (path-scoped rules for everything else — which modes apply, and to what). See [Governance](/docs/governance/#policy) and [Data format](/docs/data-format/#zz-meta-branch). Budgets and escalation rules are **planned**.
 
 ### Tripwire
 
