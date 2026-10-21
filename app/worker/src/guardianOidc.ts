@@ -22,11 +22,25 @@ export interface GuardianIdentifier {
   domain: string;
 }
 
+const BARE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/i;
 const IDENTIFIER_RE = /^([a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?)?@([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)$/i;
 
-/** "alice@acme.com" (named) or bare "@acme.com" (that domain's own root identity) -- the same email-shaped input this login option has always meant, now routing to whichever domain was actually given instead of always zzmq.dev. */
+/**
+ * "alice@acme.com" (named) or bare "@acme.com" (that domain's own root
+ * identity) routes to whichever domain was actually given -- that
+ * domain's own authority, never assumed to be zzmq.dev just because
+ * it's missing a name part. A bare "alice", with no "@" at all, is
+ * different: zz IS zzmq.dev's own registrar, so a plain name with no
+ * domain is unambiguously one of zz's own ids -- short for
+ * "alice@zzmq.dev", not a parse failure. Typing "@zzmq.dev" or
+ * "alice@zzmq.dev" explicitly still works exactly the same either way.
+ */
 export function parseGuardianIdentifier(input: string): GuardianIdentifier | null {
-  const m = input.trim().match(IDENTIFIER_RE);
+  const trimmed = input.trim();
+  if (!trimmed.includes("@")) {
+    return BARE_NAME_RE.test(trimmed) ? { name: trimmed.toLowerCase(), domain: "zzmq.dev" } : null;
+  }
+  const m = trimmed.match(IDENTIFIER_RE);
   if (!m) return null;
   return { name: m[1] ? m[1].toLowerCase() : null, domain: m[2].toLowerCase() };
 }

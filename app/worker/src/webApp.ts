@@ -749,7 +749,7 @@ function layout(title: string, agent: Agent | null, body: string, opts: { cookie
   // Same items, same order, as the docs site's own nav (site/themes/zz-docs/fragments/header.html) --
   // Explore/Work/Docs/Source always present, then whatever's auth-dependent.
   const navHead = `<a href="/explore">Explore</a><a href="/work">Work</a><a href="/docs/">Docs</a><a href="https://github.com/zzmq-dev/zz">Source</a>`;
-  const nav = agent ? `${navHead}<a href="/${esc(agent.username)}">${esc(agent.username)}</a><a href="/logout">Log out</a>` : `${navHead}<a href="/login">Log in</a>`;
+  const nav = agent ? `${navHead}${formatAgentId(agent.username)}<a href="/logout">Log out</a>` : `${navHead}<a href="/login">Log in</a>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(title)} - zz</title>
 <style>${WEB_CSS}</style></head><body>
 <header class="topbar"><a href="/" class="brand">zz<span>_</span></a><nav class="links">${nav}</nav></header>
@@ -837,7 +837,7 @@ async function handleLogin(request: Request, env: WebEnv): Promise<Response> {
      <div class="card stack" style="max-width:320px;margin:1rem auto 0">
        <form method="post" action="/auth/guardian/start${qs}" class="stack">
          <label for="guardian-id">Sign in with did:guardian</label>
-         <input id="guardian-id" name="identifier" placeholder="alice@acme.com" required>
+         <input id="guardian-id" name="identifier" placeholder="alice, or alice@acme.com" required>
          <button class="secondary" style="width:100%;padding:.85rem 1.1rem" type="submit">Sign in</button>
        </form>
      </div>`,
@@ -1084,7 +1084,7 @@ async function handleGuardianStart(request: Request, env: WebEnv): Promise<Respo
   const parsed = parseGuardianIdentifier(raw);
   const pendingLinkSet = readPendingLink(request) !== null;
   if (!parsed) {
-    return notFoundInterstitial(`"${raw}" doesn't look like a did:guardian id -- expected something like alice@acme.com or @acme.com.`, cliNonce, pendingLinkSet);
+    return notFoundInterstitial(`"${raw}" doesn't look like a did:guardian id -- expected something like alice (your own zzmq.dev id), alice@acme.com, or @acme.com.`, cliNonce, pendingLinkSet);
   }
   const redirectUri = `${new URL(request.url).origin}/auth/callback/didguardian`;
   const state = shortId("state");
