@@ -14,6 +14,15 @@ import { withBackend } from "../../engine/backend.js";
 import { ALL_TOOLS } from "../../agent/tools.js";
 import { createCloudflareBackend } from "./cloudflareBackend.js";
 import type { ArtifactsNamespace } from "./cloudflareGitBackend.js";
+import type { Lane } from "../../engine/types.js";
+
+// The three tool names that can change a Lane's own cached fields
+// (name/objective/status/origin never change after lane_propose; the
+// role lists can change again later via lane_grant/lane_revoke, or
+// directly via seedOriginLaneRolesIfUnset below). lane_get/lane_list
+// are reads; lane_add_related only touches the PARENT's related_lanes
+// array, never this Lane's own cached fields, so it's not here.
+const LANE_SYNCING_TOOLS = new Set(["lane_propose", "lane_grant", "lane_revoke"]);
 
 interface Env {
   ARTIFACTS: ArtifactsNamespace;
@@ -51,7 +60,41 @@ export class MaintainerDO extends DurableObject<Env> {
     }
     const tool = ALL_TOOLS.find((t) => t.name === name);
     if (!tool) throw new Error(`no such tool: ${name}`);
-    return withBackend(this.backend, () => tool.execute(args));
+    const result = await withBackend(this.backend, () => tool.execute(args));
+    if (LANE_SYNCING_TOOLS.has(name)) await this.syncLaneCache(result as Lane);
+    return result;
+  }
+
+  /**
+   * Keeps the D1 lanes/lane_principals cache (worker/migrations/0018)
+   * current -- the single chokepoint every lane-mutating call passes
+   * through regardless of caller (web app, CLI, TUI), so this is the
+   * one place that needs to know about the cache at all. Resolves this
+   * DO's own artifactsName to a repo_slug once per call rather than
+   * threading repo_slug through every call site's own signature --
+   * cheap (an indexed unique lookup), and self-contained here. A repo
+   * created before this migration landed (or one somehow missing from
+   * `repos` entirely) is silently skipped rather than throwing: the
+   * cache is a derived index, never the source of truth, so a gap in
+   * it is never a reason to fail the real operation that already
+   * succeeded above.
+   */
+  private async syncLaneCache(lane: Lane): Promise<void> {
+    const repoRow = await this.env.DB.prepare("SELECT slug FROM repos WHERE artifacts_name = ?").bind(this.artifactsName).first<{ slug: string }>();
+    if (!repoRow) return;
+    const now = new Date().toISOString();
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        "INSERT INTO lanes (repo_slug, lane_id, name, objective, status, origin_repo_slug, origin_lane_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT (repo_slug, lane_id) DO UPDATE SET name = excluded.name, objective = excluded.objective, status = excluded.status, origin_repo_slug = excluded.origin_repo_slug, origin_lane_id = excluded.origin_lane_id, updated_at = excluded.updated_at",
+      ).bind(repoRow.slug, lane.id, lane.name, lane.objective, lane.status, lane.origin?.repo ?? null, lane.origin?.lane ?? null, now),
+      this.env.DB.prepare("DELETE FROM lane_principals WHERE repo_slug = ? AND lane_id = ?").bind(repoRow.slug, lane.id),
+      ...(["owner", "coordinator", "viewer", "committee"] as const).flatMap((role) =>
+        lane[role === "owner" ? "owners" : role === "committee" ? "committee" : role === "coordinator" ? "coordinators" : "viewers"].map((principal) =>
+          this.env.DB.prepare("INSERT INTO lane_principals (repo_slug, lane_id, principal, role) VALUES (?, ?, ?, ?)").bind(repoRow.slug, lane.id, principal, role),
+        ),
+      ),
+    ]);
   }
 
   /**
@@ -73,13 +116,16 @@ export class MaintainerDO extends DurableObject<Env> {
    * anyone, including this same code calling it again.
    */
   async seedOriginLaneRolesIfUnset(laneId: string, owners: string[], coordinators: string[], viewers: string[]): Promise<void> {
-    await withBackend(this.backend, () =>
+    let seeded = false;
+    const lane = await withBackend(this.backend, () =>
       this.backend.withLane(this.artifactsName, laneId, (lane) => {
         if (lane.owners.length > 0) return;
+        seeded = true;
         lane.owners = owners;
         for (const c of coordinators) if (!lane.coordinators.includes(c)) lane.coordinators.push(c);
         lane.viewers = viewers;
       }),
     );
+    if (seeded) await this.syncLaneCache(lane);
   }
 }
