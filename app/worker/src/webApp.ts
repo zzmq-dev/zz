@@ -2404,6 +2404,24 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
            <button type="submit" class="secondary" onclick="${esc(`return confirm(${JSON.stringify(reissueWarning)})`)}">Regenerate</button>
          </form></li>`
     : "";
+  // The one set of facts about a Guardian ID that are always real,
+  // live, publicly resolvable data -- works for any did:guardian
+  // identity, local or on a foreign registrar, not just zzmq.dev's own
+  // (unlike the login-secret row above, which only makes sense for one
+  // zz itself can act on). Key rotation/other guardian-management
+  // actions are explicitly not here yet -- a real, separate feature
+  // needing its own design, not added speculatively alongside this.
+  const meGuardianParsed = splitGuardianDid(me.username);
+  let guardianIdInfoHtml = "";
+  if (meGuardianParsed) {
+    const wellKnownPath = `/.well-known/guardian/${meGuardianParsed.name ?? "_"}`;
+    const guardians = await currentGuardians(env, meGuardianParsed.name, meGuardianParsed.domain);
+    const guardiansHtml = guardians === null ? '<span class="muted">(couldn\'t load)</span>' : guardians.length === 0 ? '<span class="muted">none -- self-sovereign</span>' : guardians.map(formatAgentId).join(", ");
+    guardianIdInfoHtml = `<li class="row stack">
+        <div>Guardian ID <code>${esc(me.username)}</code> -- <a href="https://${esc(meGuardianParsed.domain)}${wellKnownPath}">DID document</a></div>
+        <div class="muted">Guardians: ${guardiansHtml}</div>
+      </li>`;
+  }
 
   // One flat, unified list across you and every agent you manage --
   // no more "your tokens" vs "managed agents' tokens" as two separate
@@ -2440,7 +2458,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
      ${card(
        "Linked logins",
        `<p class="hint">Connecting a login here binds it to your existing zzmq.dev id -- it never creates a separate one.</p>
-        <ul class="list">${linkedLoginsHtml}${guardianSecretRowHtml}</ul>`,
+        <ul class="list">${linkedLoginsHtml}${guardianSecretRowHtml}${guardianIdInfoHtml}</ul>`,
      )}
 
      ${card(
