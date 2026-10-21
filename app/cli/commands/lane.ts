@@ -81,7 +81,12 @@ export async function laneDelete(slug: string, opts: { yes?: boolean; as?: strin
   }
 }
 
-export async function laneGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
+// Named access-grant, not grant, to stay distinct from `zz lane grant`
+// (lane-grant.ts) -- that one adds a coordinator/committee member to
+// one specific, already-proposed Lane; this one sets the origin-tier
+// Role (owner/coordinator/contributor/viewer, #41) that every Lane in
+// the whole thing inherits from.
+export async function laneAccessGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
   principal = resolveMe(principal);
   const identity = await resolveIdentity({ as: opts.as });

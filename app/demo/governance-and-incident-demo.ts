@@ -34,7 +34,7 @@ async function createAgent(displayName: string): Promise<string> {
 // -- the agent usernames createAgent() hands back always do, so this
 // is just resolveIdentity by another name, not a re-derivation.
 async function identityFor(username: string): Promise<ResolvedIdentity> {
-  return resolveIdentity(username);
+  return resolveIdentity({ as: username });
 }
 
 async function main() {

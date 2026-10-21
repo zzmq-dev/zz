@@ -75,7 +75,7 @@ export function resolveRepo(slug: string): ResolvedRepo {
 }
 
 // TEMPORARY, pending a Cloudflare fix -- same reasoning as
-// cli/commands/repo.ts's repoClone, see its own comment and the case
+// cli/commands/lane.ts's laneCheckout, see its own comment and the case
 // study it links (site/content/docs/case-studies/
 // git-incremental-fetch-sideband-error): any `have`-line negotiation
 // against a repo with real history can corrupt the response

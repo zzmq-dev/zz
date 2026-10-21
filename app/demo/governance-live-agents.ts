@@ -75,10 +75,10 @@ async function main() {
   const dan = await createAgent(`dan-${runId}`);
   console.log(`   ${alice}, ${bob}, ${mallory}, ${dan}`);
 
-  const aliceId = await resolveIdentity(alice);
-  const bobId = await resolveIdentity(bob);
-  const malloryId = await resolveIdentity(mallory);
-  const danId = await resolveIdentity(dan);
+  const aliceId = await resolveIdentity({ as: alice });
+  const bobId = await resolveIdentity({ as: bob });
+  const malloryId = await resolveIdentity({ as: mallory });
+  const danId = await resolveIdentity({ as: dan });
 
   await callRemoteTool(slug, "lane_propose", { repo: slug, id: "_repo", name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: human });
 

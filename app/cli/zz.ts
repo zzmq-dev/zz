@@ -24,10 +24,10 @@ import { review } from "./commands/review.js";
 import { login, whoami } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { agentCreate, agentToken, agentList, agentDelete } from "./commands/agent.js";
-import { repoCreate, repoList, repoGrant, repoClone, repoDelete } from "./commands/repo.js";
+import { laneCreate, laneList, laneAccessGrant, laneCheckout, laneDelete } from "./commands/lane.js";
 import { credentialHelper } from "./commands/credential-helper.js";
-import { repoSubmit } from "./commands/repo-submit.js";
-import { repoPolicyShow, repoPolicySet } from "./commands/repo-policy.js";
+import { laneSubmit } from "./commands/lane-submit.js";
+import { lanePolicyShow, lanePolicySet } from "./commands/lane-policy.js";
 import { askClaim } from "./commands/ask-claim.js";
 import { askAnswer } from "./commands/ask-answer.js";
 import { askList } from "./commands/ask-list.js";
@@ -156,7 +156,7 @@ lane
 
 lane
   .command("grant <repo> <lane-id> <principal> <role>")
-  .description('add an agent to an EXISTING Lane\'s coordinators or committee -- role is "coordinator" or "committee". Needs to already be a coordinator of that Lane yourself; a repo-level Role grant (zz repo grant) has no effect on a Lane\'s own authority by itself')
+  .description('add an agent to an EXISTING Lane\'s coordinators or committee -- role is "coordinator" or "committee". Needs to already be a coordinator of that Lane yourself; an origin-tier Role grant (zz lane access-grant) has no effect on a Lane\'s own authority by itself')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, laneId: string, principal: string, role: string, opts: { as?: string }) => {
     await laneGrantCmd(repo, laneId, principal, role, opts);
@@ -355,7 +355,7 @@ program
 
 program
   .command("credential-helper <action>")
-  .description('git\'s documented credential-helper protocol (get/store/erase) over stdin/stdout -- configured automatically by `zz repo clone` (credential.https://<host>.helper), not meant to be run by hand. Mints a fresh, short-lived token per "get", revoking whatever it minted last time -- the secret never gets written into the repo\'s own git config.')
+  .description('git\'s documented credential-helper protocol (get/store/erase) over stdin/stdout -- configured automatically by `zz lane checkout` (credential.https://<host>.helper), not meant to be run by hand. Mints a fresh, short-lived token per "get", revoking whatever it minted last time -- the secret never gets written into the checkout\'s own git config.')
   .action(async (action: string) => {
     await credentialHelper(action);
   });
@@ -391,69 +391,75 @@ agentCmd
     await agentDelete(username, { yes: opts.yes });
   });
 
-const repoCmd = program.command("repo").description("manage repos on the remote backend -- full parity with /profile and /explore");
+// Folded onto the pre-existing `lane` command group (declared above,
+// log/propose/grant) rather than a separate top-level group -- #43/the
+// broader "repo is never a user-facing noun" direction retires `zz
+// repo *` entirely. `grant` already means something specific here
+// (adding a coordinator/committee member to one Lane, lane-grant.ts)
+// so the origin-tier owner/coordinator/contributor/viewer Role grant
+// below is named access-grant instead, not a second `grant`.
 
-repoCmd
+lane
   .command("create <name>")
-  .description("create a repo, owned by you or an Agent you created")
-  .option("--description <text>", "repo description")
+  .description("create a Lane, owned by you or an Agent you created")
+  .option("--description <text>", "description")
   .option("--owner <username>", "owning Agent's username (default: you)")
   .action(async (name: string, opts: { description?: string; owner?: string }) => {
-    await repoCreate(name, { description: opts.description, ownerUsername: opts.owner });
+    await laneCreate(name, { description: opts.description, ownerUsername: opts.owner });
   });
 
-repoCmd
+lane
   .command("list [query]")
-  .description("list recent repos, or search by name/owner/description if a query is given")
+  .description("list recent Lanes, or search by name/owner/description if a query is given")
   .action(async (query?: string) => {
-    await repoList(query);
+    await laneList(query);
   });
 
-repoCmd
-  .command("grant <owner/repo> <principal> <role>")
-  .description("grant an Agent (by its Guardian ID, or a bare name/name@domain -- see --as) a repo Role -- owner, coordinator, contributor, or viewer. Needs Owner on the repo yourself.")
-  .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
+lane
+  .command("access-grant <owner/name> <principal> <role>")
+  .description("grant an Agent (by its Guardian ID, or a bare name/name@domain -- see --as) an origin-tier Role -- owner, coordinator, contributor, or viewer. Needs Owner yourself.")
+  .option("--as <name>", "act as a managed agent instead of yourself -- for granting a Role on something a managed agent you created owns directly (e.g. via fork-promotion), not you")
   .action(async (slug: string, principal: string, role: string, opts: { as?: string }) => {
-    await repoGrant(slug, principal, role, { as: opts.as });
+    await laneAccessGrant(slug, principal, role, { as: opts.as });
   });
 
-repoCmd
-  .command("clone <owner/repo> [dir]")
-  .description("git clone a repo with your zz login token embedded automatically -- no need to paste it into a username/password prompt by hand")
+lane
+  .command("checkout <owner/name> [dir]")
+  .description("git checkout, with your zz login token embedded automatically -- no need to paste it into a username/password prompt by hand")
   .action(async (slug: string, dir?: string) => {
-    await repoClone(slug, dir);
+    await laneCheckout(slug, dir);
   });
 
-repoCmd
-  .command("delete <owner/repo>")
-  .description("permanently delete a repo -- real git history, Ladder, Lanes, all of it. Needs Owner on the repo yourself.")
-  .option("-y, --yes", "skip the type-the-slug-to-confirm prompt")
-  .option("--as <name>", "act as a managed agent instead of yourself -- for deleting a repo a managed agent you created owns directly (e.g. via fork-promotion), not you")
+lane
+  .command("delete <owner/name>")
+  .description("permanently delete a Lane and everything backing it -- real git history, Ladder, every other Lane in it. Needs Owner yourself.")
+  .option("-y, --yes", "skip the type-the-name-to-confirm prompt")
+  .option("--as <name>", "act as a managed agent instead of yourself -- for deleting something a managed agent you created owns directly (e.g. via fork-promotion), not you")
   .action(async (slug: string, opts: { yes?: boolean; as?: string }) => {
-    await repoDelete(slug, { yes: opts.yes, as: opts.as });
+    await laneDelete(slug, { yes: opts.yes, as: opts.as });
   });
 
-const repoPolicyCmd = repoCmd.command("policy").description("read or change a repo's Policy -- what it takes to merge a change, and to change Policy itself");
+const lanePolicyCmd = lane.command("policy").description("read or change a Lane's Policy -- what it takes to merge a change, and to change Policy itself");
 
-repoPolicyCmd
-  .command("show <owner/repo>")
-  .description("print the repo's current Policy document (\"policy_change\", \"policies\", \"claim_mode\", \"retention\", and \"conflict_policies\")")
+lanePolicyCmd
+  .command("show <owner/name>")
+  .description("print the current Policy document (\"policy_change\", \"policies\", \"claim_mode\", \"retention\", and \"conflict_policies\")")
   .action(async (slug: string) => {
-    await repoPolicyShow(slug);
+    await lanePolicyShow(slug);
   });
 
-repoPolicyCmd
-  .command("set <owner/repo>")
+lanePolicyCmd
+  .command("set <owner/name>")
   .description(
     'change Policy directly -- only works for an Owner, or for anyone Coordinator+ when whatever\'s being changed is itself under a "direct" rule; anything stricter refuses and tells you to post a changeset_review/vote_request instead',
   )
-  .option("--repo-rule <mode>", 'sets "policy_change" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
+  .option("--lane-rule <mode>", 'sets "policy_change" (the rule for changing Policy itself) -- direct, self_review, other_approver, vote_quorum, or vote_expiring')
   .option("--path <glob>", "with --mode: upserts one \"policies\" entry for this path glob")
   .option("--mode <mode>", "the mode for --path -- direct, self_review, other_approver, vote_quorum, or vote_expiring")
   .option("--expiry-hours <n>", "vote_expiring only -- how long the vote stays open before lazy consensus can close it (default: 72)")
   .option("--claim-mode-manual <mode>", 'with --claim-mode-autonomous: sets "claim_mode" -- which claim path `zz ask claim` takes -- "in_place" or "shard"')
   .option("--claim-mode-autonomous <mode>", 'with --claim-mode-manual: sets "claim_mode" -- which claim path the autonomous work loop takes -- "in_place" or "shard"')
-  .option("--retention-mode <mode>", 'sets "retention" -- what happens to a completed work Lane\'s own shard once it goes terminal -- "keep" (default), "dispose" (DESTRUCTIVE: deletes it immediately), or "ttl" (schema only, not yet enforced -- behaves like "keep" today)')
+  .option("--retention-mode <mode>", 'sets "retention" -- what happens to a completed work Lane\'s own backing store once it goes terminal -- "keep" (default), "dispose" (DESTRUCTIVE: deletes it immediately), or "ttl" (schema only, not yet enforced -- behaves like "keep" today)')
   .option("--retention-ttl-hours <n>", "ttl only -- hours after the Lane goes terminal before disposal (not yet enforced)")
   .option("--conflict-path <glob>", "with --conflict-mode: upserts one \"conflict_policies\" entry for this path glob -- what happens when two changes collide, independent of --path/--mode (which govern approving a clean change)")
   .option("--conflict-mode <mode>", "the mode for --conflict-path -- first_wins (default)/coordinator_decides/vote/escalate_human/mediate, all implemented")
@@ -462,7 +468,7 @@ repoPolicyCmd
     async (
       slug: string,
       opts: {
-        repoRule?: string;
+        laneRule?: string;
         path?: string;
         mode?: string;
         expiryHours?: string;
@@ -475,17 +481,17 @@ repoPolicyCmd
         as?: string;
       },
     ) => {
-      await repoPolicySet(slug, opts);
+      await lanePolicySet(slug, opts);
     },
   );
 
-repoCmd
-  .command("submit <owner/repo> <lane-id> <ask-id>")
-  .description("the human-contributor path: from inside your local clone, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated")
+lane
+  .command("submit <owner/name> <lane-id> <ask-id>")
+  .description("the human-contributor path: from inside your local checkout, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated")
   .option("--message <text>", "commit message / summary (default: a generated one naming the staged files)")
   .option("--as <name>", 'submit as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
   .action(async (slug: string, laneId: string, askId: string, opts: { message?: string; as?: string }) => {
-    await repoSubmit(slug, laneId, askId, { message: opts.message, as: opts.as });
+    await laneSubmit(slug, laneId, askId, { message: opts.message, as: opts.as });
   });
 
 // Any command whose action handler throws (readConfig's "no usable
