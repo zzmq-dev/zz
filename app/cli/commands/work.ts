@@ -383,8 +383,8 @@ export async function work(options: WorkOptions): Promise<void> {
   // every single tool call whose actor/from isn't the bearer token's
   // own agent id, so this used to fail closed, silently, for anyone
   // who hadn't hand-edited config.json to match their login.
-  const config = readConfig({ agent: options.agent ?? identity?.username, repos: options.repos });
-  const resolvedRepos = config.repos.map((slug) => resolveRepo(slug));
+  const config = readConfig({ agent: options.agent ?? identity?.username, lanes: options.repos });
+  const resolvedRepos = config.lanes.map((slug) => resolveRepo(slug));
 
   for (const r of resolvedRepos) {
     if (useRemote) {
