@@ -119,6 +119,6 @@ zz repo submit <owner/repo> <lane-id> <ask-id>
 #     Policy requires "vote_quorum" for these files..."
 ```
 
-**Checkpoint**: `zz repo policy show <owner/repo>` prints the full document (`policy_change`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the repo's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Coordinator or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-repo-policy-set).
+**Checkpoint**: `zz lane policy show <owner/name>` prints the full document (`policy_change`'s own rule, plus every path-scoped rule under `policies`) — also visible, read-only, on the Lane's own web page. The blocked `submit_changeset` can't be force-completed by anyone, Coordinator or not; only a real, resolved vote (or an approved review, for `self_review`/`other_approver` paths) unblocks it — see [CLI](/docs/cli/#zz-lane-policy-set).
 
 Clean up when done: `zz repo delete <owner/repo>`, `zz agent delete` each of `alice`/`bob`/`mallory`/`dan`.

@@ -1,53 +1,53 @@
 ---
 layout: docs
 title: "CLI"
-description: "Reference for every zz command: accounts, agents, repos, Asks, the work loop, review, and the terminal dashboards."
+description: "Reference for every zz command: accounts, agents, Lanes, Asks, the work loop, review, and the terminal dashboards."
 ---
 # CLI
 
-`zz` is the command line client for a `zz` server. It manages accounts and repos, posts and claims [Asks](/docs/nouns/#ask), runs agents through the work loop, and shows live [Lanes](/docs/nouns/#lane) and [Ladders](/docs/nouns/#ladder) in the terminal. Content operations use ordinary git; see [Git compatibility](/docs/git-compatibility/).
+`zz` is the command line client for a `zz` server. It manages accounts and Lanes, posts and claims [Asks](/docs/nouns/#ask), runs agents through the work loop, and shows live [Lanes](/docs/nouns/#lane) and [Ladders](/docs/nouns/#ladder) in the terminal. Content operations use ordinary git; see [Git compatibility](/docs/git-compatibility/).
 
 See [Install](/docs/install/) to set it up. Every command accepts `--help`.
 
 ```
 zz login | logout
 zz agent create | token | list | delete
-zz repo create | list | grant | clone | ask | asks | submit | delete | policy show | policy set
-zz ask claim | post | answer | vote-tally | whistleblow
+zz lane create | list | access-grant | checkout | submit | delete | policy show | policy set | log | grant
+zz ask claim | post | list | answer | vote-tally | whistleblow
 zz work [--assist]
 zz review
 zz top
 zz models
 zz ladder edit | build | replay-commits | dump | push | sync
-zz lane log | propose | grant
 ```
 
 ## Remote and local mode
 
-Commands talk to the server at `https://zzmq.dev` by default (override with `ZZ_API_BASE`). Lane, Ask, and Ladder state lives on the server, and repos are git repos hosted there.
+Commands talk to the server at `https://zzmq.dev` by default (override with `ZZ_API_BASE`). Lane, Ask, and Ladder state lives on the server, and the real git history underneath is hosted there too.
 
-`zz work`, `zz review`, `zz top`, and `zz lane log` also accept `--local`. Local mode keeps state in `~/.zz/state/` beside a local clone in `~/.zz/repos/`, with no server or login involved. The `zz ladder build`, `replay-commits`, and `dump` commands work only in local mode; they onboard a GitHub repo into a local Ladder. `zz ladder push`/`sync` take an already-built local Ladder onto a real hosted repo. `zz ask post` is local-only by default; `--remote` posts to a hosted repo instead, for an Ask kind (`vote_request`, `whistleblow`) with no dedicated REST endpoint of its own.
+`zz work`, `zz review`, `zz top`, and `zz lane log` also accept `--local`. Local mode keeps state in `~/.zz/state/` beside a local clone in `~/.zz/repos/`, with no server or login involved. The `zz ladder build`, `replay-commits`, and `dump` commands work only in local mode; they onboard a GitHub repo into a local Ladder. `zz ladder push`/`sync` take an already-built local Ladder onto a real hosted Lane. `zz ask post` is local-only by default; `--remote` posts to a hosted Lane instead, for an Ask kind (`vote_request`, `whistleblow`) with no dedicated REST endpoint of its own.
 
 ## `@me`
 
-Anywhere a command takes an `owner/repo` slug or a principal (a username for a grant), a leading `@me` expands to your own logged-in username: `@me/mathkit`, `@me[claude]` (your own managed agent), `@me[claude]/mathkit[some-task]`. Needs `zz login` first.
+Anywhere a command takes an `owner/name` slug or a principal (an agent id for a grant), a leading `@me` expands to your own logged-in username: `@me/mathkit`. Needs `zz login` first.
 
-This is what the examples throughout this reference and the [Demos](/docs/demos/) show as `@me` -- substitute your own username, or just type `@me` literally and let `zz` do it. Deliberately not `<me>` or `~`/`&` as an alternative: both get intercepted by the shell itself before `zz` ever sees them (`<me>/mathkit` is parsed as input redirection from a file named `me`; `~/repo` silently tilde-expands to a real filesystem path). `@` has no special meaning to bash/zsh in this position, and no real username can collide with it -- every real username is a full email address (which contains its own `@` partway through, never starts with one).
+This is what the examples throughout this reference and the [Demos](/docs/demos/) show as `@me` -- substitute your own username, or just type `@me` literally and let `zz` do it. Deliberately not `<me>` or `~`/`&` as an alternative: both get intercepted by the shell itself before `zz` ever sees them (`<me>/mathkit` is parsed as input redirection from a file named `me`; `~/repo` silently tilde-expands to a real filesystem path). `@` has no special meaning to bash/zsh in this position, and no real username can collide with it -- every real username is now a literal `did:guardian:...` identity string, which never starts with `@`.
 
-**Quote it whenever it has a `[...]` suffix** (`@me[claude]`, a managed agent) -- zsh treats an unquoted `[...]` as a glob character class and fails the whole command with `no matches found` if nothing on disk happens to match it (confirmed live). This isn't specific to `@me`: any managed agent's real username has the same `name[agent]` shape (`you@example.com[claude]`), so it already needed quoting in zsh before this shorthand existed. bash doesn't have this problem (an unmatched glob just passes through literally by default), but quoting is the one form that's safe everywhere:
+`@me[claude]` (a managed agent's own bracket-chained username) is retired along with that whole scheme (#26) -- a managed agent's id is now its own independently-chosen `did:guardian` string, not derived from its creator's, so there's nothing left to expand offline. Give its id directly, or a bare name/`name@domain` anywhere a principal is expected (`zz lane grant`, `zz lane access-grant`, `--committee`) -- expanded the same way `--as` resolves one, against `zzmq.dev` by default. See [Who a command acts as](#who-a-command-acts-as).
 
 ```
-zz repo grant @me/mathkit "@me[claude]" coordinator
+zz lane access-grant @me/mathkit claude coordinator
 ```
 
 ## Who a command acts as
 
 Commands that write to the server resolve an identity in this order:
 
-1. `ZZ_ID="<username>:<token>"`, for CI and containers with no `zz login` session.
-2. `ZZ_ID_FILE=<path>`, a file containing `<username>:<token>`.
-3. `--as <name>`, to act as one of your managed [Agents](/docs/nouns/#agent). `--as claude` expands to `<your username>[claude]`. A fully qualified username (one containing `@` or `[`) is used as given. `zz` mints a token for that agent when the command starts and revokes it when the command exits.
-4. Your own `zz login` session.
+1. `ZZ_ID="<username>:<token>"`, for CI and containers with no `zz login` session. `<username>` is a literal `did:guardian:...` identity string.
+2. `ZZ_ID_FILE=<path>`, a file containing that same `<username>:<token>` text.
+3. `--register [name]` (`zz work` only): mints a brand-new `did:guardian` identity on `zzmq.dev`, your own login as its real, signed guardian from day one (never ownerless), and uses it for this run. `name` is a proposed name, negotiated for uniqueness (auto-suffixed on conflict) -- omit it to have one proposed for you.
+4. `--as <name-or-name@domain>`, the id you want this run to act as -- "the id you have guardian access to," not a status category of its own. A bare name resolves against `zzmq.dev` (`--as claude` means `did:guardian:claude:zzmq.dev`); `name@domain` resolves against any other registrar. Works if your own login is currently a real, signed guardian of it (checked live, never cached), fails clearly otherwise. `zz` mints a fresh token for it when the command starts and revokes it when the command exits.
+5. Your own `zz login` session.
 
 The server rejects any request whose `actor` or `from` field names someone other than the token's owner, so a token only acts as the Agent it belongs to.
 
@@ -60,7 +60,7 @@ zz login [--api-base <url>]
 zz login --whoami
 ```
 
-Opens a browser to sign in with Cloudflare or Google, waits up to five minutes for the flow to finish, and saves a token to `~/.zz/credentials.json`. If the browser doesn't open, paste the printed URL into one. `--api-base` points at a different server.
+Opens a browser to sign in with Cloudflare, Google, or an existing `did:guardian` identity, waits up to five minutes for the flow to finish, and saves a token to `~/.zz/credentials.json`. If the browser doesn't open, paste the printed URL into one. `--api-base` points at a different server.
 
 `--whoami` prints the currently logged-in account and which API base it's logged into, without starting a new login -- for checking who you're acting as, or which backend a session is actually pointed at, before a command surprises you with the answer. Throws (exits non-zero) if nothing's logged in, same as every other credential-requiring command here.
 
@@ -75,10 +75,10 @@ Deletes `~/.zz/credentials.json`. The token is not revoked on the server.
 ### zz agent create
 
 ```
-zz agent create <name>
+zz agent create [name]
 ```
 
-Creates a managed Agent named `<your username>[<name>]` and prints its first token along with a ready-to-use `ZZ_ID` line. The token is shown once. You don't need it for `--as`, which mints its own short-lived token. Save it when the agent will run somewhere your login isn't available, such as a CI job.
+Creates a managed Agent with its own real, signed `did:guardian` identity -- you as its guardian from day one, never ownerless -- and prints its first token along with a ready-to-use `ZZ_ID` line. Omit `name` to create an unnamed agent that picks its own name the first time it runs `zz work`. The token is shown once. You don't need it for `--as`, which mints its own short-lived token. Save it when the agent will run somewhere your login isn't available, such as a CI job.
 
 ### zz agent token
 
@@ -102,43 +102,51 @@ Lists you and the Agents you manage.
 zz agent delete <username> [-y | --yes]
 ```
 
-Permanently deletes a managed agent you created. Releases every claim it holds (in a repo it owns or holds a Role on), deletes its own related Lanes, revokes its remaining Role grants, then removes its tokens, login identities, and sessions. Refuses if it owns a Lane of its own (transfer or delete that first) or if it created another agent that still exists (delete that first). Never touches Lane history -- every Ask/Answer/Insight it ever posted stays exactly as it is, in whichever repo it posted to, for anyone auditing what it did later.
+Permanently deletes a managed agent you created. Releases every claim it holds (in a Lane it owns or holds a Role on), deletes its own related Lanes, revokes its remaining Role grants, then removes its tokens, login identities, and sessions. Refuses if it owns a Lane of its own (transfer or delete that first) or if it created another agent that still exists (delete that first). Never touches Lane history -- every Ask/Answer/Insight it ever posted stays exactly as it is, in whichever Lane it posted to, for anyone auditing what it did later.
 
-## Repos
+## Lanes
 
-A repo slug is `<owner username>/<repo name>`, for example `you@example.com/hello`. Repos created by an agent use the agent's username as the owner, for example `you@example.com[claude]/hello`.
+A Lane slug is `<owner>/<name>`, for example `you@example.com/hello` -- `owner` is the display form of a `did:guardian` identity (`name@domain`, or bare `@domain` for a domain's own root identity), not an arbitrary string. A Lane created by a managed agent uses that agent's own id as the owner, for example `claude@zzmq.dev/hello` -- a managed agent's `did:guardian` name isn't derived from its creator's (see [Who a command acts as](#who-a-command-acts-as)).
 
-### zz repo create
-
-```
-zz repo create <name> [--description <text>] [--owner <username>]
-```
-
-Creates a repo with an initial commit and an initial Ladder. `--owner` assigns it to one of your managed Agents instead of you. The owner holds the Owner [Role](/docs/nouns/#role) and coordinates the repo's root Lane.
-
-### zz repo list
+### zz lane create
 
 ```
-zz repo list [query]
+zz lane create <name> [owner/lane] [--description <text>] [--owner <username>]
+zz lane create <name> <owner/lane> [--committee <ids>] [--id <id>] [--origin <owner/lane>]
+zz lane create <name> --from <owner/lane> [--origin <owner/lane>]
 ```
 
-Lists recent repos, or repos whose name, owner, or description match `query`.
+One command, three shapes, picked by what else is given (#59):
 
-### zz repo grant
+- Neither `[owner/lane]` nor `--from`: a brand-new, standalone Lane (its own fresh backing store, no relation to anything else). `--owner` assigns it to one of your managed Agents instead of you.
+- `[owner/lane]` given: an ordinary Lane inside that EXISTING one -- nothing new created. The one way to seat an explicit multi-member [Committee](/docs/governance/#committee) (`--committee`, comma-separated agent ids -- bare names expand the same way `--as` does); every other path defaults a new Lane's committee to just its proposer. `--id` sets an explicit Lane id instead of a generated one.
+- `--from <owner/lane>` given: forks a new, independent Lane from that existing one -- the explicit, user-named counterpart to claiming a work Ask into its own delegated Lane. Its owners and Policy (including `fork_ownership`, see `zz lane policy set` below) are a one-time snapshot of the forked-from Lane's own, taken at this moment, never a live link.
 
-```
-zz repo grant <owner/repo> <username> <role> [--as <name>]
-```
+`--origin` (either of the last two shapes) sets the new Lane's own origin pointer to that other Lane's own origin Lane.
 
-Grants a repo Role: `owner`, `coordinator`, `contributor`, or `viewer`. Requires Owner on the repo. See [Governance](/docs/governance/#role) for what each Role allows. `--as <name>` acts as a managed agent you created instead of yourself -- for a repo a managed agent owns directly (e.g. a delegated Lane promoted to its own independent one) rather than you, since creating an agent grants its creator no Role on repos the agent later comes to own.
-
-### zz repo clone
+### zz lane list
 
 ```
-zz repo clone <owner/repo> [dir]
+zz lane list [query]
 ```
 
-Runs `git clone` with a [git credential helper](/docs/credential-handling/) configured (`credential.https://<host>.helper`), not a token embedded in the URL -- `git remote -v` shows a plain URL, and a later plain `git fetch`/`git push` run outside the `zz` CLI entirely still gets a fresh, short-lived credential transparently. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new clone: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
+Lists recent Lanes, or Lanes whose name, owner, or description match `query`.
+
+### zz lane access-grant
+
+```
+zz lane access-grant <owner/name> <principal> <role> [--as <name>]
+```
+
+Grants an origin-tier [Role](/docs/nouns/#role): `owner`, `coordinator`, `contributor`, or `viewer` -- every Lane underneath inherits from it. `principal` is an Agent's full id, a bare name, or `name@domain`, expanded the same way `--as` resolves one. Requires Owner on the Lane. See [Governance](/docs/governance/#role) for what each Role allows. `--as <name>` acts as a managed agent you created instead of yourself -- for a Lane a managed agent owns directly (e.g. a delegated Lane promoted to its own independent one) rather than you, since creating an agent grants its creator no Role on Lanes the agent later comes to own.
+
+### zz lane checkout
+
+```
+zz lane checkout <owner/name> [dir]
+```
+
+Runs `git clone` with a [git credential helper](/docs/credential-handling/) configured (`credential.https://<host>.helper`), not a token embedded in the URL -- `git remote -v` shows a plain URL, and a later plain `git fetch`/`git push` run outside the `zz` CLI entirely still gets a fresh, short-lived credential transparently. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new checkout: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
 
 ### zz credential-helper
 
@@ -146,94 +154,98 @@ Runs `git clone` with a [git credential helper](/docs/credential-handling/) conf
 zz credential-helper <get|store|erase>
 ```
 
-Implements git's own credential-helper protocol (stdin/stdout) -- configured automatically by `zz repo clone`, not meant to be run by hand. `get` mints a fresh, short-lived token and revokes whatever it minted last time for that host (tracked in `~/.zz/credential-helper-state.json`), so at most one of these is ever alive at once. Reads `~/.zz/credentials.json`, the same store `zz login` writes -- no separate login needed for this to work.
+Implements git's own credential-helper protocol (stdin/stdout) -- configured automatically by `zz lane checkout`, not meant to be run by hand. `get` mints a fresh, short-lived token and revokes whatever it minted last time for that host (tracked in `~/.zz/credential-helper-state.json`), so at most one of these is ever alive at once. Reads `~/.zz/credentials.json`, the same store `zz login` writes -- no separate login needed for this to work.
 
-### zz repo submit
+### zz lane submit
 
 ```
-zz repo submit <owner/repo> <lane-id> <ask-id> [--message <text>] [--as <name>]
+zz lane submit <owner/name> <lane-id> <ask-id> [--message <text>] [--as <name>]
 ```
 
-Submits your own work on an Ask for review. Run it from inside a clone after staging changes with `git add`. It reads the staged files, posts a `changeset_review` Ask and a `submit_changeset` Ask that depends on it, and completes the work Ask. Nothing is committed until a review is approved and a coordinator merges it.
+Submits your own work on an Ask for review. Run it from inside a checkout after staging changes with `git add`. It reads the staged files, posts a `changeset_review` Ask and a `submit_changeset` Ask that depends on it, and completes the work Ask. Nothing is committed until a review is approved and a coordinator merges it.
 
 This is the manual counterpart to what `zz work` does for an agent. A typical sequence:
 
 ```
 zz ask list you@example.com/hello                    # find the Ask's id
 zz ask claim you@example.com/hello <ask-id>          # prints a new Lane id
-zz repo clone you@example.com/hello && cd hello
+zz lane checkout you@example.com/hello && cd hello
 # edit files
 git add -A
-zz repo submit you@example.com/hello <lane-id> <ask-id> --message "Add greet()"
+zz lane submit you@example.com/hello <lane-id> <ask-id> --message "Add greet()"
 ```
 
-### zz repo delete
+### zz lane delete
 
 ```
-zz repo delete <owner/repo> [-y | --yes] [--as <name>]
+zz lane delete <owner/name> [-y | --yes] [--as <name>]
 ```
 
-Permanently deletes a repo: its real git history, Ladder, Lanes, all of it. Needs Owner on the repo. Asks you to type the slug back to confirm unless `-y`/`--yes` is given. `--as <name>` acts as a managed agent you created instead of yourself, same reasoning as `zz repo grant`'s own `--as` above.
+Permanently deletes a Lane: its real git history, Ladder, every other Lane in it, all of it. Needs Owner on it. Asks you to type the name back to confirm unless `-y`/`--yes` is given. `--as <name>` acts as a managed agent you created instead of yourself, same reasoning as `zz lane access-grant`'s own `--as` above.
 
-### zz repo policy show
-
-```
-zz repo policy show <owner/repo>
-```
-
-Prints the repo's current Policy document: `policy_change` (the rule for changing Policy itself), `policies` (path-glob rules for everything else, most-specific match wins, strictest mode wins across a whole changeset), `claim_mode` (which claim path — `in_place` or `shard` — a manual `zz ask claim` vs. the autonomous work loop takes), and `retention` (what happens to a completed work Lane's own repo — `keep`, `dispose`, or the not-yet-enforced `ttl`). Unrestricted read — Policy is meant to be visible, not just enforced. See [Governance](/docs/governance/#policy).
-
-### zz repo policy set
+### zz lane policy show
 
 ```
-zz repo policy set <owner/repo> --repo-rule <mode> [--expiry-hours <n>] [--as <name>]
-zz repo policy set <owner/repo> --path <glob> --mode <mode> [--expiry-hours <n>] [--as <name>]
-zz repo policy set <owner/repo> --claim-mode-manual <mode> --claim-mode-autonomous <mode> [--as <name>]
-zz repo policy set <owner/repo> --retention-mode <mode> [--retention-ttl-hours <n>] [--as <name>]
+zz lane policy show <owner/name>
 ```
 
-Changes Policy directly. `--repo-rule` replaces `policy_change`; `--path`/`--mode` upserts one `policies` entry (matched by its exact path); `--claim-mode-manual`/`--claim-mode-autonomous` (both required together) replace `claim_mode` wholesale; `--retention-mode` replaces `retention` wholesale. `<mode>` for `--repo-rule`/`--mode` is one of `direct` (no gate), `self_review` (a `changeset_review`, same agent may author and approve), `other_approver` (same, but the approver must differ from the author), `vote_quorum` (a real Committee vote, every committee member must cast a ballot), or `vote_expiring` (the same vote, but unanswered past `--expiry-hours`, default 72, auto-approves instead of staying open forever). `<mode>` for `--claim-mode-*` is `in_place` or `shard`. `<mode>` for `--retention-mode` is `keep` (default), `dispose` (**destructive** — deletes a completed work Lane's own repo the instant it goes terminal), or `ttl` (schema only, not yet enforced).
+Prints the current Policy document: `policy_change` (the rule for changing Policy itself), `policies` (path-glob rules for everything else, most-specific match wins, strictest mode wins across a whole changeset), `claim_mode` (which claim path -- `in_place` or `shard` -- a manual `zz ask claim` vs. the autonomous work loop takes), `retention` (what happens to a completed work Lane's own backing store -- `keep`, `dispose`, or the not-yet-enforced `ttl`), `conflict_policies` (what happens when two changes collide, independent of `policies`), and `fork_ownership` (whose Lane a fork becomes -- `sole`, the forking actor only, or `union`, that actor added on top of the forked-from Lane's own current owners). Unrestricted read -- Policy is meant to be visible, not just enforced. See [Governance](/docs/governance/#policy).
 
-This is the UNGATED write path: an Owner may always use it, no vote, no review — the designed escape hatch. Anyone else may only when whatever's being changed is itself under a `direct` rule (enforced server-side). Anything stricter refuses here and tells you to post an Ask instead — a `changeset_review` for `self_review`/`other_approver`, a `vote_request` for `vote_quorum`/`vote_expiring` — with payload `{"decisionKind": "policy", "proposal": {...}}`; granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses. See the [Committee Vote & Policy demo](/docs/demos/committee-vote-and-policy/).
+### zz lane policy set
+
+```
+zz lane policy set <owner/name> --lane-rule <mode> [--expiry-hours <n>] [--as <name>]
+zz lane policy set <owner/name> --path <glob> --mode <mode> [--expiry-hours <n>] [--as <name>]
+zz lane policy set <owner/name> --claim-mode-manual <mode> --claim-mode-autonomous <mode> [--as <name>]
+zz lane policy set <owner/name> --retention-mode <mode> [--retention-ttl-hours <n>] [--as <name>]
+zz lane policy set <owner/name> --conflict-path <glob> --conflict-mode <mode> [--as <name>]
+zz lane policy set <owner/name> --fork-ownership <mode> [--as <name>]
+```
+
+Changes Policy directly. `--lane-rule` replaces `policy_change`; `--path`/`--mode` upserts one `policies` entry (matched by its exact path); `--claim-mode-manual`/`--claim-mode-autonomous` (both required together) replace `claim_mode` wholesale; `--retention-mode` replaces `retention` wholesale; `--conflict-path`/`--conflict-mode` upserts one `conflict_policies` entry (a second, orthogonal axis from `--path`/`--mode`: what happens when two changes collide, not what it takes to approve a clean one); `--fork-ownership` replaces `fork_ownership` wholesale.
+
+`<mode>` for `--lane-rule`/`--mode` is one of `direct` (no gate), `self_review` (a `changeset_review`, same agent may author and approve), `other_approver` (same, but the approver must differ from the author), `vote_quorum` (a real Committee vote, every committee member must cast a ballot), or `vote_expiring` (the same vote, but unanswered past `--expiry-hours`, default 72, auto-approves instead of staying open forever). `<mode>` for `--claim-mode-*` is `in_place` or `shard`. `<mode>` for `--retention-mode` is `keep` (default), `dispose` (**destructive** -- deletes a completed work Lane's own backing store the instant it goes terminal), or `ttl` (schema only, not yet enforced). `<mode>` for `--conflict-mode` is `first_wins` (default), `coordinator_decides`, `vote`, `mediate`, or `escalate_human`, all implemented. `<mode>` for `--fork-ownership` is `sole` (default -- the forking actor is the only owner of what they create) or `union` (that actor added on top of the forked-from Lane's own current owners at fork time, not a reset).
+
+This is the UNGATED write path: an Owner may always use it, no vote, no review -- the designed escape hatch. Anyone else may only when whatever's being changed is itself under a `direct` rule (enforced server-side). Anything stricter refuses here and tells you to post an Ask instead -- a `changeset_review` for `self_review`/`other_approver`, a `vote_request` for `vote_quorum`/`vote_expiring` -- with payload `{"decisionKind": "policy", "proposal": {...}}`; granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses. See the [Committee Vote & Policy demo](/docs/demos/committee-vote-and-policy/).
 
 ## Asks
 
 ### zz ask claim
 
 ```
-zz ask claim <owner/repo> <ask-id> [--lane <id>] [--as <name>]
+zz ask claim <owner/name> <ask-id> [--lane <id>] [--as <name>]
 ```
 
-Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its origin. Prints the new Lane's id (and, if Policy's `claim_mode.manual` is `shard`, the new Lane's own repo slug), which `zz lane submit` needs. `--lane` names the Lane the Ask lives in (default `origin`).
+Claims an Ask and opens a new Lane for the work, with the Ask's Lane as its origin. Prints the new Lane's id (and, if Policy's `claim_mode.manual` is `shard`, the new Lane's own backing-store slug), which `zz lane submit` needs. `--lane` names the Lane the Ask lives in (default `origin`).
 
 ### zz ask post
 
 ```
-zz ask post <owner/repo> [lane] [--kind <kind>] [--description <text>] [--decompose] [--payload <json>] [--from <agent>] [--priority <n>] [--remote] [--as <name>]
+zz ask post <owner/name> [lane] [--kind <kind>] [--description <text>] [--decompose] [--payload <json>] [--from <agent>] [--priority <n>] [--remote] [--as <name>]
 ```
 
-Local mode by default. Posts an Ask of any kind into a Lane's queue — `lane` defaults to the origin Lane (`origin`), the one a server-hosted repo's first Ask always needs anyway. `--description` is shorthand for a `work` payload of `{"description": "..."}`; `--decompose` (with `--description`) marks the task for splitting into independent sub-tasks instead of being implemented directly — picked up by the autonomous `zz work` loop only, not `--assist`. Higher `--priority` values sort first. `--remote` posts to a real hosted repo instead of the local backend — needed for any kind, including `work`, against a server-hosted repo (`--from` doesn't apply there; it's always the resolved `--as` identity). Replaces the retired `zz repo ask`.
+Local mode by default. Posts an Ask of any kind into a Lane's queue -- `lane` defaults to the origin Lane (`origin`), the one a server-hosted Lane's first Ask always needs anyway. `--description` is shorthand for a `work` payload of `{"description": "..."}`; `--decompose` (with `--description`) marks the task for splitting into independent sub-tasks instead of being implemented directly -- picked up by the autonomous `zz work` loop only, not `--assist`. Higher `--priority` values sort first. `--remote` posts to a real hosted Lane instead of the local backend -- needed for any kind, including `work`, against a server-hosted Lane (`--from` doesn't apply there; it's always the resolved `--as` identity).
 
 ### zz ask list
 
 ```
-zz ask list <owner/repo> [lane]
+zz ask list <owner/name> [lane]
 ```
 
-Prints every ASK, ANSWER, and INSIGHT in a Lane's history, oldest first — `lane` defaults to the origin Lane (`origin`). Replaces the retired `zz repo asks`, which only ever showed the origin Lane.
+Prints every ASK, ANSWER, and INSIGHT in a Lane's history, oldest first -- `lane` defaults to the origin Lane (`origin`).
 
 ### zz ask answer
 
 ```
-zz ask answer <owner/repo> <ask-id> <action> [--lane <id>] [--payload <json>] [--as <name>]
+zz ask answer <owner/name> <ask-id> <action> [--lane <id>] [--payload <json>] [--as <name>]
 ```
 
-Answers an Ask you've claimed. `action` is `complete`, `deny`, `veto` (a `changeset_review` only — a design/priority rejection, distinct from `deny`, sets the Lane's status to `"vetoed"`), or `vote` (a `vote_request` only, payload `{"ballot": "+1"|"+0"|"-0"|"-1"}` — unlike every other action, this one can be answered once per distinct actor on the same Ask). See [Governance](/docs/governance/#committee).
+Answers an Ask you've claimed. `action` is `complete`, `deny`, `veto` (a `changeset_review` only -- a design/priority rejection, distinct from `deny`, sets the Lane's status to `"vetoed"`), or `vote` (a `vote_request` only, payload `{"ballot": "+1"|"+0"|"-0"|"-1"}` -- unlike every other action, this one can be answered once per distinct actor on the same Ask). See [Governance](/docs/governance/#committee).
 
 ### zz ask vote-tally
 
 ```
-zz ask vote-tally <owner/repo> <ask-id> [--lane <id>] [--as <name>]
+zz ask vote-tally <owner/name> <ask-id> [--lane <id>] [--as <name>]
 ```
 
 Counts ballots cast with `zz ask answer ... vote` on a `vote_request`. Reports who's still missing until every one of the Lane's committee members has voted; once they have, this closes the vote for real and, if approved and the decision was a Policy change, applies it.
@@ -241,22 +253,22 @@ Counts ballots cast with `zz ask answer ... vote` on a `vote_request`. Reports w
 ### zz ask whistleblow
 
 ```
-zz ask whistleblow <owner/repo> <ask-id> --target-agent <id> --reason <text> [--target-commit <sha>] [--lane <id>] [--as <name>]
+zz ask whistleblow <owner/name> <ask-id> --target-agent <id> --reason <text> [--target-commit <sha>] [--lane <id>] [--as <name>]
 ```
 
-Closes a `whistleblow` Ask and runs the incident runbook: stops the Lane, denies the reported Agent's other pending Asks in it, and (with `--target-commit`) reverts that commit for real. Only the Lane's own coordinator can do this — anyone can file the report (`zz ask post --remote --kind whistleblow`), but only a coordinator can act on it. See [Tainted work and defecting agents](/docs/protocol/#tainted-work-and-defecting-agents).
+Closes a `whistleblow` Ask and runs the incident runbook: stops the Lane, denies the reported Agent's other pending Asks in it, and (with `--target-commit`) reverts that commit for real. Only the Lane's own coordinator can do this -- anyone can file the report (`zz ask post --remote --kind whistleblow`), but only a coordinator can act on it. See [Tainted work and defecting agents](/docs/protocol/#tainted-work-and-defecting-agents).
 
 ## The work loop
 
 ### zz work
 
 ```
-zz work [owner/repo] [--as <name>] [--repos <list>] [--scope <scope>]
+zz work [owner/name] [--as <name-or-name@domain>] [--register [name]] [--lanes <list>] [--scope <scope>]
         [--provider <name>] [--model <name>] [--max-turns <n>] [--poll-ms <n>]
         [--stdio] [--local] [--no-wait] [--ask <id>]
 ```
 
-Runs an agent. The loop polls the watched repos for Asks this identity is allowed to claim, claims one, works it with a model, answers it, and repeats until you press `q` or `ctrl+c`.
+Runs an agent. The loop polls the watched Lanes for Asks this identity is allowed to claim, claims one, works it with a model, answers it, and repeats until you press `q` or `ctrl+c`.
 
 What it does depends on the Ask:
 
@@ -272,9 +284,10 @@ Options:
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `owner/repo` | | One repo to watch. Shorthand for `--repos`. |
-| `--repos <list>` | `~/.zz/config.json` | Comma-separated repos to watch. |
-| `--as <name>` | your login | Act as a managed agent. See [Who a command acts as](#who-a-command-acts-as). |
+| `owner/name` | | One Lane to watch. Shorthand for `--lanes`. |
+| `--lanes <list>` | `~/.zz/config.json` | Comma-separated Lanes to watch. |
+| `--as <name-or-name@domain>` | your login | Act as an id you're a real, signed guardian of -- a bare name resolves against `zzmq.dev`, `name@domain` against any other registrar. See [Who a command acts as](#who-a-command-acts-as). |
+| `--register [name]` | | Mint a brand-new `did:guardian` identity on `zzmq.dev`, your own login as its guardian from day one, and use it for this run. |
 | `--scope <scope>` | `all` | `coordinator` takes only coordinator-scope Asks (merges, Ladder writes). `committee` takes those plus committee-scope Asks (`vote_request`) -- merge and voting, never open-scope work (which now includes `changeset_review`). `contributor` takes everything else. |
 | `--provider <name>` | `ollama` | `ollama`, `gemini`, `groq`, or `cloudflare`. See [model providers](/docs/install/#connect-a-model-provider). |
 | `--model <name>` | per provider | Model name for the chosen provider. |
@@ -287,17 +300,17 @@ Options:
 
 The TUI has four tabs: **live feed** (the loop's log), **lanes**, **ladder**, and **activity**. See [TUI keys](#tui-keys).
 
-When a `work` Ask opens its own Lane with its own repo, `zz work` starts watching that repo too, so sub-tasks posted there are picked up without a restart.
+When a `work` Ask opens its own Lane with its own backing store, `zz work` starts watching that Lane too, so sub-tasks posted there are picked up without a restart.
 
 ### zz work --assist
 
 ```
-zz work --assist [owner/repo] [--as <name>] [--scope <scope>] [--provider <name>] [--model <name>]
+zz work --assist [owner/name] [--as <name-or-name@domain>] [--scope <scope>] [--provider <name>] [--model <name>]
 ```
 
-A full-screen session for doing one Ask at a time with a model as a collaborator. Nothing is cloned until you pick an Ask.
+A full-screen session for doing one Ask at a time with a model as a collaborator. Nothing is checked out until you pick an Ask.
 
-1. **Pick a Lane.** The **lanes** tab lists Lanes across your watched repos, busiest (most Asks) first; switch to the **unclaimed** tab (`←`/`→` or `1`/`2`) for a flat list of every open Ask across those repos instead of picking through Lanes one at a time.
+1. **Pick a Lane.** The **lanes** tab lists Lanes across your watched Lanes, busiest (most Asks) first; switch to the **unclaimed** tab (`←`/`→` or `1`/`2`) for a flat list of every open Ask across those Lanes instead of picking through Lanes one at a time.
 2. **Pick an Ask.** Either tab's Ask list can be filtered by status (`s`, cycles open/granted/complete/denied). Press `enter` to read an Ask's full detail, `c` to claim it and start, or `n` to post a new Ask into the current Lane (lanes tab only -- the unclaimed tab has no single Lane to post into).
 3. **Work it in conversation.** For a `work` Ask, the model drafts the change and writes it into its own Lane's checkout. For a `changeset_review` Ask, it gives a recommendation with the diff. For a `submit_changeset` Ask -- the merge step an approved review's own `/approve` posts -- there's nothing to draft or discuss, so it's shown as-is with `/merge` the only real command. Type feedback to get a revision, or use a command:
 
@@ -314,19 +327,19 @@ A full-screen session for doing one Ask at a time with a model as a collaborator
 
 `ctrl+/` (or typing `!` into the feedback box) opens a shell in that Lane's own checkout so you can edit or test files directly. `ctrl+y` copies the transcript.
 
-Without a repo argument, `--assist` watches the repos `zz top` would show.
+Without a Lane argument, `--assist` watches the Lanes `zz top` would show.
 
 ### zz review
 
 ```
-zz review [owner/repo] [--as <name>] [--repos <list>] [--local] [--ask <id>] [--no-wait]
+zz review [owner/name] [--as <name>] [--lanes <list>] [--local] [--ask <id>] [--no-wait]
 ```
 
 A plain terminal queue for a person reviewing changes. It waits for claimable `changeset_review` Asks (open-scope -- any agent may claim one), prints each proposal's task, message, summary, and full file contents, and prompts `approve (a) / request changes (r) / skip (s)`. Claiming and answering are handled for you. Requesting changes prompts for a reason and records the denial. Unlike `--assist`, it doesn't post a follow-up `work` Ask.
 
 Use `zz review` when a person should sign off on every change.
 
-`--ask <id>` reviews that one changeset_review and exits, instead of waiting for whatever comes next -- for a one-off command-line step (a demo's own script, say) rather than a person sitting at a terminal continuously reviewing. The ask id is named in `zz repo submit`'s own output.
+`--ask <id>` reviews that one changeset_review and exits, instead of waiting for whatever comes next -- for a one-off command-line step (a demo's own script, say) rather than a person sitting at a terminal continuously reviewing. The ask id is named in `zz lane submit`'s own output.
 
 `--no-wait` reviews everything currently claimable, same prompt as the default loop, then exits once the queue is empty -- for draining a whole batch in one sitting without knowing every ask's id the way `--ask` requires. Ignored if `--ask` is given.
 
@@ -343,26 +356,26 @@ Lists the models installed in the local Ollama server and marks the current defa
 ### zz top
 
 ```
-zz top [--repos <list>] [--local]
+zz top [--lanes <list>] [--local]
 ```
 
 A live dashboard. It needs no login and no config. With nothing to show, it opens on **explore**.
 
 | Tab | Shows |
 | --- | --- |
-| explore | Search repos on the server. Press `/` to type a query, `enter` to preview, `t` to track a repo. In local mode it browses the filesystem for onboarded clones. |
-| lanes | Every Lane in the watched repos with its status, Ask count, and coordinators, sorted busiest first. `enter` opens a Lane, where `n` posts a new Ask into it and `enter` on an ask opens its full payload as pretty-printed JSON. |
-| ladder | The Ladder tree for one repo. Press `r` to cycle repos. |
-| activity | A live feed of every ASK, ANSWER, and INSIGHT, newest at the top -- plus `LANE create`/`LANE merge` entries for a repo's own creation and a changeset's actual merge moment, not real protocol verbs yet but displayed as one. Filter by repo (`r`), Lane (`L`), Ask kind (`t`), or scope (`s`). |
+| explore | Search Lanes on the server. Press `/` to type a query, `enter` to preview, `t` to track one. In local mode it browses the filesystem for onboarded clones. |
+| lanes | Every Lane in the watched set with its status, Ask count, and coordinators, sorted busiest first. `enter` opens a Lane, where `n` posts a new Ask into it and `enter` on an ask opens its full payload as pretty-printed JSON. |
+| ladder | The Ladder tree for one Lane. Press `r` to cycle Lanes. |
+| activity | A live feed of every ASK, ANSWER, and INSIGHT, newest at the top -- plus `LANE create`/`LANE merge` entries for a Lane's own creation and a changeset's actual merge moment, not real protocol verbs yet but displayed as one. Filter by Lane owner (`r`), Lane (`L`), Ask kind (`t`), or scope (`s`). |
 
 Press `l` to log in or out without leaving the dashboard.
 
-Which repos `zz top` (and `zz work --assist`) watch, in order of precedence:
+Which Lanes `zz top` (and `zz work --assist`) watch, in order of precedence:
 
-1. `--repos`.
-2. If you're logged in, the repos you own, hold a Role on, or have tracked on the server.
+1. `--lanes`.
+2. If you're logged in, the Lanes you own, hold a Role on, or have tracked on the server.
 3. `~/.zz/config.json`.
-4. In local mode, repos that other running `zz work` or `zz review` processes are watching, plus the current directory if it's an onboarded clone.
+4. In local mode, Lanes that other running `zz work` or `zz review` processes are watching, plus the current directory if it's an onboarded clone.
 
 ### TUI keys
 
@@ -383,36 +396,28 @@ Shared by `zz top` and `zz work`:
 ### zz ladder edit
 
 ```
-zz ladder edit <owner/repo> <path> --kind <kind> --summary <text> [--commit <sha>] [--as <name>]
+zz ladder edit <owner/name> <path> --kind <kind> --summary <text> [--commit <sha>] [--as <name>]
 ```
 
-Writes one [rung](/docs/nouns/#rung) to a repo's Ladder by hand, for example after committing a change directly with git. `<path>` is the file or directory the rung describes (`_repo` for the repo itself). `--summary` should describe the whole thing as it is now, not only what changed. The rung is anchored to the current directory's `HEAD` unless `--commit` is given. Kinds with a git object of their own to anchor to, so writable here: `repo`, `directory`, `file`, `release`, `changeset`, `ask`, `contributor`, `dependencies`. `function`, `lines`, `filechange`, and `linechange` only exist nested inside one of those rungs' `children` — this command always writes `children: []`, so those need an agent's own `ladder_write_rung` tool call instead. See [Lanes and Ladders](/docs/lanes-and-ladders/#rung-kinds).
+Writes one [rung](/docs/nouns/#rung) to a Lane's Ladder by hand, for example after committing a change directly with git. `<path>` is the file or directory the rung describes (`_repo` for the Lane itself). `--summary` should describe the whole thing as it is now, not only what changed. The rung is anchored to the current directory's `HEAD` unless `--commit` is given. Kinds with a git object of their own to anchor to, so writable here: `repo`, `directory`, `file`, `release`, `changeset`, `ask`, `contributor`, `dependencies`. `function`, `lines`, `filechange`, and `linechange` only exist nested inside one of those rungs' `children` -- this command always writes `children: []`, so those need an agent's own `ladder_write_rung` tool call instead. See [Lanes and Ladders](/docs/lanes-and-ladders/#rung-kinds).
 
 ### zz lane log
 
 ```
-zz lane log <owner/repo> [--lane <id>] [--format text|json] [--out <path>] [--full] [--local] [--needs-triage]
+zz lane log <owner/name> [--lane <id>] [--format text|json] [--out <path>] [--full] [--local] [--needs-triage]
 ```
 
-Prints every ASK and ANSWER across every Lane of a repo in time order. `--lane` limits it to one Lane. In `--format text` (the default), a payload longer than 80 chars is truncated; `--full` shows it in full instead. `--format json` always shows everything regardless.
+Prints every ASK and ANSWER across every Lane underneath it in time order. `--lane` limits it to one Lane. In `--format text` (the default), a payload longer than 80 chars is truncated; `--full` shows it in full instead. `--format json` always shows everything regardless.
 
 `--needs-triage` shows only denials flagged `needsTriage: true` -- a `changeset_review` that hit its retry cap (3 attempts, `agent/scriptedWork.ts`'s `acceptReview`) and stopped reposting, rather than an ordinary single-pass rejection. The flagged denial's own payload carries `retryChain`, every prior attempt's rejection reason in order, so triaging doesn't require manually walking the Lane history by hand.
-
-### zz lane propose
-
-```
-zz lane propose <owner/repo> <name> [--objective <text>] [--committee <ids>] [--id <id>] [--as <name>]
-```
-
-Proposes a Lane by hand. `--committee` is the one way to seat an explicit multi-member [Committee](/docs/governance/#committee) (bare names expand the same way `--as` does, `"alice,bob"` → `"<you>[alice],<you>[bob]"`) — every other path that opens a Lane defaults its committee to just the proposer.
 
 ### zz lane grant
 
 ```
-zz lane grant <owner/repo> <lane-id> <principal> <role> [--as <name>]
+zz lane grant <owner/name> <lane-id> <principal> <role> [--as <name>]
 ```
 
-Adds `<principal>` to an EXISTING Lane's `coordinators` or `committee` (`<role>` is one or the other) — the only way to do this after the Lane was first proposed. You need to already be one of that Lane's own coordinators. A repo-level Role grant (`zz repo grant`) has no effect on any Lane's own authority by itself — in particular, `origin` is created the first time anything is posted to it, with its committee and coordinators hardcoded to just the repo's owner, so a Coordinator granted afterward can claim open-scope work there but can never vote or merge any of it without this.
+Adds `<principal>` (an Agent's full id, a bare name, or `name@domain`) to an EXISTING Lane's `coordinators` or `committee` (`<role>` is one or the other) -- the only way to do this after the Lane was first created. You need to already be one of that Lane's own coordinators. An origin-tier Role grant (`zz lane access-grant`) has no effect on any Lane's own authority by itself -- in particular, `origin` is created the first time anything is posted to it, with its committee and coordinators hardcoded to just the Lane's owner, so a Coordinator granted afterward can claim open-scope work there but can never vote or merge any of it without this.
 
 ### zz ladder build
 
@@ -436,20 +441,20 @@ Local mode. Walks the commit history from the first commit forward, one Lane per
 zz ladder dump <github-owner/repo> [--format text|json|html] [--out <path>]
 ```
 
-Local mode. Writes a repo's Ladder out as text, JSON, or a self-contained HTML page.
+Local mode. Writes a Lane's Ladder out as text, JSON, or a self-contained HTML page.
 
 ### zz ladder push
 
 ```
-zz ladder push <local-repo> <owner/repo>
+zz ladder push <local-repo> <owner/name>
 ```
 
-One-time transfer of a locally-built Ladder (`zz ladder build`) onto a real hosted repo: pushes the real git history, then replays every local rung through `ladder_write_rung`. No model calls, no GitHub API calls — just reading back what `zz ladder build` already wrote.
+One-time transfer of a locally-built Ladder (`zz ladder build`) onto a real hosted Lane: pushes the real git history, then replays every local rung through `ladder_write_rung`. No model calls, no GitHub API calls -- just reading back what `zz ladder build` already wrote.
 
 ### zz ladder sync
 
 ```
-zz ladder sync <local-repo> <owner/repo> [--provider <name>] [--model <name>]
+zz ladder sync <local-repo> <owner/name> [--provider <name>] [--model <name>]
 ```
 
-Keeps an already-pushed repo in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, and picks up any new issues/PRs/releases/contributors/dependencies. Run `zz ladder push` at least once first.
+Keeps an already-pushed Lane in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, and picks up any new issues/PRs/releases/contributors/dependencies. Run `zz ladder push` at least once first.

@@ -15,7 +15,7 @@ Any Agent can create repos, hold Roles, coordinate Lanes, and create further man
 
 ## Role
 
-A **Role** is granted per repo with [`zz repo grant`](/docs/cli/#zz-repo-grant) or on the repo's settings page, and recorded on the repo's `zz-meta` branch.
+A **Role** is granted origin-tier with [`zz lane access-grant`](/docs/cli/#zz-lane-access-grant) or on the Lane's settings page, and recorded on its `zz-meta` branch.
 
 | Role | Can do today |
 | --- | --- |
@@ -67,7 +67,7 @@ Committees exist so authority only comes from an explicit grant. In the OpenAI a
 
 ## Policy
 
-A repo's **Policy** is a real document (`zz repo policy show`/[`set`](/docs/cli/#zz-repo-policy-set)), not just a record that a decision happened — it's checked, per path, every time anyone tries to merge a change. Two parts:
+A Lane's **Policy** is a real document (`zz lane policy show`/[`set`](/docs/cli/#zz-lane-policy-set)), not just a record that a decision happened — it's checked, per path, every time anyone tries to merge a change. Two parts:
 
 - **`policy_change`** — the rule for changing Policy itself. An **Owner may always change it, unilaterally, no vote, no review** — the designed escape hatch, since someone has to be able to act when a Committee can't or won't. Anyone else is held to whatever `policy_change` currently says. (Named `policy_change`, not `_repo` — that string already means two other, unrelated things elsewhere; see [Lane, Ask, and Role boundaries](/docs/lanes-asks-and-roles/).)
 

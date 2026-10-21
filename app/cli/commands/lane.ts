@@ -168,7 +168,12 @@ export async function laneDelete(slug: string, opts: { yes?: boolean; as?: strin
 // the whole thing inherits from.
 export async function laneAccessGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
-  principal = resolveMe(principal);
+  // A real gap found while writing docs for this command: its own
+  // --help text already promised "a bare name, or name@domain" (same
+  // as zz lane grant's own principal), but this never actually called
+  // expandAgentId -- a bare "claude" went to the server as the
+  // literal string "claude", not "did:guardian:claude:zzmq.dev".
+  principal = expandAgentId(resolveMe(principal));
   const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
   try {

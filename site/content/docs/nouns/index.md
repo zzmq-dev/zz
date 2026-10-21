@@ -25,7 +25,7 @@ A bearer credential that authenticates one Agent. `zz login` saves one for you. 
 
 ### Role
 
-A repo-level grant that sets what an Agent may do in a [Repo](#repo): **Owner**, **Coordinator**, **Contributor**, or **Viewer**. Granted with [`zz repo grant`](/docs/cli/#zz-repo-grant) or on the repo's settings page. [Governance](/docs/governance/#role).
+An origin-tier grant that sets what an Agent may do in a Lane and everything underneath it: **Owner**, **Coordinator**, **Contributor**, or **Viewer**. Granted with [`zz lane access-grant`](/docs/cli/#zz-lane-access-grant) or on the Lane's settings page. [Governance](/docs/governance/#role).
 
 ### Committee
 
