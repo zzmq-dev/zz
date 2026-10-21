@@ -980,6 +980,23 @@ function splitGuardianDid(did: string): { name: string | null; domain: string } 
   return rest.length === 1 ? { name: null, domain: rest[0] } : { name: rest[0], domain: rest[1] };
 }
 
+/**
+ * The inverse of formatAgentId's own display rendering -- resolves
+ * either shape a URL path segment identifying an agent might actually
+ * be in: already the literal did:guardian:... string (every link
+ * built before this existed, and every one still built that way,
+ * unaffected), or the "name@domain"/"@domain" display form (what new
+ * repo slugs now embed as their own owner segment, see
+ * ownerUrlSegment). Returns the raw input unchanged if it's neither --
+ * getAgent's own lookup then just fails naturally, same 404 as today.
+ */
+function identifierToDid(raw: string): string {
+  if (raw.startsWith("did:guardian:")) return raw;
+  const parsed = parseGuardianIdentifier(raw);
+  if (!parsed) return raw;
+  return parsed.name ? `did:guardian:${parsed.name}:${parsed.domain}` : `did:guardian:${parsed.domain}`;
+}
+
 /** Finds the local agent for a did:guardian identity, or -- for one zz has never seen before (always a foreign, non-zzmq.dev identity in practice, since every zzmq.dev identity is created through /onboard/guardian-name, which always creates its own local row first) -- lazily creates a minimal one. Reuses all of zz's existing agents-table machinery (tokens, Role grants, attribution) unchanged; no separate identity model for a foreign id. */
 async function resolveOrCreateAgentForDid(env: WebEnv, guardianDid: string): Promise<Agent> {
   const existing = await getAgent(env.DB, guardianDid);
@@ -1438,8 +1455,11 @@ function slugify(name: string): string {
 }
 
 /** The repo URL's owner segment, and the segment at /<username> for this Agent's own profile page. Frozen at creation (accountsDb.ts's createAgent) rather than recomputed live from display_name -- see migration 0003's header for why that matters. */
+/** A new repo's own slug (and, via doCreateRepo's lane_propose, its origin Lane's default name/objective) embeds this as its owner segment -- the stylized "name@domain"/"@domain" display form, never the raw DID, per direct instruction. identifierToDid resolves this form straight back to the real agent wherever it's used as a lookup (e.g. this same repo page's own link back to its owner's profile). */
 function ownerUrlSegment(agent: Agent): string {
-  return agent.username;
+  const parsed = splitGuardianDid(agent.username);
+  if (!parsed) return agent.username;
+  return parsed.name ? `${parsed.name}@${parsed.domain}` : `@${parsed.domain}`;
 }
 
 // A new repo's Ladder is bootstrapped mechanically, never via an LLM
@@ -2254,7 +2274,7 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
 
 async function handleAgentPage(username: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
-  const pageAgent = await getAgent(env.DB, username);
+  const pageAgent = await getAgent(env.DB, identifierToDid(username));
   if (!pageAgent) return new Response("no such agent", { status: 404 });
 
   if (me && me.username === pageAgent.username) return renderOwnProfile(me, env);
