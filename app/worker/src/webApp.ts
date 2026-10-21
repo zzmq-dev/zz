@@ -1188,7 +1188,7 @@ async function handleGuardianNameFormPost(request: Request, env: WebEnv): Promis
   if (pendingLink?.email) await setGuardianContactEmail(env, name, pendingLink.email);
 
   const secretCard = `<div class="card stack">
-     <p>Your did:guardian login secret -- copy it now, it won't be shown again. You'll need it to sign in with <code>${esc(result.did)}</code> directly (no OAuth provider) later:</p>
+     <p>Your Guardian ID login secret -- copy it now, it won't be shown again. You'll need it to sign in with <code>${esc(name)}@zzmq.dev</code> directly (no OAuth provider) later:</p>
      <div class="clone-row"><pre>${esc(result.login_secret)}</pre><button class="secondary icon-btn" data-copy="${esc(result.login_secret)}" title="Copy">⧉</button></div>
    </div>`;
   const response = await finishInteractiveLogin(env, agent, cliNonce, secretCard);
@@ -1231,7 +1231,7 @@ async function handleReissueLoginSecret(request: Request, env: WebEnv): Promise<
     "New login secret",
     null,
     `<div class="card stack" style="max-width:480px;margin:0 auto">
-       <p>Your old did:guardian login secret no longer works. Copy this new one now -- it won't be shown again. You'll need it to sign in with <code>${esc(me.username)}</code> directly (no OAuth provider):</p>
+       <p>Your old Guardian ID login secret no longer works. Copy this new one now -- it won't be shown again. You'll need it to sign in with <code>${esc(name)}@zzmq.dev</code> directly (no OAuth provider):</p>
        <div class="clone-row"><pre>${esc(result.login_secret)}</pre><button class="secondary icon-btn" data-copy="${esc(result.login_secret)}" title="Copy">⧉</button></div>
        <a href="/${esc(me.username)}"><button style="width:100%;padding:.85rem 1.1rem">Done</button></a>
      </div>`,
@@ -2276,8 +2276,11 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
     const ctx = await getRepoAccessContext(r.slug, env);
     if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.lane))) visible.push(r);
   }
+  const agentParsed = splitGuardianDid(agent.username);
+  const agentDisplayName = agentParsed ? (agentParsed.name ? `${agentParsed.name}@${agentParsed.domain}` : `@${agentParsed.domain}`) : agent.username;
+
   return layout(
-    agent.username,
+    agentDisplayName,
     await resolveRequestAgent(request, env),
     `${agentNameRecordHtml(agent)}
      ${card(
@@ -2293,6 +2296,7 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
      )}
 
      ${card("Activity", await agentActivityHtml(agent, visible, env))}`,
+    { h1Html: `${esc(agentDisplayName)} <span class="hint" style="font-size:.55em;font-weight:400">(${esc(agent.username)})</span>` },
   );
 }
 
@@ -2399,8 +2403,11 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   // when logged in" read the exact same list.
   const repoRows = await listMyRepos(env.DB, me.username);
 
+  const meParsed = splitGuardianDid(me.username);
+  const meDisplayName = meParsed ? (meParsed.name ? `${meParsed.name}@${meParsed.domain}` : `@${meParsed.domain}`) : me.username;
+
   return layout(
-    `${me.username} (you)`,
+    `${meDisplayName} (you)`,
     me,
     `${agentNameRecordHtml(me)}
      ${card(
@@ -2458,6 +2465,7 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
          </div>
        </form>
      </div></dialog>`,
+    { h1Html: `${esc(meDisplayName)} (you) <span class="hint" style="font-size:.55em;font-weight:400">(${esc(me.username)})</span>` },
   );
 }
 
