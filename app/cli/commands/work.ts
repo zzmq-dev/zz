@@ -135,7 +135,7 @@ async function ensureRepoLaneRemote(repo: ResolvedRepo, agent: string): Promise<
         },
       });
     } catch (err) {
-      console.error(`(skipping the repo's root Ladder rung -- ${err instanceof Error ? err.message : String(err)})`);
+      console.error(`(skipping the Lane's root Ladder rung -- ${err instanceof Error ? err.message : String(err)})`);
     }
   }
   return repoLane;

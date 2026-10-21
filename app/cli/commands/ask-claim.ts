@@ -65,7 +65,7 @@ export async function askClaim(slug: string, askId: string, opts: AskClaimOption
     })) as Lane;
 
     console.log(`Claimed ${askId} and opened Lane ${workLane.id} for it${workRepoSlug !== slug ? ` in task shard ${workRepoSlug}` : ""}.`);
-    console.log(`Next: do the work, \`git add\` it, then \`zz repo submit ${workRepoSlug} ${workLane.id} ${askId}\`.`);
+    console.log(`Next: do the work, \`git add\` it, then \`zz lane submit ${workRepoSlug} ${workLane.id} ${askId}\`.`);
   } finally {
     await cleanup();
   }

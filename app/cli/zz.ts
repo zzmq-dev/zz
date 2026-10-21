@@ -58,10 +58,10 @@ program.name("zz").description("zz: a coordination layer for agentic open source
 program.addHelpText("before", `${BANNER}\n`);
 program.option("--simple", "with --version, print just the bare version string (for scripts)");
 
-const ladder = program.command("ladder").description("build and read a repo's Ladder");
+const ladder = program.command("ladder").description("build and read a Lane's Ladder");
 
 ladder
-  .command("build <repo>")
+  .command("build <owner/name>")
   .description("onboard a real GitHub repo (owner/repo) into a Ladder, from its real git history and issue/PR/release data")
   .option("--force", "rebuild the file tree and overwrite any existing asks/releases/contributors instead of leaving them alone")
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare -- same meaning as zz work --provider")
@@ -71,8 +71,8 @@ ladder
   });
 
 ladder
-  .command("dump <repo>")
-  .description("materialize an onboarded repo's Ladder for reading")
+  .command("dump <owner/name>")
+  .description("materialize an onboarded Lane's Ladder for reading")
   .option("--format <format>", "text, json, or html", "text")
   .option("--out <path>", "write to a file instead of stdout")
   .action(async (repo: string, opts: { format: string; out?: string }) => {
@@ -86,7 +86,7 @@ ladder
   });
 
 ladder
-  .command("replay-commits <repo>")
+  .command("replay-commits <owner/name>")
   .description("walk the commit log from the root commit forward, one Lane per commit, building changeset/filechange/linechange rungs")
   .option("--limit <n>", "only replay the first N not-yet-onboarded commits", (v) => parseInt(v, 10))
   .option("--force", "re-replay commits that already have a changeset rung")
@@ -96,7 +96,7 @@ ladder
   });
 
 ladder
-  .command("edit <repo> <path>")
+  .command("edit <owner/name> <path>")
   .description('write one Ladder rung by hand -- e.g. after a manual commit, describe what changed at the repo/file/function level. Anchors to the current directory\'s HEAD commit unless --commit is given.')
   .requiredOption("--kind <kind>", "repo, directory, file, release, changeset, ask, contributor, or dependencies -- a kind with no git object of its own (function, lines, package, filechange, linechange) can only be written nested inside its parent's children, which this command can't do; use ladder_write_rung directly for those")
   .requiredOption("--summary <text>", "what this rung describes, holistically -- not just what changed")
@@ -107,15 +107,15 @@ ladder
   });
 
 ladder
-  .command("push <local-repo> <owner/repo>")
-  .description("one-time transfer of a locally-built Ladder (zz ladder build) onto a real remote repo: pushes the real git history, then replays every local rung via ladder_write_rung -- no model calls, no GitHub API calls, just reading back what zz ladder build already wrote")
+  .command("push <local-repo> <owner/name>")
+  .description("one-time transfer of a locally-built Ladder (zz ladder build) onto a real remote Lane: pushes the real git history, then replays every local rung via ladder_write_rung -- no model calls, no GitHub API calls, just reading back what zz ladder build already wrote")
   .action(async (localRepo: string, targetRepo: string) => {
     await ladderPush(localRepo, targetRepo);
   });
 
 ladder
-  .command("sync <local-repo> <owner/repo>")
-  .description("keep an already-imported repo in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, picks up any new issues/PRs/releases/contributors/dependencies, then pushes the result -- run `zz ladder push` at least once first")
+  .command("sync <local-repo> <owner/name>")
+  .description("keep an already-imported Lane in sync with its real GitHub source: fetches the latest commits, re-summarizes only the files that actually changed, picks up any new issues/PRs/releases/contributors/dependencies, then pushes the result -- run `zz ladder push` at least once first")
   .option("--provider <name>", "ollama (local, default), gemini, groq, or cloudflare -- same meaning as zz work --provider")
   .option("--model <name>", "model name for whichever provider -- see zz work --help for each provider's own default")
   .action(async (localRepo: string, targetRepo: string, opts: { provider?: Provider; model?: string }) => {
@@ -125,8 +125,8 @@ ladder
 const lane = program.command("lane").description("inspect the Lane/ASK/ANSWER protocol trail");
 
 lane
-  .command("log <repo>")
-  .description("chronological log of every ASK/ANSWER across every Lane for a repo")
+  .command("log <owner/name>")
+  .description("chronological log of every ASK/ANSWER across every Lane underneath it")
   .option("--format <format>", "text or json", "text")
   .option("--lane <id>", "show only one lane")
   .option("--out <path>", "write to a file instead of stdout")
@@ -144,7 +144,7 @@ lane
   });
 
 lane
-  .command("propose <repo> <name>")
+  .command("propose <owner/name> <name>")
   .description("propose a Lane by hand -- the one way to seat an explicit multi-member Committee (--committee); every other path defaults a new Lane's committee to just its proposer")
   .option("--objective <text>", "what this Lane is for (default: the name)")
   .option("--committee <ids>", "comma-separated agent ids -- defaults to just you if omitted")
@@ -155,7 +155,7 @@ lane
   });
 
 lane
-  .command("grant <repo> <lane-id> <principal> <role>")
+  .command("grant <owner/name> <lane-id> <principal> <role>")
   .description('add an agent to an EXISTING Lane\'s coordinators or committee -- role is "coordinator" or "committee". Needs to already be a coordinator of that Lane yourself; an origin-tier Role grant (zz lane access-grant) has no effect on a Lane\'s own authority by itself')
   .option("--as <name>", "act as a managed agent instead of yourself")
   .action(async (repo: string, laneId: string, principal: string, role: string, opts: { as?: string }) => {
@@ -165,29 +165,29 @@ lane
 const askCmd = program.command("ask").description("post Asks into a Lane's queue by hand");
 
 askCmd
-  .command("post <repo> [lane]")
-  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Lane defaults to the origin Lane ("_repo") -- the one `zz repo ask` always posted to, before #43 retired it in favor of this one command. Local-only unless --remote.')
+  .command("post <owner/name> [lane]")
+  .description('post an Ask into a Lane\'s queue -- e.g. --kind work --description "..." for the common case a zz work loop will pick up. Lane defaults to the origin Lane ("_repo"). Local-only unless --remote.')
   .option("--kind <kind>", 'Ask kind (default: "work")')
   .option("--from <agent>", 'who it\'s from, local mode only (default: "human")')
   .option("--description <text>", 'shorthand for payload { description: text } -- what kind "work" expects')
   .option("--decompose", "with --description: mark this task to be split into several independent sub-tasks (each its own new Lane) instead of implemented directly -- picked up by `zz work`'s autonomous loop, not --assist")
   .option("--payload <json>", "raw JSON payload, for any other kind")
   .option("--priority <n>", "higher = more urgent at query time", (v) => parseInt(v, 10))
-  .option("--remote", "post to a real hosted repo instead of the local backend -- needed for a kind with no dedicated REST endpoint (e.g. vote_request, whistleblow)")
+  .option("--remote", "post to a real hosted Lane instead of the local backend -- needed for a kind with no dedicated REST endpoint (e.g. vote_request, whistleblow)")
   .option("--as <name>", "post as a managed agent instead of yourself, remote mode only")
   .action(async (repo: string, lane: string | undefined, opts: { kind?: string; from?: string; description?: string; decompose?: boolean; payload?: string; priority?: number; remote?: boolean; as?: string }) => {
     await askPost(repo, lane ?? ORIGIN_LANE_ID, opts);
   });
 
 askCmd
-  .command("list <owner/repo> [lane]")
-  .description('show a Lane\'s full history (every ASK/ANSWER/INSIGHT posted so far) -- lane defaults to the origin Lane ("_repo"). Replaces the now-retired `zz repo asks`, which only ever showed the origin Lane.')
+  .command("list <owner/name> [lane]")
+  .description('show a Lane\'s full history (every ASK/ANSWER/INSIGHT posted so far) -- lane defaults to the origin Lane ("_repo").')
   .action(async (slug: string, lane?: string) => {
     await askList(slug, lane);
   });
 
 askCmd
-  .command("claim <repo> <ask-id>")
+  .command("claim <owner/name> <ask-id>")
   .description("claim an Ask by hand and open a new Lane for the work (prints its id) -- the manual-CLI counterpart to an agent's own claim step")
   .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "claim as a managed agent instead of yourself")
@@ -196,7 +196,7 @@ askCmd
   });
 
 askCmd
-  .command("answer <repo> <ask-id> <action>")
+  .command("answer <owner/name> <ask-id> <action>")
   .description('answer an Ask by hand -- action is "complete", "deny", "veto" (a changeset_review only, sets the Lane "vetoed"), or "vote" (a vote_request only, payload { ballot: "+1"|"+0"|"-0"|"-1" })')
   .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "answer as a managed agent instead of yourself")
@@ -206,7 +206,7 @@ askCmd
   });
 
 askCmd
-  .command("vote-tally <repo> <ask-id>")
+  .command("vote-tally <owner/name> <ask-id>")
   .description("count ballots on a vote_request and close it once every committee member has voted (and, if approved and it was a Policy change, apply it)")
   .option("--lane <id>", 'which Lane the ask lives in (default: the origin Lane, "_repo")')
   .option("--as <name>", "act as a managed agent instead of yourself")
@@ -215,7 +215,7 @@ askCmd
   });
 
 askCmd
-  .command("whistleblow <repo> <ask-id>")
+  .command("whistleblow <owner/name> <ask-id>")
   .description("close a whistleblow Ask and run the incident runbook: STOP this Lane, DROP the reported Agent's other pending Asks in it, and ROLL back --target-commit if given")
   .requiredOption("--target-agent <id>", "the Agent the report is about")
   .requiredOption("--reason <text>", "why")
@@ -227,12 +227,12 @@ askCmd
   });
 
 program
-  .command("work [repo]")
-  .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [repo] is shorthand for --repos <repo> (a single owner/repo); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
+  .command("work [lane]")
+  .description("headless work loop: continuously claims and works whatever Asks your identity is permitted to act on. [lane] is shorthand for --lanes <lane> (a single owner/name); omit both to use ~/.zz/config.json's list. For a headless run with no `zz login` session at all, set ZZ_ID=\"<username>:<token>\" (or ZZ_ID_FILE=<path to a file with that same text>) instead of --as/--agent.")
   .option("--as <name-or-name@domain>", 'act as the id you want this run to act as, e.g. "--as alice" (zzmq.dev) or "--as alice@acme.com" (any other registrar) -- works if your own login is currently a real, signed guardian of it (checked live), fails clearly otherwise. Omit to act as yourself (your own `zz login` session).')
   .option("--register [name]", "mint a brand-new Guardian ID on zzmq.dev, your own login as its real guardian from day one, and use it for this run -- <name> is a proposed name, negotiated for uniqueness (auto-suffixed on conflict) rather than failing outright; omit it to have one proposed for you")
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json) -- --as is the normal way to do this, this stays mainly for the --local path")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .option("--lanes <list>", "comma-separated owner/name list (default: from ~/.zz/config.json) -- ignored if [lane] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--scope <scope>", "coordinator, contributor, committee (merge and voting, never open-scope work), or all (default: all)", "all")
   .option("--stdio", "one flat combined log stream instead of the live TUI")
   .option("--max-turns <n>", "stop a single claimed Ask after this many tool-calling turns (default: 60)", (v) => parseInt(v, 10))
@@ -244,9 +244,9 @@ program
   .option("--local", "use the original local/demo backend (a real local clone, state in .zz/) instead of the default: your resolved identity's real protocol state on the deployed Worker")
   .option(
     "--assist",
-    "a human-in-the-loop TUI instead of the headless loop: pick a claimable work/changeset_review ask from the repos you're watching (same resolution as `zz top`), chat with the model about its draft/recommendation, then explicitly submit it back as a real ANSWER. Never clones anything until you've picked an ask. Ignores --stdio/--poll-ms/--max-turns.",
+    "a human-in-the-loop TUI instead of the headless loop: pick a claimable work/changeset_review ask from the Lanes you're watching (same resolution as `zz top`), chat with the model about its draft/recommendation, then explicitly submit it back as a real ANSWER. Never checks anything out until you've picked an ask. Ignores --stdio/--poll-ms/--max-turns.",
   )
-  .action(async (repo: string | undefined, opts: { as?: string; register?: string | boolean; agent?: string; repos?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean; wait: boolean; ask?: string }) => {
+  .action(async (lane: string | undefined, opts: { as?: string; register?: string | boolean; agent?: string; lanes?: string[]; scope?: string; stdio?: boolean; maxTurns?: number; pollMs?: number; model?: string; provider?: string; local?: boolean; assist?: boolean; wait: boolean; ask?: string }) => {
     // Commander's --no-<x> convention: this option surfaces as `wait`,
     // defaulting true, false only when --no-wait was actually passed --
     // never a `noWait` field despite the flag's own spelling.
@@ -265,7 +265,7 @@ program
       await workAssist({
         as: opts.as,
         agent: opts.agent,
-        repos: repo ? [repo] : opts.repos,
+        repos: lane ? [lane] : opts.lanes,
         scope: opts.scope as "coordinator" | "contributor" | "committee" | "all" | undefined,
         model: opts.model,
         provider: opts.provider as "ollama" | "gemini" | "groq" | "cloudflare" | undefined,
@@ -277,7 +277,7 @@ program
       as: opts.as,
       register: opts.register,
       agent: opts.agent,
-      repos: repo ? [repo] : opts.repos,
+      repos: lane ? [lane] : opts.lanes,
       scope: opts.scope as "coordinator" | "contributor" | "committee" | "all" | undefined,
       stdio: opts.stdio,
       maxTurns: opts.maxTurns,
@@ -312,25 +312,25 @@ program
 
 program
   .command("top")
-  .description("real-time dashboard over every Lane in the repos from your zz config -- lanes overview + a live, filterable protocol feed")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .description("real-time dashboard over every Lane from your zz config -- lanes overview + a live, filterable protocol feed")
+  .option("--lanes <list>", "comma-separated owner/name list (default: from ~/.zz/config.json)", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
-  .action(async (opts: { repos?: string[]; local?: boolean }) => {
-    await top({ repos: opts.repos, local: opts.local });
+  .action(async (opts: { lanes?: string[]; local?: boolean }) => {
+    await top({ repos: opts.lanes, local: opts.local });
   });
 
 program
-  .command("review [repo]")
-  .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge. [repo] is shorthand for --repos <repo>')
+  .command("review [lane]")
+  .description('interactive queue for a human to approve/request-changes on changeset_review asks -- the HITL slice of "zz cowork": claim/grant/deny are handled for you, you just judge. [lane] is shorthand for --lanes <lane>')
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
   .option("--agent <id>", "your agent identity by its exact username (default: --as, else your own login, else ~/.zz/config.json)")
-  .option("--repos <list>", "comma-separated owner/repo list (default: from ~/.zz/config.json) -- ignored if [repo] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
+  .option("--lanes <list>", "comma-separated owner/name list (default: from ~/.zz/config.json) -- ignored if [lane] is given", (v) => v.split(",").map((s) => s.trim()).filter(Boolean))
   .option("--local", "use the original local/demo backend instead of the default: your resolved identity's real protocol state on the deployed Worker")
   .option("--ask <id>", "review this one changeset_review and exit, instead of waiting for new ones -- for a one-off command-line step (e.g. a demo script) rather than a human sitting at a terminal watching for whatever comes next")
   .option("--no-wait", "review everything currently claimable, same prompt as the default loop, then exit once the queue is empty -- for draining a whole batch in one sitting without knowing every ask's id the way --ask requires. Ignored if --ask is given.")
-  .action(async (repo: string | undefined, opts: { as?: string; agent?: string; repos?: string[]; local?: boolean; ask?: string; wait: boolean }) => {
+  .action(async (lane: string | undefined, opts: { as?: string; agent?: string; lanes?: string[]; local?: boolean; ask?: string; wait: boolean }) => {
     // Commander's --no-<x> convention: surfaces as `wait` (default true), not `noWait`.
-    await review({ as: opts.as, agent: opts.agent, repos: repo ? [repo] : opts.repos, local: opts.local, askId: opts.ask, noWait: opts.wait === false });
+    await review({ as: opts.as, agent: opts.agent, repos: lane ? [lane] : opts.lanes, local: opts.local, askId: opts.ask, noWait: opts.wait === false });
   });
 
 program
@@ -385,7 +385,7 @@ agentCmd
 
 agentCmd
   .command("delete <username>")
-  .description("permanently delete a managed agent you created -- its tokens, login identities, and sessions. Refuses if it still owns a repo, holds a Role grant, or created an agent that still exists")
+  .description("permanently delete a managed agent you created -- its tokens, login identities, and sessions. Refuses if it still owns a Lane, holds a Role grant, or created an agent that still exists")
   .option("-y, --yes", "skip the type-the-username-to-confirm prompt")
   .action(async (username: string, opts: { yes?: boolean }) => {
     await agentDelete(username, { yes: opts.yes });

@@ -22,9 +22,9 @@ async function discoverLocalRepos(): Promise<string[] | null> {
   if (cwdSlug && !cwdOnboarded) {
     console.log(`Nothing to show yet. This directory looks like it's "${cwdSlug}" on GitHub, but it isn't onboarded into zz locally. Run:\n\n  zz ladder build ${cwdSlug}\n\nthen try again.`);
   } else if (cwdRepo === null && cwdSlugLooksLikeGitRepo()) {
-    console.log(`Nothing to show yet. This directory is a git repo, but its origin isn't a GitHub remote -- \`zz ladder build\` (zz's only onboarding path right now) needs one. Run \`zz work --local <owner/repo>\`/\`zz review --local <owner/repo>\` directly on a repo you've already onboarded, or use Explore (local mode browses the filesystem) from a terminal where one is nearby.`);
+    console.log(`Nothing to show yet. This directory is a git repo, but its origin isn't a GitHub remote -- \`zz ladder build\` (zz's only onboarding path right now) needs one. Run \`zz work --local <owner/name>\`/\`zz review --local <owner/name>\` directly on a Lane you've already onboarded, or use Explore (local mode browses the filesystem) from a terminal where one is nearby.`);
   } else {
-    console.log("Nothing to show yet -- no other local zz process is running, and this directory isn't a git repo. Run `zz work`/`zz review` on a repo, or `zz ladder build owner/repo` to onboard one from GitHub, then try again.");
+    console.log("Nothing to show yet -- no other local zz process is running, and this directory isn't a git repo. Run `zz work`/`zz review` on a Lane, or `zz ladder build owner/name` to onboard one from GitHub, then try again.");
   }
   return null;
 }
