@@ -1666,6 +1666,61 @@ async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskTe
   return row;
 }
 
+/**
+ * #59: `zz lane create <name> --from <owner/lane>` -- the explicit,
+ * user-named counterpart to ensureShard's own implicit, task-named one
+ * above. Same real fork (ArtifactsRepo.fork, full history, zz-meta
+ * carried over) and the same shard_of lineage tracking (so the
+ * existing promotion/ownership-transfer machinery and the "related
+ * Lanes" listing both already work correctly for this too, not just
+ * for an automatic claim), but slugged from the name the caller
+ * actually chose (owner/name, same convention doCreateRepo uses), not
+ * an auto-generated task slug -- and, unlike ensureShard, this creates
+ * its own origin Lane eagerly, right here, rather than leaving it to
+ * be bootstrapped lazily on first post. `origin` is the new Lane's
+ * origin pointer -- already resolved by the caller to real
+ * artifacts_name/lane_id values, defaulting to `fromRow`'s own origin
+ * Lane unless the caller explicitly asked for something else.
+ */
+async function doForkRepo(env: WebEnv, fromRow: RepoRow, actor: Agent, name: string, description: string | null, origin: { repo: string; lane: string }): Promise<RepoRow> {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "name must match [A-Za-z0-9._-]+");
+  const artifactsName = shortId("repo");
+  const slug = `${ownerUrlSegment(actor)}/${slugify(name)}`;
+  if (await getRepoBySlug(env.DB, slug)) throw new ApiError(409, `"${slug}" already exists`);
+
+  using fromRepo = await env.ARTIFACTS.get(fromRow.artifacts_name);
+  const created = await fromRepo.fork(artifactsName, { description: description ?? undefined });
+  using newRepo = await env.ARTIFACTS.get(artifactsName);
+  const token = await newRepo.createToken("write", 3600);
+
+  // Same reasoning as ensureShard's own identical comment: fork()
+  // carries the parent's zz-meta branch over regardless of
+  // defaultBranchOnly, so this always needs fresh values written, not
+  // inherited ones.
+  const now = new Date().toISOString();
+  await writeRepoMeta(created.remote, token, { description: description ?? "", policy: DEFAULT_REPO_POLICY, owner: actor.username, shard_of: fromRow.slug, created_at: now });
+  await writeRepoRoles(created.remote, token, { grants: [{ principal: actor.username, role: "owner", granted_by: "system", at: now }] });
+
+  const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: actor.username, shardOfSlug: fromRow.slug });
+  await syncRepoRoleCache(env.DB, row.slug, [{ principal: actor.username, role: "owner", granted_by: "system", at: row.created_at }]);
+  await trackRepo(env.DB, actor.username, row.slug);
+
+  const stub = doStub(env, artifactsName);
+  await stub.configure(artifactsName);
+  await stub.callTool("lane_propose", {
+    repo: artifactsName,
+    id: ORIGIN_LANE_ID,
+    name: slug,
+    objective: description || `the ${slug} repository`,
+    scope: ["**"],
+    actor: actor.username,
+    owners: [actor.username],
+    origin_lane: origin.lane,
+    origin_repo: origin.repo,
+  });
+  return row;
+}
+
 // Old repo-level Role -> new Lane tier (#41) -- contributor collapses
 // into viewer (laneHasAnyGrant's own doc comment; a direct audit
 // found nothing anywhere that actually enforced a difference).
@@ -2855,10 +2910,30 @@ async function handleApiSetOwnName(request: Request, env: WebEnv): Promise<Respo
 async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const body = (await request.json()) as { name?: string; description?: string; owner_username?: string; license?: string };
+    const body = (await request.json()) as { name?: string; description?: string; owner_username?: string; license?: string; from?: string; origin?: string };
     const owner = !body.owner_username || body.owner_username === me.username ? me : await getAgent(env.DB, body.owner_username);
     if (!owner || (owner.username !== me.username && owner.created_by !== me.username)) throw new ApiError(403, "not yours to create repos as");
-    const repo = await doCreateRepo(env, owner, (body.name ?? "").trim(), body.description?.trim() || null, body.license ?? null);
+    const name = (body.name ?? "").trim();
+    const description = body.description?.trim() || null;
+    if (body.from) {
+      // #59: zz lane create <name> --from <owner/lane> -- forks an
+      // existing Lane's own repo into a new, explicitly-named one
+      // instead of starting from scratch. `origin` defaults to the
+      // --from Lane's own origin Lane; an explicit --origin overrides
+      // which existing Lane the new one is recorded as originating
+      // from (still always that OTHER Lane's own origin Lane, not an
+      // arbitrary non-origin one -- the lower-level lane_propose tool
+      // call is still there for that finer-grained case).
+      const fromRow = await getRepoBySlug(env.DB, body.from);
+      if (!fromRow) throw new ApiError(404, `no such Lane "${body.from}"`);
+      const originSlug = body.origin || body.from;
+      const originRow = originSlug === body.from ? fromRow : await getRepoBySlug(env.DB, originSlug);
+      if (!originRow) throw new ApiError(404, `no such Lane "${originSlug}"`);
+      const repo = await doForkRepo(env, fromRow, owner, name, description, { repo: originRow.artifacts_name, lane: ORIGIN_LANE_ID });
+      return json(repo, 201);
+    }
+    if (body.origin) throw new ApiError(400, "--origin needs --from to attach to");
+    const repo = await doCreateRepo(env, owner, name, description, body.license ?? null);
     return json(repo, 201);
   });
 }

@@ -17,7 +17,9 @@ import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { apiFetch, setActiveToken } from "../lib/api.js";
 import { requireCredentials, resolveMe } from "../lib/credentials.js";
-import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
+import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";
+import { callRemoteTool } from "../lib/remoteTools.js";
+import type { Lane } from "../../engine/types.js";
 
 interface RepoRow {
   slug: string;
@@ -28,9 +30,87 @@ interface RepoRow {
   updated_at: string;
 }
 
-export async function laneCreate(name: string, opts: { description?: string; ownerUsername?: string }): Promise<void> {
-  const repo = await apiFetch<RepoRow>("POST", "/api/repos", { name, description: opts.description, owner_username: opts.ownerUsername });
-  console.log(`Created ${repo.slug}`);
+export interface LaneCreateOptions {
+  description?: string;
+  /** Standalone case only (no <owner/lane>, no --from): the owning Agent's username. */
+  ownerUsername?: string;
+  /** Forks a new, independent Lane from this existing one instead of starting from scratch -- mutually exclusive with the <owner/lane> positional (#59). */
+  from?: string;
+  /** Sets the new Lane's own origin pointer -- always that other Lane's own origin, not an arbitrary non-origin one (lane_propose's own origin_lane/origin_repo params still exist directly for that finer-grained case). Valid with <owner/lane> or --from, not with neither. */
+  origin?: string;
+  /** <owner/lane> case only: comma-separated agent ids -- defaults to just you if omitted. */
+  committee?: string;
+  /** <owner/lane> case only: explicit lane id -- omit for a generated one. */
+  id?: string;
+  as?: string;
+}
+
+/**
+ * #59: one command, three underlying shapes, picked by which of
+ * `laneArg`/`opts.from` is given -- replaces the old separate `zz
+ * lane propose` entirely (folded in here, not kept alongside it).
+ *
+ * - Neither given: today's original behavior, unchanged -- a brand
+ *   new, standalone Lane (its own fresh repo, no relation to anything
+ *   else).
+ * - `laneArg` (<owner/lane>) given: an ordinary Lane inside that
+ *   EXISTING one's own repo -- no new repo at all. Goes through the
+ *   lane_propose tool directly (callRemoteTool), same as the old `zz
+ *   lane propose` did.
+ * - `opts.from` given: a new, independent Lane forked from that
+ *   existing one's own repo (doForkRepo, webApp.ts) -- the explicit,
+ *   user-named counterpart to claiming a work Ask into its own shard.
+ */
+export async function laneCreate(name: string, laneArg: string | undefined, opts: LaneCreateOptions): Promise<void> {
+  if (laneArg && opts.from) throw new Error("<owner/lane> and --from can't both be given -- pick one place for this Lane to come from.");
+  if (opts.ownerUsername && (laneArg || opts.from)) throw new Error("--owner only applies when creating a new, standalone Lane (no <owner/lane>, no --from).");
+  if (opts.origin && !laneArg && !opts.from) throw new Error("--origin needs either an existing <owner/lane> or --from to attach to.");
+
+  if (laneArg) {
+    const slug = resolveMe(laneArg);
+    const identity = await resolveIdentity({ as: opts.as });
+    setActiveToken(identity.token);
+    try {
+      let originLane: string | undefined;
+      let originRepo: string | undefined;
+      if (opts.origin) {
+        const originSlug = resolveMe(opts.origin);
+        const { repo } = await apiFetch<{ repo: RepoRow }>("GET", `/api/repos/${originSlug}`);
+        originLane = "origin";
+        originRepo = repo.artifacts_name;
+      }
+      const committee = opts.committee ? opts.committee.split(",").map((s) => expandAgentId(s.trim())) : undefined;
+      const lane = (await callRemoteTool(slug, "lane_propose", {
+        name,
+        objective: opts.description ?? name,
+        scope: ["**"],
+        actor: identity.username,
+        id: opts.id,
+        committee,
+        origin_lane: originLane,
+        origin_repo: originRepo,
+      })) as Lane;
+      console.log(`Proposed Lane ${lane.id} in ${slug} -- coordinators: [${lane.coordinators.join(", ")}], committee: [${lane.committee.join(", ")}]`);
+    } finally {
+      await releaseIdentity(identity);
+    }
+    return;
+  }
+
+  const identity = await resolveIdentity({ as: opts.as });
+  setActiveToken(identity.token);
+  try {
+    const repo = await apiFetch<RepoRow>("POST", "/api/repos", {
+      name,
+      description: opts.description,
+      owner_username: opts.ownerUsername,
+      from: opts.from ? resolveMe(opts.from) : undefined,
+      origin: opts.origin ? resolveMe(opts.origin) : undefined,
+    });
+    console.log(`Created ${repo.slug}`);
+  } finally {
+    await releaseIdentity(identity);
+  }
 }
 
 export async function laneList(query?: string): Promise<void> {

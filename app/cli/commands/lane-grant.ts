@@ -4,7 +4,8 @@
 // origin-tier Role grant (zz lane access-grant) has no effect on any
 // Lane's own authority by itself, and "origin" in particular is created
 // lazily on first post with its committee hardcoded to just the
-// owner. Mirrors lane-propose.ts's shape (callRemoteTool).
+// owner. Mirrors lane.ts's own laneCreate <owner/lane> case (#59),
+// same shape (callRemoteTool).
 import { resolveIdentity, releaseIdentity, expandAgentId } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";

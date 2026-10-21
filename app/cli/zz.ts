@@ -33,7 +33,6 @@ import { askAnswer } from "./commands/ask-answer.js";
 import { askList } from "./commands/ask-list.js";
 import { voteTally } from "./commands/vote-tally.js";
 import { whistleblowResolve } from "./commands/whistleblow.js";
-import { laneProposeCmd } from "./commands/lane-propose.js";
 import { laneGrantCmd } from "./commands/lane-grant.js";
 import { ladderEdit } from "./commands/ladder-edit.js";
 import { ladderPush } from "./commands/ladder-push.js";
@@ -141,17 +140,6 @@ lane
       return;
     }
     await laneLog(repo, { format, lane: opts.lane, out: opts.out, local: opts.local, full: opts.full, needsTriage: opts.needsTriage });
-  });
-
-lane
-  .command("propose <owner/name> <name>")
-  .description("propose a Lane by hand -- the one way to seat an explicit multi-member Committee (--committee); every other path defaults a new Lane's committee to just its proposer")
-  .option("--objective <text>", "what this Lane is for (default: the name)")
-  .option("--committee <ids>", "comma-separated agent ids -- defaults to just you if omitted")
-  .option("--id <id>", "explicit lane id (default: a generated one)")
-  .option("--as <name>", "propose as a managed agent instead of yourself")
-  .action(async (repo: string, name: string, opts: { objective?: string; committee?: string; id?: string; as?: string }) => {
-    await laneProposeCmd(repo, name, opts);
   });
 
 lane
@@ -400,12 +388,19 @@ agentCmd
 // below is named access-grant instead, not a second `grant`.
 
 lane
-  .command("create <name>")
-  .description("create a Lane, owned by you or an Agent you created")
-  .option("--description <text>", "description")
-  .option("--owner <username>", "owning Agent's username (default: you)")
-  .action(async (name: string, opts: { description?: string; owner?: string }) => {
-    await laneCreate(name, { description: opts.description, ownerUsername: opts.owner });
+  .command("create <name> [owner/lane]")
+  .description(
+    "create a Lane (#59) -- three shapes in one command, picked by what else is given. Neither [owner/lane] nor --from: a brand new, standalone Lane. [owner/lane]: an ordinary Lane inside that EXISTING one, nothing new created -- the one way to seat an explicit multi-member Committee (--committee), since every other path defaults a new Lane's committee to just its proposer. --from <owner/lane>: a new, independent Lane forked from that existing one, the explicit counterpart to claiming a work Ask into its own delegated Lane.",
+  )
+  .option("--description <text>", "description, or (with [owner/lane]) this Lane's own objective -- default: the name")
+  .option("--owner <username>", "standalone case only: owning Agent's username (default: you)")
+  .option("--from <owner/lane>", "forks a new, independent Lane from this existing one instead of starting from scratch -- mutually exclusive with [owner/lane]")
+  .option("--origin <owner/lane>", "sets the new Lane's own origin pointer to that other Lane's own origin -- valid with [owner/lane] or --from, not with neither")
+  .option("--committee <ids>", "[owner/lane] case only: comma-separated agent ids -- defaults to just you if omitted")
+  .option("--id <id>", "[owner/lane] case only: explicit lane id (default: a generated one)")
+  .option("--as <name>", "act as a managed agent instead of yourself")
+  .action(async (name: string, laneArg: string | undefined, opts: { description?: string; owner?: string; from?: string; origin?: string; committee?: string; id?: string; as?: string }) => {
+    await laneCreate(name, laneArg, { description: opts.description, ownerUsername: opts.owner, from: opts.from, origin: opts.origin, committee: opts.committee, id: opts.id, as: opts.as });
   });
 
 lane
