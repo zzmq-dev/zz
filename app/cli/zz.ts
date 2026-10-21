@@ -438,7 +438,7 @@ const lanePolicyCmd = lane.command("policy").description("read or change a Lane'
 
 lanePolicyCmd
   .command("show <owner/name>")
-  .description("print the current Policy document (\"policy_change\", \"policies\", \"claim_mode\", \"retention\", and \"conflict_policies\")")
+  .description("print the current Policy document (\"policy_change\", \"policies\", \"claim_mode\", \"retention\", \"conflict_policies\", and \"fork_ownership\")")
   .action(async (slug: string) => {
     await lanePolicyShow(slug);
   });
@@ -458,6 +458,7 @@ lanePolicyCmd
   .option("--retention-ttl-hours <n>", "ttl only -- hours after the Lane goes terminal before disposal (not yet enforced)")
   .option("--conflict-path <glob>", "with --conflict-mode: upserts one \"conflict_policies\" entry for this path glob -- what happens when two changes collide, independent of --path/--mode (which govern approving a clean change)")
   .option("--conflict-mode <mode>", "the mode for --conflict-path -- first_wins (default)/coordinator_decides/vote/escalate_human/mediate, all implemented")
+  .option("--fork-ownership <mode>", 'sets "fork_ownership" (#42) -- whose this Lane becomes when a new one is forked from it -- "sole" (default, just the forking actor) or "union" (that actor added on top of this Lane\'s own current owners, a one-time snapshot at fork time, never a live link)')
   .option("--as <name>", 'act as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
   .action(
     async (
@@ -473,6 +474,7 @@ lanePolicyCmd
         retentionTtlHours?: string;
         conflictPath?: string;
         conflictMode?: string;
+        forkOwnership?: string;
         as?: string;
       },
     ) => {

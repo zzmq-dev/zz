@@ -1615,6 +1615,26 @@ function shardSlug(parentSlug: string, actorUsername: string, taskSlug: string):
   return `${actorUsername}/${name}`;
 }
 
+/**
+ * #42: the new repo's own owner set and Policy at fork time -- a
+ * one-time snapshot, never a live link, same discipline as the
+ * trust-inheritance design this issue's own proposal cites. "sole"
+ * (default) is just the forking actor, matching every fork shipped
+ * before this existed; "union" is that actor added on top of
+ * `fromRow`'s own CURRENT owners, read live at this exact moment -- a
+ * later change to fromRow's own owners never retroactively alters
+ * anything already forked from it, in either direction. The Policy
+ * itself is snapshotted the same way (the whole document, not just
+ * this one field) rather than starting a fork from DEFAULT_REPO_POLICY
+ * regardless of what its own parent actually had configured.
+ */
+async function resolveForkSnapshot(env: WebEnv, fromRow: RepoRow, actorUsername: string): Promise<{ owners: string[]; policy: RepoPolicy }> {
+  const ctx = await getRepoAccessContext(fromRow.slug, env);
+  const policy = ctx?.meta ? normalizePolicy(ctx.meta.policy) : DEFAULT_REPO_POLICY;
+  const owners = policy.fork_ownership === "union" && ctx ? Array.from(new Set([...ctx.lane.owners, actorUsername])) : [actorUsername];
+  return { owners, policy };
+}
+
 /** Create-or-reuse a task shard: a real forked repo (ArtifactsRepo.fork, full default-branch history) scoped to one task, owned by the acting agent. `parentSlug` is whatever repo the task's own Lane currently lives in -- the true origin on a first-level shard, or an existing shard's slug when a sub-agent is being delegated a piece of an already-sharded task, which is what makes this recursive without extra code (see the user's "foo[task-a][task-b]" naming request). Idempotent: the slug is fully deterministic from (actorUsername, parentSlug, taskText), so a repeated call for the same task reuses the same shard rather than creating a new one each time. */
 async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskText: string): Promise<RepoRow> {
   const parentRow = await getRepoBySlug(env.DB, parentSlug);
@@ -1648,14 +1668,15 @@ async function ensureShard(env: WebEnv, parentSlug: string, actor: Agent, taskTe
   // silently no-op, leaving them stale. A freshly created shard always
   // needs its own values written, never inherited ones.
   const now = new Date().toISOString();
+  const { owners, policy } = await resolveForkSnapshot(env, parentRow, actor.username);
   await writeRepoMeta(created.remote, token, {
     description: taskText,
-    policy: DEFAULT_REPO_POLICY,
+    policy,
     owner: actor.username,
     shard_of: parentSlug,
     created_at: now,
   });
-  await writeRepoRoles(created.remote, token, { grants: [{ principal: actor.username, role: "owner", granted_by: "system", at: now }] });
+  await writeRepoRoles(created.remote, token, { grants: owners.map((principal) => ({ principal, role: "owner" as const, granted_by: "system", at: now })) });
 
   const row = await upsertRepo(env.DB, { slug, artifactsName, description: taskText, ownerUsername: actor.username, shardOfSlug: parentSlug });
   await syncRepoRoleCache(env.DB, row.slug, [{ principal: actor.username, role: "owner", granted_by: "system", at: row.created_at }]);
@@ -1698,11 +1719,12 @@ async function doForkRepo(env: WebEnv, fromRow: RepoRow, actor: Agent, name: str
   // defaultBranchOnly, so this always needs fresh values written, not
   // inherited ones.
   const now = new Date().toISOString();
-  await writeRepoMeta(created.remote, token, { description: description ?? "", policy: DEFAULT_REPO_POLICY, owner: actor.username, shard_of: fromRow.slug, created_at: now });
-  await writeRepoRoles(created.remote, token, { grants: [{ principal: actor.username, role: "owner", granted_by: "system", at: now }] });
+  const { owners, policy } = await resolveForkSnapshot(env, fromRow, actor.username);
+  await writeRepoMeta(created.remote, token, { description: description ?? "", policy, owner: actor.username, shard_of: fromRow.slug, created_at: now });
+  await writeRepoRoles(created.remote, token, { grants: owners.map((principal) => ({ principal, role: "owner" as const, granted_by: "system", at: now })) });
 
   const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: actor.username, shardOfSlug: fromRow.slug });
-  await syncRepoRoleCache(env.DB, row.slug, [{ principal: actor.username, role: "owner", granted_by: "system", at: row.created_at }]);
+  await syncRepoRoleCache(env.DB, row.slug, owners.map((principal) => ({ principal, role: "owner" as const, granted_by: "system", at: row.created_at })));
   await trackRepo(env.DB, actor.username, row.slug);
 
   const stub = doStub(env, artifactsName);
@@ -1714,7 +1736,7 @@ async function doForkRepo(env: WebEnv, fromRow: RepoRow, actor: Agent, name: str
     objective: description || `the ${slug} repository`,
     scope: ["**"],
     actor: actor.username,
-    owners: [actor.username],
+    owners,
     origin_lane: origin.lane,
     origin_repo: origin.repo,
   });
@@ -2924,8 +2946,15 @@ async function handleApiCreateRepo(request: Request, env: WebEnv): Promise<Respo
       // from (still always that OTHER Lane's own origin Lane, not an
       // arbitrary non-origin one -- the lower-level lane_propose tool
       // call is still there for that finer-grained case).
-      const fromRow = await getRepoBySlug(env.DB, body.from);
-      if (!fromRow) throw new ApiError(404, `no such Lane "${body.from}"`);
+      const fromCtx = await getRepoAccessContext(body.from, env);
+      if (!fromCtx) throw new ApiError(404, `no such Lane "${body.from}"`);
+      // A real, missed-until-now gap this surfaced: unlike ensureShard
+      // (only ever reachable by actually claiming a real Ask, which
+      // already implies some access), this is a direct, standalone
+      // command -- forking a private Lane you can't even read would
+      // bypass its own visibility entirely without this check.
+      if (!(await canReadRepo(request, env, fromCtx.meta, fromCtx.lane))) throw new ApiError(403, `not yours to fork from: "${body.from}"`);
+      const fromRow = fromCtx.repoRow;
       const originSlug = body.origin || body.from;
       const originRow = originSlug === body.from ? fromRow : await getRepoBySlug(env.DB, originSlug);
       if (!originRow) throw new ApiError(404, `no such Lane "${originSlug}"`);
@@ -3019,7 +3048,15 @@ async function handleApiGetAsks(slug: string, env: WebEnv): Promise<Response> {
 // Coordinator+ regardless of visibility (COORDINATOR_ONLY_REMOTE_TOOLS,
 // below) -- both enforced here now, not just by the CLI's own choice
 // of which tools to hand a model.
-const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info"]);
+// policy_show added for the same reason, found while testing #42: the
+// web repo page's own Policy panel already shows this to anonymous
+// visitors on a public repo (handleRepoPage's policyPanelHtml) -- this
+// JSON layer disagreeing with that, requiring auth for the exact same
+// content the web UI shows for free, was the inconsistency, not a
+// deliberate restriction (policy_show's own tool description already
+// says "Unrestricted read -- Policy is meant to be visible... not just
+// enforced").
+const ANON_READ_TOOLS = new Set(["lane_list", "ladder_tree", "repo_info", "policy_show"]);
 
 // These two write committed content directly, with no further
 // per-call authority check of their own the way claim/answer have
@@ -3178,6 +3215,17 @@ async function handleApiShard(slug: string, request: Request, env: WebEnv): Prom
     const me = await requireApiAgent(request, env);
     const body = (await request.json()) as { task?: string };
     if (!body.task?.trim()) throw new ApiError(400, "task is required");
+    // A real, pre-existing gap found while working #42, not introduced
+    // by it: this endpoint had no access check at all -- any
+    // authenticated agent could fork anyone else's private repo,
+    // bypassing its own visibility entirely. In practice this is only
+    // ever called right after actually claiming a real Ask (ask-
+    // claim.ts), which already implies some access to this same repo
+    // -- but the endpoint itself shouldn't rely on that being the only
+    // caller that ever exists.
+    const ctx = await getRepoAccessContext(slug, env);
+    if (!ctx) throw new ApiError(404, "no such Lane");
+    if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) throw new ApiError(403, "not yours to fork from");
     const row = await ensureShard(env, slug, me, body.task.trim());
     return json(row, 201);
   });

@@ -13,12 +13,13 @@
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
 import { setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
-import type { ClaimMode, ConflictMode, PolicyMode, RepoPolicy, RetentionMode } from "../../engine/types.js";
+import type { ClaimMode, ConflictMode, ForkOwnershipMode, PolicyMode, RepoPolicy, RetentionMode } from "../../engine/types.js";
 
 const VALID_MODES = ["direct", "self_review", "other_approver", "vote_quorum", "vote_expiring"];
 const VALID_CLAIM_MODES = ["in_place", "shard"];
 const VALID_RETENTION_MODES = ["keep", "dispose", "ttl"];
 const VALID_CONFLICT_MODES = ["first_wins", "coordinator_decides", "vote", "mediate", "escalate_human"];
+const VALID_FORK_OWNERSHIP_MODES = ["sole", "union"];
 
 function validateMode(mode: string): asserts mode is PolicyMode {
   if (!VALID_MODES.includes(mode)) throw new Error(`--mode must be one of ${VALID_MODES.join(", ")} -- got "${mode}".`);
@@ -36,8 +37,18 @@ function validateConflictMode(mode: string): asserts mode is ConflictMode {
   if (!VALID_CONFLICT_MODES.includes(mode)) throw new Error(`conflict mode must be one of ${VALID_CONFLICT_MODES.join(", ")} -- got "${mode}".`);
 }
 
+function validateForkOwnershipMode(mode: string): asserts mode is ForkOwnershipMode {
+  if (!VALID_FORK_OWNERSHIP_MODES.includes(mode)) throw new Error(`fork-ownership mode must be one of ${VALID_FORK_OWNERSHIP_MODES.join(", ")} -- got "${mode}".`);
+}
+
+// A real, pre-existing bug found while testing #42, not introduced by
+// it: this never passed allowAnonymous, even though policy_show is
+// documented as an unrestricted read (Policy is meant to be visible to
+// a Lane's Coordinators, not just enforced against them) -- so it
+// silently required an ambient credential that nothing here ever set,
+// confirmed live ("authentication required" against a public Lane).
 export async function lanePolicyShow(slug: string): Promise<void> {
-  const policy = (await callRemoteTool(slug, "policy_show", {})) as RepoPolicy;
+  const policy = (await callRemoteTool(slug, "policy_show", {}, true)) as RepoPolicy;
   console.log(JSON.stringify(policy, null, 2));
 }
 
@@ -52,15 +63,16 @@ export interface LanePolicySetOptions {
   retentionTtlHours?: string;
   conflictPath?: string;
   conflictMode?: string;
+  forkOwnership?: string;
   as?: string;
 }
 
 export async function lanePolicySet(slug: string, opts: LanePolicySetOptions): Promise<void> {
   const settingClaimMode = opts.claimModeManual || opts.claimModeAutonomous;
   const settingConflictRule = opts.conflictPath || opts.conflictMode;
-  if (!opts.laneRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode && !settingConflictRule) {
+  if (!opts.laneRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode && !settingConflictRule && !opts.forkOwnership) {
     throw new Error(
-      'Either --lane-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), --retention-mode <mode> (sets "retention"), or --conflict-path <glob> --conflict-mode <mode> (upserts one "conflict_policies" entry), is required.',
+      'Either --lane-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), --retention-mode <mode> (sets "retention"), --conflict-path <glob> --conflict-mode <mode> (upserts one "conflict_policies" entry), or --fork-ownership <mode> (sets "fork_ownership"), is required.',
     );
   }
   if (settingConflictRule && !(opts.conflictPath && opts.conflictMode)) {
@@ -114,6 +126,16 @@ export async function lanePolicySet(slug: string, opts: LanePolicySetOptions): P
         conflict_path_rule: { path: opts.conflictPath, mode: opts.conflictMode },
       })) as RepoPolicy;
       console.log(`Set ${slug}'s conflict_policies rule for "${opts.conflictPath}" to "${opts.conflictMode}".`);
+      console.log(JSON.stringify(policy, null, 2));
+    } else if (opts.forkOwnership) {
+      validateForkOwnershipMode(opts.forkOwnership);
+      const policy = (await callRemoteTool(slug, "policy_set", {
+        actor: identity.username,
+        fork_ownership_rule: { mode: opts.forkOwnership },
+      })) as RepoPolicy;
+      console.log(
+        `Set ${slug}'s "fork_ownership" to "${opts.forkOwnership}".${opts.forkOwnership === "union" ? " A Lane forked from this one will add its forking actor on top of this Lane's own current owners, not replace them -- a one-time snapshot at fork time, never a live link." : ""}`,
+      );
       console.log(JSON.stringify(policy, null, 2));
     } else {
       validateMode(opts.mode!);

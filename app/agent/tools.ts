@@ -978,7 +978,7 @@ const policyShow: ToolDef = {
 const policySet: ToolDef = {
   name: "policy_set",
   description:
-    'Writes a direct change to Policy: `repo_rule` (replaces `policy_change`), `path_rule` (upserts one entry of `policies`, matched by its exact `path`), `claim_mode` (replaces it wholesale -- {manual, autonomous}, see #37), `retention_rule` (replaces it wholesale -- {mode, ttl_hours?}, see #39 -- "dispose" is real and destructive, deletes a completed work Lane\'s shard the moment its Lane goes terminal), or `conflict_path_rule` (upserts one entry of `conflict_policies`, matched by its exact `path` -- a second, orthogonal axis from `path_rule`: what happens when two changes collide, not what it takes to approve a clean one, see #4). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
+    'Writes a direct change to Policy: `repo_rule` (replaces `policy_change`), `path_rule` (upserts one entry of `policies`, matched by its exact `path`), `claim_mode` (replaces it wholesale -- {manual, autonomous}, see #37), `retention_rule` (replaces it wholesale -- {mode, ttl_hours?}, see #39 -- "dispose" is real and destructive, deletes a completed work Lane\'s shard the moment its Lane goes terminal), `conflict_path_rule` (upserts one entry of `conflict_policies`, matched by its exact `path` -- a second, orthogonal axis from `path_rule`: what happens when two changes collide, not what it takes to approve a clean one, see #4), or `fork_ownership_rule` (replaces it wholesale -- {mode: "sole"|"union"}, see #42 -- whose Lane a fork becomes: "sole" (default) is just the forking actor; "union" adds that actor on top of the forked-from Lane\'s own current owners, a one-time snapshot at fork time, not a live link). This is the UNGATED path -- only an Owner may call it regardless of what `policy_change` currently says, or anyone else when `policy_change` itself is "direct" (enforced server-side, not here; see worker/src/webApp.ts\'s handleApiCallTool). Anyone else whose Policy is actually gated gets refused here and needs to go through the existing protocol instead: post an Ask (ask_post, kind "changeset_review" for self_review/other_approver, "vote_request" for vote_quorum/vote_expiring) with payload `{ decisionKind: "policy", proposal: {...} }` -- granting that review or tallying that vote applies the change for real, the same mechanism a Committee Vote on Policy already uses.',
   parameters: {
     type: "object",
     properties: {
@@ -989,10 +989,11 @@ const policySet: ToolDef = {
       claim_mode: { type: "object", properties: { manual: { type: "string" }, autonomous: { type: "string" } }, required: ["manual", "autonomous"] },
       retention_rule: { type: "object", properties: { mode: { type: "string" }, ttl_hours: { type: "number" } }, required: ["mode"] },
       conflict_path_rule: { type: "object", properties: { path: { type: "string" }, mode: { type: "string" } }, required: ["path", "mode"] },
+      fork_ownership_rule: { type: "object", properties: { mode: { type: "string" } }, required: ["mode"] },
     },
     required: ["repo", "actor"],
   },
-  async execute({ repo, repo_rule, path_rule, claim_mode, retention_rule, conflict_path_rule }) {
+  async execute({ repo, repo_rule, path_rule, claim_mode, retention_rule, conflict_path_rule, fork_ownership_rule }) {
     const backend = resolveBackend();
     const current = await backend.readPolicy(repo as string);
     if (repo_rule) {
@@ -1009,8 +1010,10 @@ const policySet: ToolDef = {
       const rule = conflict_path_rule as RepoPolicy["conflict_policies"][number];
       const conflict_policies = [...current.conflict_policies.filter((r) => r.path !== rule.path), rule];
       await backend.writePolicy(repo as string, { ...current, conflict_policies });
+    } else if (fork_ownership_rule) {
+      await backend.writePolicy(repo as string, { ...current, fork_ownership: (fork_ownership_rule as { mode: RepoPolicy["fork_ownership"] }).mode });
     } else {
-      throw new Error('policy_set needs one of "repo_rule", "path_rule", "claim_mode", "retention_rule", or "conflict_path_rule"');
+      throw new Error('policy_set needs one of "repo_rule", "path_rule", "claim_mode", "retention_rule", "conflict_path_rule", or "fork_ownership_rule"');
     }
     return backend.readPolicy(repo as string);
   },

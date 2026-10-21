@@ -20,6 +20,7 @@ export const DEFAULT_REPO_POLICY: RepoPolicy = {
   claim_mode: { manual: "in_place", autonomous: "shard" },
   retention: { mode: "keep" },
   conflict_policies: [{ path: "**", mode: "first_wins" }],
+  fork_ownership: "sole",
 };
 
 // Loosest to strictest -- resolveMode across several touched paths
@@ -78,6 +79,10 @@ export function stricterConflictMode(a: ConflictMode, b: ConflictMode): Conflict
  *    `[{path: "**", mode: "first_wins"}]`, the only mode that matches
  *    every repo's actual pre-#4 behavior (deny the losing
  *    submit_changeset, repost against new HEAD).
+ *  - Documents written before `fork_ownership` existed (#42) -- read
+ *    back missing that key entirely, defaulting to "sole", the only
+ *    mode that matches every fork's actual pre-#42 behavior (the
+ *    forking actor was always the sole owner, unconditionally).
  */
 export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPolicy["visibility"]; _repo?: PolicyRule }): RepoPolicy {
   return {
@@ -87,6 +92,7 @@ export function normalizePolicy(raw: Partial<RepoPolicy> & { visibility: RepoPol
     claim_mode: raw.claim_mode ?? DEFAULT_REPO_POLICY.claim_mode,
     retention: raw.retention ?? DEFAULT_REPO_POLICY.retention,
     conflict_policies: raw.conflict_policies ?? DEFAULT_REPO_POLICY.conflict_policies,
+    fork_ownership: raw.fork_ownership ?? DEFAULT_REPO_POLICY.fork_ownership,
   };
 }
 

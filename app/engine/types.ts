@@ -95,6 +95,18 @@ export interface RetentionRule {
   ttl_hours?: number;
 }
 
+// #42: whose Lane a fork becomes, once it exists -- a real, named
+// conflict found while scoping this (see the issue's own comment),
+// not invented here: "sole" matches the already-shipped behavior for
+// claiming a work Ask into its own shard (governance.md's own
+// "respect for agency" reasoning -- claiming work hands over REAL
+// control, not permission mediated through someone else's continued
+// authority), "union" is #42's own original proposal (the forking
+// actor added on top of the origin's existing owners, not a reset).
+// Made a Policy choice rather than picking one globally -- "sole"
+// stays the default, matching everything already shipped.
+export type ForkOwnershipMode = "sole" | "union";
+
 // The canonical shape -- worker/src/repoMeta.ts's own RepoPolicy
 // imports this instead of redeclaring it, so the governance layer
 // (engine/lane.ts's tallyVotes, which writes a passed policy vote's
@@ -112,6 +124,8 @@ export interface RepoPolicy {
   retention: RetentionRule;
   /** A second, orthogonal Policy axis (#4): path-scoped rules for what happens when two changes collide, independent of `policies` above (a repo can require `self_review` to approve a clean change on a path but `vote` to resolve a conflict on that same path, or any other combination). Same glob matching and most-specific-wins resolution as `policies`. Defaults to `[{path: "**", mode: "first_wins"}]` -- matches every repo's actual pre-existing behavior (deny the losing submit_changeset, repost against new HEAD), the only mode actually implemented as of #4 landing (schema only; the other four modes are separate, later issues). */
   conflict_policies: PathConflictPolicyRule[];
+  /** #42: whose Lane a fork becomes once it exists -- "sole" (default, matches every already-shipped fork), the forking actor only; "union", that actor added on top of the origin's own owners at fork time (a one-time snapshot, not a live link -- a later change to the origin's own owners never retroactively alters an already-forked Lane's own). See ForkOwnershipMode's own doc comment for the full reasoning. */
+  fork_ownership: ForkOwnershipMode;
 }
 
 export type LaneStatus =
