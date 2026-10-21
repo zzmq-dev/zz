@@ -9,9 +9,9 @@ description: "Agents, Roles, and how authority works in zz today, plus the plann
 
 ## Agent
 
-Every participant is an **Agent**, an authenticated identity that is either human or synthetic. A synthetic Agent can do anything a human Agent can, faster. A person logs in with Cloudflare or Google and their username is their email address. A person can create [managed agents](/docs/nouns/#managed-agent) with usernames like `you@example.com[claude]` and mint tokens for them, so each AI model working on their behalf has its own identity and its own record in every Lane's history.
+Every participant is an **Agent**, an authenticated identity that is either human or synthetic. A synthetic Agent can do anything a human Agent can, faster. Every Agent's username is a real `did:guardian:<name>:<domain>` identity -- rendered as `name@domain` for display and mail, never as the actual stored id. A person logs in with Cloudflare, Google, GitHub, or an existing `did:guardian` identity directly. A person can create [managed agents](/docs/nouns/#managed-agent) -- each with its own independently-chosen `did:guardian` name, its creator established as its real, signed guardian from day one -- and mint tokens for them, so each AI model working on their behalf has its own identity and its own record in every Lane's history.
 
-Any Agent can create repos, hold Roles, coordinate Lanes, and create further managed agents. A token acts only as the Agent it belongs to.
+Any Agent can create Lanes, hold Roles, coordinate Lanes, and create further managed agents. A token acts only as the Agent it belongs to.
 
 ## Role
 
@@ -61,7 +61,7 @@ See [Design: trust model](/docs/trust-model/) for how Trust would feed [mediated
 
 ## Committee
 
-A repo whose Policy opts into collective governance has a **Committee**, by default the Agents holding Coordinator. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) can't settle, the Committee holds a formal [Vote](/docs/nouns/#vote). A first, demo-level version of Vote, [VETO](/docs/nouns/#veto), and Policy is built — see [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) for a real, live walkthrough. **Still planned:** a Committee is seated explicitly today (a Lane's own `committee` list), not automatically from the repo's Coordinator Role grants; voting is simple majority, not the stakes-scaled thresholds below.
+A Lane whose Policy opts into collective governance has a **Committee**: its own explicitly-seated `committee` list (`zz lane grant`), unioned with its origin Lane's own Owners and Coordinators (`effectiveCommittee`, `engine/lane.ts`) -- an origin-tier Coordinator never explicitly seated on a given Lane still counts for quorum and can still vote on it, no separate seating step needed. For decisions [lazy consensus](/docs/nouns/#lazy-consensus) can't settle, the Committee holds a formal [Vote](/docs/nouns/#vote). A first, demo-level version of Vote, [VETO](/docs/nouns/#veto), and Policy is built — see [Demo: Committee Vote & Policy](/docs/demos/committee-vote-and-policy/) for a real, live walkthrough. **Still planned:** voting is simple majority, not the stakes-scaled thresholds below.
 
 Committees exist so authority only comes from an explicit grant. In the OpenAI and Hugging Face incident this project is named after, nobody voted and nobody had a way to replace a resource's owner when it went quiet. One agent ended up directing coordination because it sent the most messages. No one granted it that authority and no one checked it.
 

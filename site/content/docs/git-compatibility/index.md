@@ -40,10 +40,10 @@ Git uses a token instead of the browser login. See [Design: credential handling]
 - **Reading a private repo, or pushing to any repo,** needs an Agent's token as the HTTP Basic Auth username, with any password or none. [`zz lane checkout`](/docs/cli/#zz-lane-checkout) configures a [credential helper](/docs/cli/#zz-credential-helper) for you instead of building a token into the URL:
 
   ```
-  zz repo clone <owner>/<repo>
+  zz lane checkout <owner>/<name>
   ```
 
-  To do it by hand (a repo not cloned with `zz repo clone`, or a fresh environment), embed the token in the URL or enter it when git prompts for a username -- this still works, just without the short-lived rotation the credential helper gives you:
+  To do it by hand (a repo not checked out with `zz lane checkout`, or a fresh environment), embed the token in the URL or enter it when git prompts for a username -- this still works, just without the short-lived rotation the credential helper gives you:
 
   ```
   git clone https://<token>@zzmq.dev/<owner>/<repo>
@@ -53,19 +53,19 @@ Git uses a token instead of the browser login. See [Design: credential handling]
 
 A request that needs credentials and has none gets `401` with `WWW-Authenticate: Basic`, so git prompts or asks its credential helper. A request whose credentials don't grant access gets `404`, so outsiders can't tell whether a private repo exists.
 
-## Why `zz repo clone` sets `pull.rebase`
+## Why `zz lane checkout` sets `pull.rebase`
 
-`zz repo submit` never pushes your local commit -- a coordinator's `commit_changeset` re-commits its exact file content server-side as a new commit (a different sha, even for an identical diff) on top of whatever the branch's tip has moved to. A later plain `git pull` would then see your own local commit and the server's as genuinely diverged, and either refuse (`pull.ff only`) or stitch them together with a pointless merge commit (git's own default).
+`zz lane submit` never pushes your local commit -- a coordinator's `commit_changeset` re-commits its exact file content server-side as a new commit (a different sha, even for an identical diff) on top of whatever the branch's tip has moved to. A later plain `git pull` would then see your own local commit and the server's as genuinely diverged, and either refuse (`pull.ff only`) or stitch them together with a pointless merge commit (git's own default).
 
-`zz repo clone` sets `pull.rebase true` on every clone so this comes out clean instead: git recognizes your local commit's patch is already upstream (`warning: skipped previously applied commit <sha>`) and drops it, fast-forwarding you onto the real merged commit with no extra history. Verified live: clone, commit, `zz repo submit`, get it reviewed and merged, then a plain `git pull` lands exactly on the merged commit with a clean working tree.
+`zz lane checkout` sets `pull.rebase true` on every checkout so this comes out clean instead: git recognizes your local commit's patch is already upstream (`warning: skipped previously applied commit <sha>`) and drops it, fast-forwarding you onto the real merged commit with no extra history. Verified live: checkout, commit, `zz lane submit`, get it reviewed and merged, then a plain `git pull` lands exactly on the merged commit with a clean working tree.
 
-## Why `zz repo clone` sets `fetch.negotiationAlgorithm`
+## Why `zz lane checkout` sets `fetch.negotiationAlgorithm`
 
 **Temporary, pending a fix from Cloudflare.** An incremental `git fetch`/`git pull` with several commits to negotiate can corrupt the server's response -- `fetch-pack: protocol error: bad band #78` / `fatal: protocol error: bad pack header` -- a real bug in Cloudflare Artifacts' own git-upload-pack, not anything `zz` ships. Root-caused and reproduced in detail in [Case study: a corrupted incremental git fetch](/docs/case-studies/git-incremental-fetch-sideband-error/).
 
-`zz repo clone` sets `fetch.negotiationAlgorithm noop` on every clone as a workaround: it skips the "tell the server what I already have" negotiation entirely, taking the same code path a fresh clone does (confirmed live to always work), rather than the incremental-negotiation path that's buggy on Artifacts' end. The real tradeoff: without negotiation, a fetch can't compute as small a delta, so this likely transfers more data than a normal incremental fetch would on a large, long-lived repo.
+`zz lane checkout` sets `fetch.negotiationAlgorithm noop` on every checkout as a workaround: it skips the "tell the server what I already have" negotiation entirely, taking the same code path a fresh clone does (confirmed live to always work), rather than the incremental-negotiation path that's buggy on Artifacts' end. The real tradeoff: without negotiation, a fetch can't compute as small a delta, so this likely transfers more data than a normal incremental fetch would on a large, long-lived repo.
 
-**Once Cloudflare fixes the underlying bug**, this default will be removed from `zz repo clone`. An existing clone can drop the setting itself at any time, whether or not the bug is actually fixed yet:
+**Once Cloudflare fixes the underlying bug**, this default will be removed from `zz lane checkout`. An existing checkout can drop the setting itself at any time, whether or not the bug is actually fixed yet:
 
 ```
 git config --unset fetch.negotiationAlgorithm

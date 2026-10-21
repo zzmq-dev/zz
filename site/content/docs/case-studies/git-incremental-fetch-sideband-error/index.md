@@ -66,7 +66,7 @@ This tells git to skip the "tell the server what I already have" negotiation alt
 
 The real tradeoff: without negotiation, the server can't compute as small a delta, so a fetch under this setting likely transfers more data than a normal incremental one would -- not a problem for a repo this size, but worth knowing on a large, long-lived one.
 
-**`zz repo clone` now sets this on every new clone by default**, alongside its existing `pull.rebase true` -- see [Git compatibility](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm). This is temporary, pending Cloudflare actually fixing the bug; once that happens, `zz repo clone` will stop setting it, and an existing clone can drop it itself at any time with `git config --unset fetch.negotiationAlgorithm`.
+**`zz lane checkout` now sets this on every new checkout by default**, alongside its existing `pull.rebase true` -- see [Git compatibility](/docs/git-compatibility/#why-zz-lane-checkout-sets-fetchnegotiationalgorithm). This is temporary, pending Cloudflare actually fixing the bug; once that happens, `zz lane checkout` will stop setting it, and an existing clone can drop it itself at any time with `git config --unset fetch.negotiationAlgorithm`.
 
 `git -c protocol.version=0 pull` does **not** help -- tested live, still fails identically. Side-band negotiation is independent of the v0/v2 wire protocol switch, so this was never going to route around it.
 
@@ -80,16 +80,16 @@ Easiest fix: `git config fetch.negotiationAlgorithm noop` on that same clone, th
 
 ```
 mv ~/workspace/mathkit ~/workspace/mathkit-broken
-zz repo clone zzmq.dev@gmail.com/mathkit ~/workspace/mathkit
+zz lane checkout zzmq.dev@gmail.com/mathkit ~/workspace/mathkit
 ```
 
 If you're actively working off a clone that starts failing this way mid-session, the safest sequence is: note anything uncommitted, re-clone fresh, then reapply just that uncommitted work on top.
 
 ## Status
 
-Worked around (`fetch.negotiationAlgorithm noop`, now a `zz repo clone` default), not fixed -- can't be, from this codebase. The underlying bug is in Cloudflare Artifacts' own git-upload-pack, not in anything `zz` ships. Follow-up options, for later:
+Worked around (`fetch.negotiationAlgorithm noop`, now a `zz lane checkout` default), not fixed -- can't be, from this codebase. The underlying bug is in Cloudflare Artifacts' own git-upload-pack, not in anything `zz` ships. Follow-up options, for later:
 
 - File it with Cloudflare directly, with this page's protocol trace as the repro.
-- Once Cloudflare actually fixes it: remove `fetch.negotiationAlgorithm noop` from `zz repo clone`'s defaults, and update this page and [Git compatibility](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm) to say so, with `git config --unset fetch.negotiationAlgorithm` for an existing clone that still has it set.
+- Once Cloudflare actually fixes it: remove `fetch.negotiationAlgorithm noop` from `zz lane checkout`'s defaults, and update this page and [Git compatibility](/docs/git-compatibility/#why-zz-lane-checkout-sets-fetchnegotiationalgorithm) to say so, with `git config --unset fetch.negotiationAlgorithm` for an existing clone that still has it set.
 - Pin down the actual threshold (how many commits/`have` lines before it reliably triggers), rather than the rough "a little behind is fine, a lot isn't" observed so far -- mostly academic now that the real fix avoids the question entirely, but still an open question about the underlying bug.
-- Watch for whether this is specific to repos that have had many shards/forks (as `mathkit` has, by this point in the demo chain), or just to fetch distance.
+- Watch for whether this is specific to repos that have had many delegated Lanes (as `mathkit` has, by this point in the demo chain), or just to fetch distance.

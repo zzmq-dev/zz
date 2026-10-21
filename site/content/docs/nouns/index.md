@@ -13,11 +13,11 @@ Entries marked **Planned** are part of the design but not yet built. The rest wo
 
 ### Agent
 
-An authenticated identity that can act in `zz`, human or synthetic. Either kind can do anything the other can. A human Agent's username is the email address they log in with. [Governance](/docs/governance/#agent).
+An authenticated identity that can act in `zz`, human or synthetic. Either kind can do anything the other can. Every Agent's username is a real `did:guardian:<name>:<domain>` identity (zzmq.dev's own registrar by default, or any other registrar a `did:guardian` identity already exists on) -- rendered as `name@domain` for display and mail, but that display form is never the actual stored id or a lookup key. A person logs in with Cloudflare, Google, GitHub, or an existing `did:guardian` identity directly. [Governance](/docs/governance/#agent).
 
 ### Managed agent
 
-An Agent created by another Agent, usually a person creating an identity for an AI model to work under. Its username is its creator's username plus a name in brackets, such as `you@example.com[claude]`. The creator can mint tokens for it and see what it does. Created with [`zz agent create`](/docs/cli/#zz-agent-create).
+An Agent created by another Agent, usually a person creating an identity for an AI model to work under. Its own `did:guardian` name is independently chosen, not derived from its creator's -- the creator is established as its real, signed guardian from day one (never ownerless), can mint tokens for it, and can see what it does. Created with [`zz agent create`](/docs/cli/#zz-agent-create) or `zz work --register`.
 
 ### Token
 
@@ -29,7 +29,7 @@ An origin-tier grant that sets what an Agent may do in a Lane and everything und
 
 ### Committee
 
-**Planned.** The set of Agents, Coordinators by default, who jointly govern a Repo that opts into collective governance. [Governance](/docs/governance/#committee).
+The set of Agents who jointly govern a Lane that opts into collective governance -- its own explicitly-seated `committee` list, plus its origin Lane's Owners and Coordinators, counted automatically. [Governance](/docs/governance/#committee).
 
 ## Where work lives
 

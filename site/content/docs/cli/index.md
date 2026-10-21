@@ -154,7 +154,7 @@ Grants an origin-tier [Role](/docs/nouns/#role): `owner`, `coordinator`, `contri
 zz lane checkout <owner/name> [dir]
 ```
 
-Runs `git clone` with a [git credential helper](/docs/credential-handling/) configured (`credential.https://<host>.helper`), not a token embedded in the URL -- `git remote -v` shows a plain URL, and a later plain `git fetch`/`git push` run outside the `zz` CLI entirely still gets a fresh, short-lived credential transparently. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new checkout: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-repo-clone-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
+Runs `git clone` with a [git credential helper](/docs/credential-handling/) configured (`credential.https://<host>.helper`), not a token embedded in the URL -- `git remote -v` shows a plain URL, and a later plain `git fetch`/`git push` run outside the `zz` CLI entirely still gets a fresh, short-lived credential transparently. See [Git compatibility](/docs/git-compatibility/#authentication). Also sets two local git config values on the new checkout: `pull.rebase true` (see [why](/docs/git-compatibility/#why-zz-lane-checkout-sets-pullrebase)) and, temporarily pending a Cloudflare fix, `fetch.negotiationAlgorithm noop` (see [why](/docs/git-compatibility/#why-zz-lane-checkout-sets-fetchnegotiationalgorithm), and the [case study](/docs/case-studies/git-incremental-fetch-sideband-error/) it works around).
 
 ### zz credential-helper
 
