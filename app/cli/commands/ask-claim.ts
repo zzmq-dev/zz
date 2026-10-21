@@ -17,6 +17,10 @@ import { callRemoteTool } from "../lib/remoteTools.js";
 import type { AskEntry, Lane, RepoPolicy } from "../../engine/types.js";
 import { ORIGIN_LANE_ID } from "../../engine/lane.js";
 
+interface RepoRow {
+  artifacts_name: string;
+}
+
 export interface AskClaimOptions {
   /** Which Lane the ask lives in -- defaults to the origin Lane, "origin". */
   lane?: string;
@@ -49,8 +53,24 @@ export async function askClaim(slug: string, askId: string, opts: AskClaimOption
 
     const policy = (await callRemoteTool(slug, "policy_show", {})) as RepoPolicy;
     let workRepoSlug = slug;
+    // A real, pre-existing bug found while verifying #43's lane submit
+    // lookup: origin_repo needs the ORIGINAL repo's artifacts_name (the
+    // same representation lane.repo itself is always stored in, not
+    // the owner/name slug) -- lane_propose stores whatever's given here
+    // as-is, uninterpreted. Passing the slug directly made
+    // lane.origin.repo === lane.repo (lane-submit.ts's own origin
+    // fallback check) never match for an in_place claim, confirmed
+    // live ("no such ask ... or its origin origin" even though the ask
+    // really was in the origin Lane). Only needed when workRepoSlug
+    // differs from slug (the shard case) -- lane_propose's own default
+    // (falling back to the server-injected repo, which already equals
+    // workRepoSlug's own artifacts_name) is already correct otherwise,
+    // so this skips a needless lookup in the common, non-shard case.
+    let originRepoArtifactsName: string | undefined;
     if (policy.claim_mode.manual === "shard") {
       const [owner, repoName] = slug.split("/");
+      const { repo: origRepo } = await apiFetch<{ repo: RepoRow }>("GET", `/api/repos/${owner}/${repoName}`);
+      originRepoArtifactsName = origRepo.artifacts_name;
       const shardRow = await apiFetch<{ slug: string }>("POST", `/api/repos/${owner}/${repoName}/shard`, { task: description });
       workRepoSlug = shardRow.slug;
     }
@@ -61,7 +81,7 @@ export async function askClaim(slug: string, askId: string, opts: AskClaimOption
       scope: ["**"],
       actor: identity.username,
       origin_lane: laneId,
-      origin_repo: slug,
+      origin_repo: originRepoArtifactsName,
     })) as Lane;
 
     console.log(`Claimed ${askId} and opened Lane ${workLane.id} for it${workRepoSlug !== slug ? ` in task shard ${workRepoSlug}` : ""}.`);

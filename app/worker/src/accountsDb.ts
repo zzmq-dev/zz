@@ -360,6 +360,15 @@ export async function searchLanes(db: D1Database, query: string, limit: number, 
   return result.results;
 }
 
+/** #43: zz lane submit's own lane_id -> owner/name lookup, so its redundant owner/name argument can be dropped whenever a lane_id uniquely resolves it. Same visibility rule as every other Lane listing here -- a private repo's own Lane never leaks through this to someone with no access. Returns every DISTINCT matching repo_slug; more than one means lane_id isn't unique (e.g. "origin" exists in every repo) -- the caller decides how to handle that (fall back to asking for the explicit slug), never silently picks one. */
+export async function findReposByLaneId(db: D1Database, laneId: string, viewerUsername: string | null): Promise<string[]> {
+  const result = await db
+    .prepare(`SELECT DISTINCT l.repo_slug FROM lanes l JOIN repos r ON l.repo_slug = r.slug WHERE l.lane_id = ? AND ${VISIBILITY_CLAUSE} AND ${INGEST_VISIBLE_CLAUSE}`)
+    .bind(laneId, viewerUsername ?? "", viewerUsername ?? "")
+    .all<{ repo_slug: string }>();
+  return result.results.map((r) => r.repo_slug);
+}
+
 const LANE_RANK: Record<string, number> = { viewer: 0, committee: 1, coordinator: 2, owner: 3 };
 
 /** Every Lane a principal is meaningfully involved in -- owner, coordinator, viewer, or committee, highest tier wins when more than one applies (same idea as listMyRepos' own RBAC_RANK collapsing below, just Lane's own four-tier shape instead of repo_roles'). Powers the profile page's own Lanes card. */

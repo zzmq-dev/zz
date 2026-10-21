@@ -483,11 +483,16 @@ lanePolicyCmd
   );
 
 lane
-  .command("submit <owner/name> <lane-id> <ask-id>")
-  .description("the human-contributor path: from inside your local checkout, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated")
+  .command("submit <lane-id-or-owner/name> [ask-id-or-lane-id] [ask-id]")
+  .description(
+    '#43: owner/name is now optional. "zz lane submit <lane-id> <ask-id>" resolves the owner/name from the cross-repo Lane index when that lane-id is unique; "zz lane submit <owner/name> <lane-id> <ask-id>" (today\'s original form) still works unchanged and is the one way to disambiguate a lane-id that isn\'t unique (e.g. "origin", which exists in every Lane). The human-contributor path: from inside your local checkout, after editing files and `git add`ing them, post the changeset for review and complete the Ask -- the same protocol sequence a scripted agent follows, just with real file content off disk instead of generated.',
+  )
   .option("--message <text>", "commit message / summary (default: a generated one naming the staged files)")
   .option("--as <name>", 'submit as a managed agent instead of yourself, e.g. "--as claude" -- see `zz work --help`')
-  .action(async (slug: string, laneId: string, askId: string, opts: { message?: string; as?: string }) => {
+  .action(async (a: string, b: string | undefined, c: string | undefined, opts: { message?: string; as?: string }) => {
+    const [slug, laneId, askId] = c !== undefined ? [a, b!, c] : b !== undefined ? [undefined, a, b] : (() => {
+      throw new Error('zz lane submit needs either "<lane-id> <ask-id>" or "<owner/name> <lane-id> <ask-id>"');
+    })();
     await laneSubmit(slug, laneId, askId, { message: opts.message, as: opts.as });
   });
 

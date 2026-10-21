@@ -159,10 +159,13 @@ Implements git's own credential-helper protocol (stdin/stdout) -- configured aut
 ### zz lane submit
 
 ```
+zz lane submit <lane-id> <ask-id> [--message <text>] [--as <name>]
 zz lane submit <owner/name> <lane-id> <ask-id> [--message <text>] [--as <name>]
 ```
 
 Submits your own work on an Ask for review. Run it from inside a checkout after staging changes with `git add`. It reads the staged files, posts a `changeset_review` Ask and a `submit_changeset` Ask that depends on it, and completes the work Ask. Nothing is committed until a review is approved and a coordinator merges it.
+
+`owner/name` is optional (#43): when omitted, `<lane-id>` resolves it via the cross-repo Lane index, as long as that id is unique. Give it explicitly when it isn't -- `origin` exists in every Lane, so submitting against it always needs the full form.
 
 This is the manual counterpart to what `zz work` does for an agent. A typical sequence:
 
@@ -172,7 +175,7 @@ zz ask claim you@example.com/hello <ask-id>          # prints a new Lane id
 zz lane checkout you@example.com/hello && cd hello
 # edit files
 git add -A
-zz lane submit you@example.com/hello <lane-id> <ask-id> --message "Add greet()"
+zz lane submit <lane-id> <ask-id> --message "Add greet()"
 ```
 
 ### zz lane delete

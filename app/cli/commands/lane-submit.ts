@@ -9,11 +9,11 @@
 // your own token) put things in -- it operates on the current working
 // directory's git index, same as any other git-adjacent CLI command.
 //
-// Still takes the owner/name argument explicitly (#43 proposed dropping
-// it, since a Lane id alone could in principle resolve it -- genuinely
-// feasible now that the cross-repo Lane index exists, migration 0018,
-// but that needs its own lane_id -> owner/name lookup endpoint, not
-// built here. Deferred, not forgotten).
+// #43: owner/name is now optional -- when omitted, laneId resolves it
+// via the cross-repo Lane index (migration 0018, GET /api/lanes/:id,
+// webApp.ts's handleApiLaneLookup). Refuses instead of guessing when
+// that lane_id isn't unique across repos (e.g. "origin" -- every repo
+// has one) -- give owner/name explicitly in that case, same as today.
 //
 // This does NOT commit anything itself -- posting a changeset_review
 // only proposes one. Someone still has to `zz review` and approve
@@ -24,7 +24,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolveIdentity, releaseIdentity } from "../lib/identity.js";
-import { setActiveToken } from "../lib/api.js";
+import { apiFetch, setActiveToken } from "../lib/api.js";
 import { callRemoteTool } from "../lib/remoteTools.js";
 import type { AskEntry, Lane, RepoPolicy } from "../../engine/types.js";
 import { resolvePolicyMode } from "../../engine/policy.js";
@@ -39,7 +39,7 @@ export interface LaneSubmitOptions {
   as?: string;
 }
 
-export async function laneSubmit(slug: string, laneId: string, askId: string, opts: LaneSubmitOptions): Promise<void> {
+export async function laneSubmit(slug: string | undefined, laneId: string, askId: string, opts: LaneSubmitOptions): Promise<void> {
   const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
@@ -56,6 +56,11 @@ export async function laneSubmit(slug: string, laneId: string, askId: string, op
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
+    if (!slug) {
+      const resolved = await apiFetch<{ repo_slug: string }>("GET", `/api/lanes/${encodeURIComponent(laneId)}`);
+      slug = resolved.repo_slug;
+    }
+
     // Staged-but-uncommitted is the primary case, but committing first
     // (`git add && git commit`, then this) is the more natural thing
     // for a human to actually do -- confirmed live: the demo run

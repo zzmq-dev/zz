@@ -57,6 +57,7 @@ import {
   listLanesForPrincipal,
   listMyRepos,
   listRecentLanes,
+  findReposByLaneId,
   listRecentRepos,
   listRepoRolesForAgent,
   listReposOwnedBy,
@@ -2974,6 +2975,21 @@ async function handleApiListRepos(request: Request, env: WebEnv): Promise<Respon
   return json({ repos });
 }
 
+// #43: backs zz lane submit's own lane_id -> owner/name lookup, so its
+// redundant owner/name argument becomes optional. Never silently picks
+// a slug when more than one repo happens to share this lane_id (e.g.
+// "origin", or a hand-picked --id colliding across two repos) -- the
+// caller falls back to asking for the explicit slug instead.
+async function handleApiLaneLookup(laneId: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const viewer = await resolveRequestAgent(request, env);
+    const slugs = await findReposByLaneId(env.DB, laneId, viewer?.username ?? null);
+    if (slugs.length === 0) throw new ApiError(404, `no Lane with id "${laneId}" found (or you don't have access to it)`);
+    if (slugs.length > 1) throw new ApiError(409, `"${laneId}" exists in more than one Lane (${slugs.join(", ")}) -- give the owner/name explicitly`);
+    return json({ repo_slug: slugs[0] });
+  });
+}
+
 async function handleApiGetRepo(slug: string, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const ctx = await getRepoAccessContext(slug, env);
@@ -4333,6 +4349,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   if (path === "/api/agents/search" && request.method === "GET") return handleApiSearchAgents(request, env);
   if (path === "/api/repos" && request.method === "POST") return handleApiCreateRepo(request, env);
   if (path === "/api/repos" && request.method === "GET") return handleApiListRepos(request, env);
+  {
+    const m = path.match(/^\/api\/lanes\/([^/]+)$/);
+    if (m && request.method === "GET") return handleApiLaneLookup(m[1], request, env);
+  }
   {
     const m = path.match(/^\/api\/agents\/([^/]+)\/tokens$/);
     if (m && request.method === "POST") return handleApiMintToken(m[1], request, env);
