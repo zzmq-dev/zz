@@ -1088,7 +1088,7 @@ async function handleGuardianStart(request: Request, env: WebEnv): Promise<Respo
   }
   const redirectUri = `${new URL(request.url).origin}/auth/callback/didguardian`;
   const state = shortId("state");
-  const result = await buildGuardianAuthorizeUrl(env, parsed.domain, redirectUri, state);
+  const result = await buildGuardianAuthorizeUrl(env, parsed.domain, redirectUri, state, parsed.name);
   if (!result.ok) {
     return notFoundInterstitial(result.reason, cliNonce, pendingLinkSet);
   }

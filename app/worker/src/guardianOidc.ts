@@ -88,7 +88,13 @@ export function credentialFor(env: GuardianCredentialEnv, domain: string): Guard
 
 export type GuardianAuthorizeResult = { ok: true; url: string } | { ok: false; reason: string };
 
-export async function buildGuardianAuthorizeUrl(env: GuardianCredentialEnv & GuardianFetchEnv, domain: string, redirectUri: string, state: string): Promise<GuardianAuthorizeResult> {
+export async function buildGuardianAuthorizeUrl(
+  env: GuardianCredentialEnv & GuardianFetchEnv,
+  domain: string,
+  redirectUri: string,
+  state: string,
+  loginHint?: string | null,
+): Promise<GuardianAuthorizeResult> {
   const credential = credentialFor(env, domain);
   if (!credential) return { ok: false, reason: `zz isn't a registered sign-in client for "${domain}" yet -- its operator would need to add zz as one first.` };
   const discovery = await discover(env, domain);
@@ -99,6 +105,12 @@ export async function buildGuardianAuthorizeUrl(env: GuardianCredentialEnv & Gua
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "openid");
   url.searchParams.set("state", state);
+  // Standard OIDC authentication request parameter -- we already parsed
+  // "name@domain" on our own login page, so pass just the name along
+  // rather than making the registrar's own login form ask the person
+  // to type the same thing again in a different shape (confirmed live
+  // this was a real point of confusion).
+  if (loginHint) url.searchParams.set("login_hint", loginHint);
   return { ok: true, url: url.toString() };
 }
 
