@@ -1,6 +1,6 @@
-// `zz repo policy show|set`: the human-by-hand counterpart to the
+// `zz lane policy show|set`: the human-by-hand counterpart to the
 // policy_show/policy_set tools (agent/tools.ts). `show` is unrestricted
-// read -- Policy is meant to be visible to a repo's Coordinators, not
+// read -- Policy is meant to be visible to a Lane's Coordinators, not
 // just enforced against them. `set` is the UNGATED write path: an
 // Owner may always use it; a Coordinator only when whatever's being
 // changed is itself under a "direct" Policy rule (enforced server-side,
@@ -36,13 +36,13 @@ function validateConflictMode(mode: string): asserts mode is ConflictMode {
   if (!VALID_CONFLICT_MODES.includes(mode)) throw new Error(`conflict mode must be one of ${VALID_CONFLICT_MODES.join(", ")} -- got "${mode}".`);
 }
 
-export async function repoPolicyShow(slug: string): Promise<void> {
+export async function lanePolicyShow(slug: string): Promise<void> {
   const policy = (await callRemoteTool(slug, "policy_show", {})) as RepoPolicy;
   console.log(JSON.stringify(policy, null, 2));
 }
 
-export interface RepoPolicySetOptions {
-  repoRule?: string;
+export interface LanePolicySetOptions {
+  laneRule?: string;
   path?: string;
   mode?: string;
   expiryHours?: string;
@@ -55,12 +55,12 @@ export interface RepoPolicySetOptions {
   as?: string;
 }
 
-export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): Promise<void> {
+export async function lanePolicySet(slug: string, opts: LanePolicySetOptions): Promise<void> {
   const settingClaimMode = opts.claimModeManual || opts.claimModeAutonomous;
   const settingConflictRule = opts.conflictPath || opts.conflictMode;
-  if (!opts.repoRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode && !settingConflictRule) {
+  if (!opts.laneRule && !(opts.path && opts.mode) && !settingClaimMode && !opts.retentionMode && !settingConflictRule) {
     throw new Error(
-      'Either --repo-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), --retention-mode <mode> (sets "retention"), or --conflict-path <glob> --conflict-mode <mode> (upserts one "conflict_policies" entry), is required.',
+      'Either --lane-rule <mode> (sets "policy_change"), --path <glob> --mode <mode> (upserts one "policies" entry), --claim-mode-manual/--claim-mode-autonomous <mode> (sets "claim_mode"), --retention-mode <mode> (sets "retention"), or --conflict-path <glob> --conflict-mode <mode> (upserts one "conflict_policies" entry), is required.',
     );
   }
   if (settingConflictRule && !(opts.conflictPath && opts.conflictMode)) {
@@ -85,10 +85,10 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
   process.on("SIGTERM", () => void cleanup().then(() => process.exit(0)));
 
   try {
-    if (opts.repoRule) {
-      validateMode(opts.repoRule);
-      const policy = (await callRemoteTool(slug, "policy_set", { actor: identity.username, repo_rule: { mode: opts.repoRule, expiry_hours: expiryHours } })) as RepoPolicy;
-      console.log(`Set ${slug}'s "policy_change" rule to "${opts.repoRule}".`);
+    if (opts.laneRule) {
+      validateMode(opts.laneRule);
+      const policy = (await callRemoteTool(slug, "policy_set", { actor: identity.username, repo_rule: { mode: opts.laneRule, expiry_hours: expiryHours } })) as RepoPolicy;
+      console.log(`Set ${slug}'s "policy_change" rule to "${opts.laneRule}".`);
       console.log(JSON.stringify(policy, null, 2));
     } else if (settingClaimMode) {
       validateClaimMode(opts.claimModeManual!);
@@ -105,7 +105,7 @@ export async function repoPolicySet(slug: string, opts: RepoPolicySetOptions): P
         actor: identity.username,
         retention_rule: { mode: opts.retentionMode, ttl_hours: retentionTtlHours },
       })) as RepoPolicy;
-      console.log(`Set ${slug}'s "retention" rule to "${opts.retentionMode}"${retentionTtlHours ? ` (ttl_hours: ${retentionTtlHours})` : ""}.${opts.retentionMode === "dispose" ? " This is destructive -- a completed work Lane's shard repo will be deleted the moment its Lane goes terminal." : ""}`);
+      console.log(`Set ${slug}'s "retention" rule to "${opts.retentionMode}"${retentionTtlHours ? ` (ttl_hours: ${retentionTtlHours})` : ""}.${opts.retentionMode === "dispose" ? " This is destructive -- a completed work Lane's own backing store will be deleted the moment its Lane goes terminal." : ""}`);
       console.log(JSON.stringify(policy, null, 2));
     } else if (settingConflictRule) {
       validateConflictMode(opts.conflictMode!);

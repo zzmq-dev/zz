@@ -1,10 +1,18 @@
-// `zz repo create/grant/list/clone` -- CLI parity with /profile's repo
-// management and the explore page's search. Same JSON API the web
-// app's own forms call (webApp.ts's doCreateRepo/doRbacGrant), so
-// behavior (including the "push needs Coordinator+" RBAC rule) is
+// `zz lane create/grant/list/checkout/delete` -- CLI parity with
+// /profile's Lanes card and the Explore page's search. Same JSON API
+// the web app's own forms call (webApp.ts's doCreateRepo/doRbacGrant),
+// so behavior (including the "push needs Coordinator+" RBAC rule) is
 // identical regardless of which surface you used. `repo ask`/`asks`
 // retired (#43) in favor of `zz ask post`/`zz ask list`, which work on
 // any Lane, not just the origin one these two always assumed.
+//
+// A repo is still the real backing store underneath every Lane --
+// that's a technical fact about how storage works, not something a
+// person using this CLI needs to think in terms of. "repo" stays out
+// of every command name, flag, and printed message here; `checkout`
+// (not `clone`) is the one command that's genuinely a git operation,
+// per #43's own naming rationale ("checkout" never means "create a
+// new thing" in git vocabulary, unlike "clone").
 import { execFileSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { apiFetch, setActiveToken } from "../lib/api.js";
@@ -20,47 +28,47 @@ interface RepoRow {
   updated_at: string;
 }
 
-export async function repoCreate(name: string, opts: { description?: string; ownerUsername?: string }): Promise<void> {
+export async function laneCreate(name: string, opts: { description?: string; ownerUsername?: string }): Promise<void> {
   const repo = await apiFetch<RepoRow>("POST", "/api/repos", { name, description: opts.description, owner_username: opts.ownerUsername });
   console.log(`Created ${repo.slug}`);
 }
 
-export async function repoList(query?: string): Promise<void> {
+export async function laneList(query?: string): Promise<void> {
   const { repos } = await apiFetch<{ repos: RepoRow[] }>("GET", `/api/repos${query ? `?q=${encodeURIComponent(query)}` : ""}`);
   if (repos.length === 0) {
-    console.log(query ? "No matches." : "No repos yet.");
+    console.log(query ? "No matches." : "No Lanes yet.");
     return;
   }
   for (const r of repos) console.log(`${r.slug}${r.description ? ` -- ${r.description}` : ""}`);
 }
 
-// Irreversible (doDeleteRepo tears down the real Artifacts repo, not
-// a soft-delete), so this asks you to type the slug back rather than
-// just a y/n -- same reasoning a real git host's own "delete this
-// repo" confirmation uses, and cheap insurance against `--yes` muscle
-// memory from some other CLI firing on the wrong repo. Owner check
-// happens server-side (doDeleteRepo); this only gates the prompt.
+// Irreversible (doDeleteRepo tears down the real backing store, not a
+// soft-delete), so this asks you to type the name back rather than
+// just a y/n -- same reasoning a real git host's own "delete this"
+// confirmation uses, and cheap insurance against `--yes` muscle memory
+// from some other CLI firing on the wrong one. Owner check happens
+// server-side (doDeleteRepo); this only gates the prompt.
 // #1: fork-promotion (promoteShardAsNewOrigin, webApp.ts) can hand a
-// managed agent ownership of a real, independent repo at any point --
-// creating an agent grants its creator no Role on repos the agent
+// managed agent ownership of a real, independent Lane at any point --
+// creating an agent grants its creator no Role on Lanes the agent
 // later comes to own (Role/ownership and agent-management are
 // separate systems). Without --as, the only way to act as that agent
 // was a raw curl with a hand-minted token, bypassing this command's
-// own confirm-by-typing-the-slug safety prompt entirely. Same
+// own confirm-by-typing-the-name safety prompt entirely. Same
 // resolveIdentity/releaseIdentity pattern `zz work`/`zz review`
 // already use: an --as token is minted fresh for this one call and
 // revoked when it's done, never a standing credential.
-export async function repoDelete(slug: string, opts: { yes?: boolean; as?: string } = {}): Promise<void> {
+export async function laneDelete(slug: string, opts: { yes?: boolean; as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
   const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
   try {
     if (!opts.yes) {
       const rl = createInterface({ input: process.stdin, output: process.stdout });
-      const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the repo slug to confirm: `);
+      const typed = await rl.question(`This permanently deletes ${slug} -- real git history, Ladder, Lanes, all of it. Type the name to confirm: `);
       rl.close();
       if (typed.trim() !== slug) {
-        console.error("Slug didn't match -- not deleting anything.");
+        console.error("Name didn't match -- not deleting anything.");
         process.exitCode = 1;
         return;
       }
@@ -73,7 +81,7 @@ export async function repoDelete(slug: string, opts: { yes?: boolean; as?: strin
   }
 }
 
-export async function repoGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
+export async function laneGrant(slug: string, principal: string, role: string, opts: { as?: string } = {}): Promise<void> {
   slug = resolveMe(slug);
   principal = resolveMe(principal);
   const identity = await resolveIdentity({ as: opts.as });
@@ -87,20 +95,19 @@ export async function repoGrant(slug: string, principal: string, role: string, o
   }
 }
 
-
 // #12: a credential helper (zz credential-helper, cli/commands/
 // credential-helper.ts), not a token embedded in the clone URL -- the
 // embedded-token form lived in .git/config's remote.origin.url in
 // plaintext indefinitely (visible in `git remote -v`, copied wherever
 // the directory is copied). `-c` scopes the helper to just this one
 // `git clone` invocation (there's no .git/config yet to set it in
-// permanently -- the directory doesn't exist until the clone
+// permanently -- the directory doesn't exist until the checkout
 // finishes); the config command right after persists the same,
 // equally-non-secret helper *reference* (never a token itself) into
-// the new clone's own .git/config, so a later plain `git pull`/`git
+// the new checkout's own .git/config, so a later plain `git pull`/`git
 // push` run outside the zz CLI entirely still gets a fresh credential
 // transparently, no copy-paste into a Basic Auth prompt ever needed.
-export async function repoClone(slug: string, dir?: string): Promise<void> {
+export async function laneCheckout(slug: string, dir?: string): Promise<void> {
   slug = resolveMe(slug);
   const creds = requireCredentials();
   const host = creds.apiBase.replace(/^https?:\/\//, "");
@@ -108,10 +115,10 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   const helperConfig = `credential.https://${host}.helper`;
   const args = ["-c", `${helperConfig}=!zz credential-helper`, "clone", plainUrl, ...(dir ? [dir] : [])];
   execFileSync("git", args, { stdio: "inherit" });
-  const cloneDir = dir ?? splitSlug(slug)[1];
-  execFileSync("git", ["-C", cloneDir, "config", helperConfig, "!zz credential-helper"], { stdio: "inherit" });
+  const checkoutDir = dir ?? splitSlug(slug)[1];
+  execFileSync("git", ["-C", checkoutDir, "config", helperConfig, "!zz credential-helper"], { stdio: "inherit" });
 
-  // `zz repo submit` never pushes your local commit -- the coordinator
+  // `zz lane submit` never pushes your local commit -- the coordinator
   // re-commits its exact file content server-side (commit_changeset),
   // as a new commit (a different sha, even for an identical diff) on
   // top of whatever the branch's current tip is. A later plain
@@ -123,7 +130,7 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   // already upstream (confirmed live: "skipped previously applied
   // commit") and drops it, leaving you fast-forwarded onto the real
   // merged commit with no extra history.
-  execFileSync("git", ["-C", cloneDir, "config", "pull.rebase", "true"], { stdio: "inherit" });
+  execFileSync("git", ["-C", checkoutDir, "config", "pull.rebase", "true"], { stdio: "inherit" });
 
   // TEMPORARY, pending a Cloudflare fix -- a real bug in Artifacts'
   // own git-upload-pack, not anything zz ships: an incremental
@@ -132,19 +139,19 @@ export async function repoClone(slug: string, dir?: string): Promise<void> {
   // live and root-caused in detail (see the case study link below).
   // `fetch.negotiationAlgorithm=noop` skips the "have"-line
   // negotiation entirely, which sidesteps it completely -- confirmed
-  // live on the exact clone that was reliably failing. Real
+  // live on the exact checkout that was reliably failing. Real
   // tradeoff: without negotiation, a fetch can't compute as small a
   // delta, so this likely transfers more data than a normal
-  // incremental fetch would on a large, long-lived repo. Once
+  // incremental fetch would on a large, long-lived history. Once
   // Cloudflare fixes the underlying bug, remove this: delete the
-  // block below, and tell existing clones to
+  // block below, and tell existing checkouts to
   // `git config --unset fetch.negotiationAlgorithm`.
-  execFileSync("git", ["-C", cloneDir, "config", "fetch.negotiationAlgorithm", "noop"], { stdio: "inherit" });
+  execFileSync("git", ["-C", checkoutDir, "config", "fetch.negotiationAlgorithm", "noop"], { stdio: "inherit" });
 }
 
 function splitSlug(slug: string): [string, string] {
   slug = resolveMe(slug);
   const idx = slug.lastIndexOf("/");
-  if (idx === -1) throw new Error(`expected "owner/repo-name", got "${slug}"`);
+  if (idx === -1) throw new Error(`expected "owner/name", got "${slug}"`);
   return [slug.slice(0, idx), slug.slice(idx + 1)];
 }

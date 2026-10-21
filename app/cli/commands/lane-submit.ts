@@ -1,13 +1,19 @@
-// `zz repo submit <owner/repo> <lane-id> <ask-id>`: the human-contributor
+// `zz lane submit <owner/name> <lane-id> <ask-id>`: the human-contributor
 // counterpart to agent/scriptedWork.ts's runContributorWorkAsk -- posts
 // a changeset_review + a dependent submit_changeset ask, then completes
 // the work ask, exactly the same protocol sequence an LLM-driven agent
 // follows via commit_changeset/ask_post/ask_answer, just reading real
 // file content off disk (what you `git add`ed) instead of generating
-// it. No local clone convention assumed: run this from inside whatever
-// directory `zz repo clone` (or a plain `git clone` with your own
-// token) put the repo in -- it operates on the current working
+// it. No local checkout convention assumed: run this from inside
+// whatever directory `zz lane checkout` (or a plain `git clone` with
+// your own token) put things in -- it operates on the current working
 // directory's git index, same as any other git-adjacent CLI command.
+//
+// Still takes the owner/name argument explicitly (#43 proposed dropping
+// it, since a Lane id alone could in principle resolve it -- genuinely
+// feasible now that the cross-repo Lane index exists, migration 0018,
+// but that needs its own lane_id -> owner/name lookup endpoint, not
+// built here. Deferred, not forgotten).
 //
 // This does NOT commit anything itself -- posting a changeset_review
 // only proposes one. Someone still has to `zz review` and approve
@@ -27,13 +33,13 @@ function git(args: string[]): string {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
 }
 
-export interface RepoSubmitOptions {
+export interface LaneSubmitOptions {
   message?: string;
   /** --as <name>: submit as a managed agent instead of yourself -- see WorkOptions.as (work.ts) / lib/identity.ts for the full resolution order. */
   as?: string;
 }
 
-export async function repoSubmit(slug: string, laneId: string, askId: string, opts: RepoSubmitOptions): Promise<void> {
+export async function laneSubmit(slug: string, laneId: string, askId: string, opts: LaneSubmitOptions): Promise<void> {
   const identity = await resolveIdentity({ as: opts.as });
   setActiveToken(identity.token);
 
@@ -94,10 +100,10 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
     // case: no separate work Lane was ever opened), then its origin.
     // lane.origin.repo is the artifacts_name the server injected into
     // the lane_propose call that created this lane (repoMeta.ts's own
-    // internal repo key), not the "owner/repo" slug -- compare against
+    // internal repo key), not the "owner/name" slug -- compare against
     // lane.repo (the same artifacts_name, on this same Lane record),
     // not slug, or this never matches for the single-repo (no shard)
-    // case repoSubmit is actually used for.
+    // case laneSubmit is actually used for.
     let askLaneId = laneId;
     let theAsk = lane.history.find((e): e is AskEntry => e.type === "ASK" && e.id === askId);
     if (!theAsk && lane.origin && lane.origin.repo === lane.repo) {
@@ -130,7 +136,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
         ...(lazyEligible ? { deadline: new Date(Date.now() + (rule.expiry_hours ?? 72) * 3_600_000).toISOString() } : {}),
       })) as AskEntry;
       dependsOn.push(vote.id);
-      gateDescription = `a vote (vote_request ${vote.id}) -- this repo's Policy requires "${rule.mode}" for these files`;
+      gateDescription = `a vote (vote_request ${vote.id}) -- this Lane's Policy requires "${rule.mode}" for these files`;
     } else if (rule.mode !== "direct") {
       const review = (await callRemoteTool(slug, "ask_post", {
         lane_id: laneId,
@@ -142,7 +148,7 @@ export async function repoSubmit(slug: string, laneId: string, askId: string, op
       dependsOn.push(review.id);
       gateDescription = `review (changeset_review ${review.id})`;
     } else {
-      gateDescription = `no review at all -- this repo's Policy allows a direct merge for these files`;
+      gateDescription = `no review at all -- this Lane's Policy allows a direct merge for these files`;
     }
 
     await callRemoteTool(slug, "ask_post", {
