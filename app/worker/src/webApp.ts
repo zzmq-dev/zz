@@ -20,7 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, GUARDIAN_NAME_RE } from "./guardianClient.js";
 import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
@@ -1260,6 +1260,37 @@ async function handleReissueLoginSecret(request: Request, env: WebEnv): Promise<
   );
 }
 
+/** The web-profile counterpart to `zz agent rotate-key` -- self only (the own-profile page's own button; a managed agent's key rotates via the CLI command or its own settings action, not from here). */
+async function handleRotateOwnKey(request: Request, env: WebEnv): Promise<Response> {
+  const me = await resolveRequestAgent(request, env);
+  if (!me) return redirect("/login");
+  const name = ownGuardianName(me.username);
+  if (!name) return redirect(`/${me.username}`);
+
+  const result = await rotateGuardianKey(env, name);
+  if (!result.ok) {
+    return layout(
+      "Couldn't rotate key",
+      null,
+      `<div class="card stack" style="max-width:420px;margin:0 auto">
+         <p class="hint" style="color:var(--pico-del-color,#c33)">${esc(result.message)}</p>
+         <a href="/${esc(me.username)}"><button class="secondary" style="width:100%">Back to profile</button></a>
+       </div>`,
+      { centerTitle: true },
+    );
+  }
+
+  return layout(
+    "Key rotated",
+    null,
+    `<div class="card stack" style="max-width:480px;margin:0 auto">
+       <p>Your Guardian ID's operational key has been rotated. Any bearer token you've already minted keeps working -- only the key used to sign future did:guardian operations changed.</p>
+       <a href="/${esc(me.username)}"><button style="width:100%;padding:.85rem 1.1rem">Done</button></a>
+     </div>`,
+    { centerTitle: true },
+  );
+}
+
 async function handleLogout(request: Request, env: WebEnv): Promise<Response> {
   const sessionId = readSessionCookie(request);
   if (sessionId) await deleteSession(env.DB, sessionId);
@@ -1315,6 +1346,29 @@ async function doMintToken(env: WebEnv, actor: Agent, targetUsername: string): P
   const plaintext = generateAgentToken();
   await createAgentToken(env.DB, target.username, hashAgentToken(plaintext));
   return { agent: target, token: plaintext };
+}
+
+/**
+ * Rotates an agent's own custodied did:guardian operational key --
+ * same authority bar as minting it a new bearer token
+ * (requireTokenMintAuthority): yourself, or an agent you created. A
+ * zzat-* bearer token (this function never touches those) and the
+ * underlying did:guardian key (what this does rotate) are two
+ * completely separate credentials; see guardianClient.ts's own
+ * rotateGuardianKey for why this has to go through the registrar at
+ * all rather than being computed here. Only an agent actually
+ * registered on zzmq.dev's own registrar (ownGuardianName returning
+ * non-null) has a key to rotate this way -- a foreign-registrar
+ * identity's key rotation is that registrar's own concern, out of
+ * reach from here by construction.
+ */
+async function doRotateKey(env: WebEnv, actor: Agent, targetUsername: string): Promise<{ agent: Agent; document: unknown }> {
+  const target = await requireTokenMintAuthority(env, actor, targetUsername);
+  const name = ownGuardianName(target.username);
+  if (!name) throw new ApiError(400, `"${target.username}" isn't a zzmq.dev-registered identity -- its key rotation (if any) is its own registrar's concern`);
+  const result = await rotateGuardianKey(env, name);
+  if (!result.ok) throw new ApiError(502, result.message);
+  return { agent: target, document: result.document };
 }
 
 /**
@@ -2495,17 +2549,22 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
   // live, publicly resolvable data -- works for any did:guardian
   // identity, local or on a foreign registrar, not just zzmq.dev's own
   // (unlike the login-secret row above, which only makes sense for one
-  // zz itself can act on). Key rotation/other guardian-management
-  // actions are explicitly not here yet -- a real, separate feature
-  // needing its own design, not added speculatively alongside this.
+  // zz itself can act on). The rotate button below is gated the same
+  // way (ownGuardianName) and for the same reason: only an identity
+  // zzmq.dev's own registrar actually custodies has a key here to
+  // rotate at all.
   const meGuardianParsed = splitGuardianDid(me.username);
   let guardianIdInfoHtml = "";
   if (meGuardianParsed) {
     const wellKnownPath = `/.well-known/guardian/${meGuardianParsed.name ?? "_"}`;
     const guardians = await currentGuardians(env, meGuardianParsed.name, meGuardianParsed.domain);
     const guardiansHtml = guardians === null ? '<span class="muted">(couldn\'t load)</span>' : guardians.length === 0 ? '<span class="muted">none -- self-sovereign</span>' : guardians.map(formatAgentId).join(", ");
+    const rotateWarning = "This rotates your Guardian ID's own operational key. Any bearer token you've already minted keeps working -- this only replaces the key used to sign future did:guardian operations.";
+    const rotateButtonHtml = ownGuardianName(me.username)
+      ? `<form method="post" action="/profile/key/rotate" class="inline"><button type="submit" class="secondary" onclick="${esc(`return confirm(${JSON.stringify(rotateWarning)})`)}">Rotate key</button></form>`
+      : "";
     guardianIdInfoHtml = `<li class="row stack">
-        <div>Guardian ID <code>${esc(me.username)}</code> -- <a href="https://${esc(meGuardianParsed.domain)}${wellKnownPath}">DID document</a></div>
+        <div>Guardian ID <code>${esc(me.username)}</code> -- <a href="https://${esc(meGuardianParsed.domain)}${wellKnownPath}">DID document</a> ${rotateButtonHtml}</div>
         <div class="muted">Guardians: ${guardiansHtml}</div>
       </li>`;
   }
@@ -2862,6 +2921,15 @@ async function handleApiMintToken(username: string, request: Request, env: WebEn
     const me = await requireApiAgent(request, env);
     const { agent, token } = await doMintToken(env, me, username);
     return json({ agent, token }, 201);
+  });
+}
+
+/** `zz agent rotate-key <username>` -- see doRotateKey. */
+async function handleApiRotateKey(username: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const { agent, document } = await doRotateKey(env, me, username);
+    return json({ agent, document });
   });
 }
 
@@ -4329,6 +4397,7 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     if (m && request.method === "POST") return handleDisconnectProvider(m[1], request, env);
   }
   if (path === "/profile/login-secret/reissue" && request.method === "POST") return handleReissueLoginSecret(request, env);
+  if (path === "/profile/key/rotate" && request.method === "POST") return handleRotateOwnKey(request, env);
   if (path === "/explore") return handleExplore(request, env);
   if (path === "/work" && request.method === "GET") return handleWorkPage(request, env);
   if (path === "/work/claim" && request.method === "POST") return handleWorkClaimForm(request, env);
@@ -4356,6 +4425,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/agents\/([^/]+)\/tokens$/);
     if (m && request.method === "POST") return handleApiMintToken(m[1], request, env);
+  }
+  {
+    const m = path.match(/^\/api\/agents\/([^/]+)\/rotate-key$/);
+    if (m && request.method === "POST") return handleApiRotateKey(m[1], request, env);
   }
   {
     const m = path.match(/^\/api\/agents\/([^/]+)$/);

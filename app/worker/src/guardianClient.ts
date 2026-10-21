@@ -159,6 +159,39 @@ export async function reissueGuardianLoginSecret(env: GuardianFetchEnv & { GUARD
   }
 }
 
+export type RotateGuardianKeyResult = { ok: true; document: unknown } | { ok: false; message: string };
+
+/**
+ * Rotates an agent's own custodied did:guardian operational key (the
+ * real cryptographic identity key, not the login_secret above -- a
+ * completely different credential, see registrar.ts's own rotateWard
+ * for why this has to be a registrar capability at all). Same trusted-
+ * client credential as reissueGuardianLoginSecret: zz's own backend has
+ * already decided the caller is allowed to do this for `name` (itself,
+ * or a managed agent it created -- same bar as minting that agent a
+ * new token, requireTokenMintAuthority) before this is ever called.
+ */
+export async function rotateGuardianKey(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string): Promise<RotateGuardianKeyResult> {
+  if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) {
+    return { ok: false, message: "zz's own registrar client credential isn't configured" };
+  }
+  try {
+    const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
+    const resp = await guardianFetch(env, `/.well-known/guardian/${name}/rotate`, {
+      method: "POST",
+      headers: { authorization: `Basic ${basic}` },
+    });
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, message: body?.error ?? `rotation failed (${resp.status})` };
+    }
+    const body = (await resp.json()) as { document: unknown };
+    return { ok: true, document: body.document };
+  } catch (e) {
+    return { ok: false, message: `couldn't reach the registrar: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export async function setGuardianContactEmail(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string, forwardTo: string): Promise<void> {
   if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) return;
   try {

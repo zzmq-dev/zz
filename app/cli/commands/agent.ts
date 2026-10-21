@@ -67,6 +67,21 @@ export async function agentToken(usernameOrId: string): Promise<void> {
   printZzId(agent.username, token);
 }
 
+/**
+ * Rotates an agent's own custodied did:guardian operational key --
+ * same authority bar as `zz agent token` (yourself, or an agent you
+ * created), but a completely different credential: this is the real
+ * cryptographic identity key the did:guardian operation log is signed
+ * with, not a zz bearer token (those are unaffected, and any already-
+ * minted ones keep working -- rotation only replaces the key used to
+ * sign FUTURE did:guardian operations like this one, nothing retroactive).
+ */
+export async function agentRotateKey(usernameOrId: string): Promise<void> {
+  usernameOrId = resolveMe(usernameOrId);
+  const { agent } = await apiFetch<{ agent: Agent; document: unknown }>("POST", `/api/agents/${encodeURIComponent(usernameOrId)}/rotate-key`);
+  console.log(`Rotated ${agent.username}'s operational key.`);
+}
+
 export async function agentList(): Promise<void> {
   const { you, created } = await apiFetch<{ you: Agent; created: Agent[] }>("GET", "/api/agents");
   console.log(`${you.username} -- you`);
