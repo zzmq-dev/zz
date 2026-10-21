@@ -30,6 +30,7 @@ import {
   type Agent,
   type RepoRow,
   type LadderSearchHit,
+  type LaneRow,
   createAgent,
   createAgentIdentity,
   createAgentToken,
@@ -53,7 +54,9 @@ import {
   getValidSession,
   isTrackingRepo,
   listAgentsCreatedBy,
+  listLanesForPrincipal,
   listMyRepos,
+  listRecentLanes,
   listRecentRepos,
   listRepoRolesForAgent,
   listReposOwnedBy,
@@ -708,7 +711,7 @@ function zzExploreSearch(inputEl, listEl) {
     var badge = document.createElement('span');
     badge.className = 'badge badge-' + variant;
     badge.style.marginRight = '.5rem';
-    badge.textContent = variant === 'pink' ? 'repo' : variant === 'cyan' ? 'user' : 'ladder';
+    badge.textContent = variant === 'pink' ? 'lane' : variant === 'cyan' ? 'user' : 'ladder';
     item.appendChild(badge);
     item.appendChild(document.createTextNode(label));
     item.onclick = function () { window.location.href = href; };
@@ -719,12 +722,12 @@ function zzExploreSearch(inputEl, listEl) {
     var q = inputEl.value.trim();
     if (!q) { listEl.hidden = true; listEl.innerHTML = ''; return; }
     t = setTimeout(function () {
-      fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { repos: [], agents: [], ladderHits: [] }; }).then(function (data) {
+      fetch('/api/explore/search?q=' + encodeURIComponent(q)).then(function (r) { return r.ok ? r.json() : { lanes: [], agents: [], ladderHits: [] }; }).then(function (data) {
         listEl.innerHTML = '';
-        (data.repos || []).forEach(function (r) { addItem('pink', r.slug, '/' + r.slug); });
+        (data.lanes || []).forEach(function (l) { addItem('pink', l.name, '/' + l.repo_slug + '#lane-' + l.lane_id); });
         (data.agents || []).forEach(function (a) { addItem('cyan', a.username, '/' + a.username); });
         (data.ladderHits || []).forEach(function (h) { addItem('yellow', h.repo_slug + ': ' + h.summary.slice(0, 60), '/' + h.repo_slug + '/blob/' + (h.commit_sha || 'HEAD') + '/' + h.path); });
-        listEl.hidden = (data.repos || []).length === 0 && (data.agents || []).length === 0 && (data.ladderHits || []).length === 0;
+        listEl.hidden = (data.lanes || []).length === 0 && (data.agents || []).length === 0 && (data.ladderHits || []).length === 0;
       });
     }, 200);
   });
@@ -2259,23 +2262,20 @@ async function handleAgentPage(username: string, request: Request, env: WebEnv):
 }
 
 async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv): Promise<Response> {
-  // Owned AND role-granted -- a repo this agent only ever holds a
-  // Coordinator/Contributor Role on (never owns) is exactly the kind of
-  // repo its real work tends to live in, and it was missing entirely
-  // from this page before (only ownership was ever checked here).
-  const [owned, roled] = await Promise.all([listReposOwnedBy(env.DB, agent.username), listRepoRolesForAgent(env.DB, agent.username)]);
-  const connected = new Map<string, RepoRow>();
-  for (const r of [...owned, ...roled]) connected.set(r.slug, r);
-  const visible: RepoRow[] = [];
+  // Every Lane this agent holds owner/coordinator/viewer/committee on
+  // -- the real cross-repo index (migration 0018), not a fan-out.
+  const agentLanes = await listLanesForPrincipal(env.DB, agent.username);
+  const visibleRepoRows = new Map<string, RepoRow>();
   // Always a different viewer than `agent` here (handleAgentPage
-  // routes you to renderOwnProfile for your own page instead), so an
-  // ingesting repo never belongs on this list -- same reasoning
-  // accountsDb.ts's INGEST_VISIBLE_CLAUSE gates search/listing with.
-  for (const r of connected.values()) {
-    if (r.ingest_status === "ingesting") continue;
-    const ctx = await getRepoAccessContext(r.slug, env);
-    if (ctx && (await canReadRepo(request, env, ctx.meta, ctx.lane))) visible.push(r);
+  // routes you to renderOwnProfile for your own page instead), so a
+  // Lane whose repo is mid-import never belongs on this list -- same
+  // reasoning accountsDb.ts's INGEST_VISIBLE_CLAUSE gates search/
+  // listing with. One access check per distinct repo, not per Lane.
+  for (const slug of new Set(agentLanes.map((l) => l.lane.repo_slug))) {
+    const ctx = await getRepoAccessContext(slug, env);
+    if (ctx && ctx.repoRow.ingest_status !== "ingesting" && (await canReadRepo(request, env, ctx.meta, ctx.lane))) visibleRepoRows.set(slug, ctx.repoRow);
   }
+  const visibleLanes = agentLanes.filter((l) => visibleRepoRows.has(l.lane.repo_slug)).map((l) => l.lane);
   const agentParsed = splitGuardianDid(agent.username);
   const agentDisplayName = agentParsed ? (agentParsed.name ? `${agentParsed.name}@${agentParsed.domain}` : `@${agentParsed.domain}`) : agent.username;
 
@@ -2284,18 +2284,19 @@ async function renderPublicProfile(agent: Agent, request: Request, env: WebEnv):
     await resolveRequestAgent(request, env),
     `${agentNameRecordHtml(agent)}
      ${card(
-       "Repos",
+       "Lanes",
        `<ul class="list">${
          shardGroupedListHtml(
-           owned.filter((r) => visible.some((v) => v.slug === r.slug)),
-           (r) => r.slug,
-           (r) => r.shard_of_slug,
-           (r) => `<a href="/${esc(r.slug)}" class="mono" style="color:var(--pink)">${esc(r.slug)}</a>${r.description ? `<div class="muted">${autolinkText(r.description)}</div>` : ""}`,
-         ) || '<li class="empty">No public repos.</li>'
+           visibleLanes,
+           laneKey,
+           laneOriginKey,
+           (l) => `<a href="/${esc(l.repo_slug)}#lane-${esc(l.lane_id)}" class="mono" style="color:var(--pink)">${esc(l.name)}</a>${l.objective ? `<div class="muted">${autolinkText(l.objective)}</div>` : ""}`,
+           "related Lane",
+         ) || '<li class="empty">No public Lanes.</li>'
        }</ul>`,
      )}
 
-     ${card("Activity", await agentActivityHtml(agent, visible, env))}`,
+     ${card("Activity", await agentActivityHtml(agent, [...visibleRepoRows.values()], env))}`,
     { h1Html: `${esc(agentDisplayName)} <span class="hint" style="font-size:.55em;font-weight:400">(${esc(agent.username)})</span>` },
   );
 }
@@ -2397,11 +2398,10 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
     )
     .join("");
 
-  // Owned, role-granted, and merely-tracked repos, already merged and
-  // role-sorted in one place (listMyRepos) -- also backs GET
-  // /api/me/repos, so this page and the TUI's "start from your repos
-  // when logged in" read the exact same list.
-  const repoRows = await listMyRepos(env.DB, me.username);
+  // Every Lane you hold owner/coordinator/viewer/committee on, across
+  // every repo -- the real cross-repo index (migration 0018), not a
+  // fan-out to each repo's own DO.
+  const laneRows = await listLanesForPrincipal(env.DB, me.username);
 
   const meParsed = splitGuardianDid(me.username);
   const meDisplayName = meParsed ? (meParsed.name ? `${meParsed.name}@${meParsed.domain}` : `@${meParsed.domain}`) : me.username;
@@ -2424,19 +2424,27 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
      )}
 
      ${card(
-       "Repos",
+       "Lanes",
        `<ul class="list">${
          shardGroupedListHtml(
-           repoRows,
-           ({ repo }) => repo.slug,
-           ({ repo }) => repo.shard_of_slug,
-           ({ repo, role }) => `<a href="/${esc(repo.slug)}" class="mono" style="color:var(--pink)">${esc(repo.slug)}</a>${roleBadge(role)}`,
+           laneRows,
+           ({ lane }) => laneKey(lane),
+           ({ lane }) => laneOriginKey(lane),
+           ({ lane, role }) => `<a href="/${esc(lane.repo_slug)}#lane-${esc(lane.lane_id)}" class="mono" style="color:var(--pink)">${esc(lane.name)}</a>${roleBadge(role)}`,
+           "related Lane",
          ) || '<li class="empty">None yet.</li>'
        }</ul>`,
        { addModal: "modal-create-repo" },
      )}
 
-     ${card("Activity", await agentActivityHtml(me, repoRows.map((r) => r.repo), env))}
+     ${card(
+       "Activity",
+       await agentActivityHtml(
+         me,
+         (await Promise.all([...new Set(laneRows.map((r) => r.lane.repo_slug))].map((slug) => getRepoBySlug(env.DB, slug)))).filter((r): r is RepoRow => r !== null),
+         env,
+       ),
+     )}
 
      <dialog id="modal-add-token" class="modal"><div class="modal-body">
        <h3>Add a token</h3>
@@ -2451,9 +2459,9 @@ async function renderOwnProfile(me: Agent, env: WebEnv): Promise<Response> {
      </div></dialog>
 
      <dialog id="modal-create-repo" class="modal"><div class="modal-body">
-       <h3>Create a repo</h3>
+       <h3>Start a new Lane</h3>
        <form method="post" action="/profile/repos" class="stack">
-         <input name="name" placeholder="repo-name" required pattern="[A-Za-z0-9._-]+">
+         <input name="name" placeholder="lane-name" required pattern="[A-Za-z0-9._-]+">
          <input name="description" placeholder="description">
          <select name="license">
            <option value="">No license</option>
@@ -3103,6 +3111,14 @@ function repoResultHtml(r: RepoRow): string {
   return `<li class="row">${repoRowHtml(r)}</li>`;
 }
 
+/** A Lane's own row -- links to its anchor on its repo's own page (Lanes don't have a standalone page of their own yet; that's the one place "repo" still shows up structurally here, not as copy). */
+function laneRowHtml(l: LaneRow): string {
+  return `<span class="badge badge-pink">LANE</span> <a href="/${esc(l.repo_slug)}#lane-${esc(l.lane_id)}" class="name mono">${esc(l.name)}</a> <span class="badge">${esc(l.status)}</span>${l.objective ? ` <span class="desc muted">${autolinkText(l.objective)}</span>` : ""}`;
+}
+
+const laneKey = (l: LaneRow): string => `${l.repo_slug}/${l.lane_id}`;
+const laneOriginKey = (l: LaneRow): string | null => (l.origin_repo_slug && l.origin_lane_id ? `${l.origin_repo_slug}/${l.origin_lane_id}` : null);
+
 interface ShardNode<T> {
   item: T;
   children: ShardNode<T>[];
@@ -3128,12 +3144,13 @@ function groupByShard<T>(rows: T[], slugOf: (t: T) => string, parentSlugOf: (t: 
 }
 
 /** A repo listing with shard repos nested -- collapsed by default -- under the repo they were forked from, instead of sitting flat alongside it. Shared by both profile pages and Explore's repo results, since a shard is exactly as real a repo as its parent in either listing, just one that belongs grouped rather than browsed as a peer. */
-function shardGroupedListHtml<T>(rows: T[], slugOf: (t: T) => string, parentSlugOf: (t: T) => string | null, renderRow: (t: T) => string): string {
+/** `childLabel` names whatever's nested underneath a parent in the <summary> text -- "shard" for a repo's own shards, "related Lane" for a Lane's non-origin children (see laneGroupedListHtml) -- the tree-building (groupByShard) and row-rendering are otherwise identical for both. */
+function shardGroupedListHtml<T>(rows: T[], slugOf: (t: T) => string, parentSlugOf: (t: T) => string | null, renderRow: (t: T) => string, childLabel: string = "shard"): string {
   const render = (nodes: ShardNode<T>[]): string =>
     nodes
       .map((n) => {
         const nested = n.children.length
-          ? `<details class="shard-group"><summary>${n.children.length} shard${n.children.length === 1 ? "" : "s"}</summary><ul class="list">${render(n.children)}</ul></details>`
+          ? `<details class="shard-group"><summary>${n.children.length} ${esc(childLabel)}${n.children.length === 1 ? "" : "s"}</summary><ul class="list">${render(n.children)}</ul></details>`
           : "";
         return `<li class="stack"><div class="row">${renderRow(n.item)}</div>${nested}</li>`;
       })
@@ -3169,15 +3186,15 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
 
   let bodyHtml: string;
   if (!q) {
-    // No query: the MRU repo browse list, unchanged -- heterogeneous
+    // No query: the MRU Lane browse list, unchanged -- heterogeneous
     // results are a SEARCH behavior, not something to force onto
-    // plain browsing where "recently active repos" is the actually
+    // plain browsing where "recently active Lanes" is the actually
     // useful default view.
-    const repos = await listRecentRepos(env.DB, 50, me?.username ?? null);
-    bodyHtml = `<ul class="list">${shardGroupedListHtml(repos, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml) || '<li class="empty">No repos yet.</li>'}</ul>`;
+    const lanes = await listRecentLanes(env.DB, 50, me?.username ?? null);
+    bodyHtml = `<ul class="list">${shardGroupedListHtml(lanes, laneKey, laneOriginKey, laneRowHtml, "related Lane") || '<li class="empty">No Lanes yet.</li>'}</ul>`;
   } else {
-    const { repos, agents, ladderHits } = await searchExplore(env.DB, q, 25, me?.username ?? null);
-    const rows = [shardGroupedListHtml(repos, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml), ...agents.map(agentResultHtml), ...ladderHits.map(ladderResultHtml)];
+    const { lanes, agents, ladderHits } = await searchExplore(env.DB, q, 25, me?.username ?? null);
+    const rows = [shardGroupedListHtml(lanes, laneKey, laneOriginKey, laneRowHtml, "related Lane"), ...agents.map(agentResultHtml), ...ladderHits.map(ladderResultHtml)];
     bodyHtml = `<ul class="list">${rows.join("") || '<li class="empty">No matches.</li>'}</ul>`;
   }
 
@@ -3186,7 +3203,7 @@ async function handleExplore(request: Request, env: WebEnv): Promise<Response> {
     me,
     `<div class="ac-wrap" style="margin-bottom:1.25rem">
        <form method="get" action="/explore" class="field-row">
-         <input name="q" value="${esc(q)}" placeholder="search repos, users, and the Ladder" autocomplete="off" data-explore-search="explore-ac-box" style="flex:3">
+         <input name="q" value="${esc(q)}" placeholder="search Lanes, users, and the Ladder" autocomplete="off" data-explore-search="explore-ac-box" style="flex:3">
          <button type="submit">Search</button>
        </form>
        <div id="explore-ac-box" class="ac-list" hidden></div>

@@ -323,16 +323,70 @@ export async function searchRepos(db: D1Database, query: string, limit: number, 
   return result.results;
 }
 
+export interface LaneRow {
+  repo_slug: string;
+  lane_id: string;
+  name: string;
+  objective: string;
+  status: string;
+  origin_repo_slug: string | null;
+  origin_lane_id: string | null;
+  updated_at: string;
+}
+
+// Lanes rank below their own repo's visibility, exactly like repos
+// themselves (see VISIBILITY_CLAUSE/INGEST_VISIBLE_CLAUSE above) --
+// there's no separate per-Lane visibility concept; a Lane is visible
+// wherever its own repo is.
+export async function listRecentLanes(db: D1Database, limit: number, viewerUsername: string | null): Promise<LaneRow[]> {
+  const result = await db
+    .prepare(`SELECT l.* FROM lanes l JOIN repos r ON l.repo_slug = r.slug WHERE ${VISIBILITY_CLAUSE} AND ${INGEST_VISIBLE_CLAUSE} ORDER BY l.updated_at DESC LIMIT ?`)
+    .bind(viewerUsername ?? "", viewerUsername ?? "", limit)
+    .all<LaneRow>();
+  return result.results;
+}
+
+export async function searchLanes(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<LaneRow[]> {
+  const like = `%${query}%`;
+  const result = await db
+    .prepare(
+      `SELECT DISTINCT l.* FROM lanes l
+       JOIN repos r ON l.repo_slug = r.slug
+       WHERE (l.name LIKE ? OR l.objective LIKE ?) AND ${VISIBILITY_CLAUSE} AND ${INGEST_VISIBLE_CLAUSE}
+       ORDER BY l.updated_at DESC LIMIT ?`,
+    )
+    .bind(like, like, viewerUsername ?? "", viewerUsername ?? "", limit)
+    .all<LaneRow>();
+  return result.results;
+}
+
+const LANE_RANK: Record<string, number> = { viewer: 0, committee: 1, coordinator: 2, owner: 3 };
+
+/** Every Lane a principal is meaningfully involved in -- owner, coordinator, viewer, or committee, highest tier wins when more than one applies (same idea as listMyRepos' own RBAC_RANK collapsing below, just Lane's own four-tier shape instead of repo_roles'). Powers the profile page's own Lanes card. */
+export async function listLanesForPrincipal(db: D1Database, username: string): Promise<{ lane: LaneRow; role: string }[]> {
+  const result = await db
+    .prepare("SELECT l.*, lp.role as role FROM lanes l JOIN lane_principals lp ON l.repo_slug = lp.repo_slug AND l.lane_id = lp.lane_id WHERE lp.principal = ?")
+    .bind(username)
+    .all<LaneRow & { role: string }>();
+  const byLane = new Map<string, { lane: LaneRow; role: string }>();
+  for (const { role, ...lane } of result.results) {
+    const key = `${lane.repo_slug}/${lane.lane_id}`;
+    const existing = byLane.get(key);
+    if (!existing || LANE_RANK[role] > LANE_RANK[existing.role]) byLane.set(key, { lane, role });
+  }
+  return [...byLane.values()].sort((a, b) => (b.lane.updated_at < a.lane.updated_at ? -1 : 1));
+}
+
 export interface ExploreResults {
-  repos: RepoRow[];
+  lanes: LaneRow[];
   agents: Agent[];
   ladderHits: LadderSearchHit[];
 }
 
-/** The heterogeneous repo+agent+Ladder feed behind /explore -- same visibility rule as searchRepos throughout. Three distinct result TYPES, not one merged list: a repo match, a user match, and a Ladder match (a specific file/commit something was said about) are different enough things that the caller renders each its own way, not a single generic row shape. */
+/** The heterogeneous Lane+agent+Ladder feed behind /explore -- same visibility rule as searchLanes throughout. Three distinct result TYPES, not one merged list: a Lane match, a user match, and a Ladder match (a specific file/commit something was said about) are different enough things that the caller renders each its own way, not a single generic row shape. */
 export async function searchExplore(db: D1Database, query: string, limit: number, viewerUsername: string | null): Promise<ExploreResults> {
-  const [repos, agents, ladderHits] = await Promise.all([
-    searchRepos(db, query, limit, viewerUsername),
+  const [lanes, agents, ladderHits] = await Promise.all([
+    searchLanes(db, query, limit, viewerUsername),
     searchAgents(db, query, limit),
     // FTS5 MATCH has its own query syntax (quotes/parens/hyphens are
     // operators) -- a plain search box shouldn't 500 just because
@@ -341,7 +395,7 @@ export async function searchExplore(db: D1Database, query: string, limit: number
     // failing the whole /explore search.
     searchLadderIndex(db, query, limit, viewerUsername).catch(() => []),
   ]);
-  return { repos, agents, ladderHits };
+  return { lanes, agents, ladderHits };
 }
 
 export async function listReposOwnedBy(db: D1Database, ownerUsername: string): Promise<RepoRow[]> {
