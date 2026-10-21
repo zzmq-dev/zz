@@ -11,7 +11,7 @@ See [Install](/docs/install/) to set it up. Every command accepts `--help`.
 
 ```
 zz login | logout
-zz agent create | token | list | delete
+zz agent create | token | rotate-key | list | delete
 zz lane create | list | access-grant | checkout | submit | delete | policy show | policy set | log | grant
 zz ask claim | post | list | answer | vote-tally | whistleblow
 zz work [--assist]
@@ -87,6 +87,14 @@ zz agent token <username>
 ```
 
 Mints an additional token for yourself or for an Agent you created, and prints it with a `ZZ_ID` line.
+
+### zz agent rotate-key
+
+```
+zz agent rotate-key <username>
+```
+
+Rotates an Agent's own custodied `did:guardian` operational key -- yourself, or one you created. A different credential than a bearer token: existing tokens keep working (nothing here touches them), but anything relying on the old key to verify a *future* signed `did:guardian` operation won't. The same action is also available from your own profile page ("Rotate key"), self only for now -- rotating a managed agent's key is CLI-only until that gets its own profile-page surface.
 
 ### zz agent list
 
