@@ -456,7 +456,7 @@ dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;marg
 .tab-btn.active{color:var(--pink);border-bottom-color:var(--pink)}
 .tab-btn:hover{color:var(--fg);background:none}
 select.role-select{appearance:none;-webkit-appearance:none;background-color:transparent;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23B4A3D6' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .45rem center;background-size:.6em;border:1px solid var(--border);color:var(--fg);padding:.2rem 1.4rem .2rem .5rem;border-radius:6px;font-size:.85rem}
-select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08)}
+select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08);background-image:none;padding-right:.5rem}
 .readme-fold:not(.readme-fold-clip):not(.is-expanded) .readme-fold-content{display:none}
 .readme-fold-clip:not(.is-expanded) .readme-fold-content{max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,#000 60%,transparent 100%);mask-image:linear-gradient(to bottom,#000 60%,transparent 100%)}
 .readme-fold-toggle{display:flex;align-items:center;gap:.6rem;width:100%;background:none;border:none;color:var(--muted);cursor:pointer;padding:.3rem 0;font-size:.85rem;font-family:inherit}
@@ -4291,6 +4291,16 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
   // this is just "does the button need to show at all."
   const directShards = await listShardsOf(env.DB, slug);
 
+  const visibility = meta?.policy.visibility ?? "public";
+
+  // "viewer" is a meaningless grant on a public repo -- read access is
+  // already the default for everyone, granted or not. Only offered as
+  // an option on a private one, where it's the one way to give
+  // someone read-only access without also making them a coordinator.
+  // A row's own CURRENT role always stays selectable even when it
+  // wouldn't otherwise be offered (a repo switched private -> public
+  // with an existing viewer grant still shows it correctly, rather
+  // than silently reassigning the select to a different option).
   const laneGrantRows: { principal: string; role: "owner" | "coordinator" | "viewer" }[] = [
     ...lane.owners.map((principal) => ({ principal, role: "owner" as const })),
     ...lane.coordinators.map((principal) => ({ principal, role: "coordinator" as const })),
@@ -4303,7 +4313,10 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
         <form method="post" action="/${esc(slug)}/settings/roles" class="row inline">
           <input type="hidden" name="principal" value="${esc(g.principal)}">
           <select name="role" class="role-select" disabled>
-            ${(["owner", "coordinator", "viewer"] as const).map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`).join("")}
+            ${(["owner", "coordinator", "viewer"] as const)
+              .filter((r) => r !== "viewer" || visibility === "private" || g.role === "viewer")
+              .map((r) => `<option value="${r}"${r === g.role ? " selected" : ""}>${r}</option>`)
+              .join("")}
           </select>
           <button type="button" class="secondary" onclick="this.previousElementSibling.disabled=false;this.nextElementSibling.hidden=false;this.hidden=true">Edit</button>
           <button type="submit" class="secondary" hidden>Save</button>
@@ -4315,8 +4328,6 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
       </li>`,
     )
     .join("");
-
-  const visibility = meta?.policy.visibility ?? "public";
 
   return layout(
     `${slug} settings`,
@@ -4361,7 +4372,7 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
        <h3>Add a role</h3>
        <form method="post" action="/${esc(slug)}/settings/roles" class="stack">
          ${agentAutocompleteField("principal", "agent name or id", "add-role")}
-         <select name="role"><option>owner</option><option>coordinator</option><option selected>contributor</option><option>viewer</option></select>
+         <select name="role"><option>owner</option><option>coordinator</option><option selected>contributor</option>${visibility === "private" ? "<option>viewer</option>" : ""}</select>
          <div class="modal-actions">
            <button type="button" class="secondary" onclick="this.closest('dialog').close()">Cancel</button>
            <button type="submit">Grant</button>
