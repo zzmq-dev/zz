@@ -271,10 +271,6 @@ export async function updateRepoShardOf(db: D1Database, slug: string, shardOfSlu
   await db.prepare("UPDATE repos SET shard_of_slug = ? WHERE slug = ?").bind(shardOfSlug, slug).run();
 }
 
-export async function updateRepoDescription(db: D1Database, slug: string, description: string): Promise<void> {
-  await db.prepare("UPDATE repos SET description = ? WHERE slug = ?").bind(description, slug).run();
-}
-
 export async function touchRepoUpdatedAt(db: D1Database, slug: string): Promise<void> {
   await db.prepare("UPDATE repos SET updated_at = ? WHERE slug = ?").bind(new Date().toISOString(), slug).run();
 }

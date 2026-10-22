@@ -79,7 +79,6 @@ import {
   trackRepo,
   untrackRepo,
   updateIdentityTokens,
-  updateRepoDescription,
   updateRepoOwner,
   updateRepoShardOf,
   updateRepoVisibility,
@@ -309,6 +308,41 @@ function renderMarkdown(src: string, slug: string, ref: string): string {
   return html;
 }
 
+/**
+ * #67 follow-up: the README IS the description now -- no separate
+ * stored field shown or edited on its own (repos.description/
+ * meta.description still exist as the one-time seed doCreateRepo's own
+ * README/Ladder-rung generation reads, and what Explore/profile
+ * listings show for a short blurb, but there's no dedicated settings
+ * UI for it anymore). A real `<!-- more -->` marker (Jekyll/Hugo's own
+ * convention) in the raw README source, if present, is the author's
+ * own deliberate cut -- everything before it always shows, no fade;
+ * everything after sits behind a plain toggle, revealed cleanly on
+ * click. With no marker, the WHOLE README is the toggle's own content
+ * instead, clipped to a fixed height with a fade at the bottom when
+ * collapsed (readme-fold-clip) -- the algorithmic, no-deliberate-
+ * boundary case looking visibly different from the deliberate one.
+ * Split on the RAW markdown source, before rendering -- renderMarkdown
+ * itself has no special handling for an HTML comment (it isn't a real
+ * markdown engine), so the marker has to be consumed here, never
+ * passed through to it, or it would show up escaped as literal text.
+ */
+function readmeFoldHtml(raw: string, slug: string, ref: string): string {
+  const marker = raw.match(/<!--\s*more\s*-->/i);
+  const hasMarker = !!marker;
+  const aboveRaw = hasMarker ? raw.slice(0, marker.index) : "";
+  const restRaw = hasMarker ? raw.slice(marker.index! + marker[0].length) : raw;
+  const aboveHtml = aboveRaw.trim() ? `<div class="md">${renderMarkdown(aboveRaw, slug, ref)}</div>` : "";
+  if (!restRaw.trim()) return aboveHtml;
+  return `${aboveHtml}
+    <div class="readme-fold${hasMarker ? "" : " readme-fold-clip"}" data-readme-fold>
+      <div class="md readme-fold-content">${renderMarkdown(restRaw, slug, ref)}</div>
+      <button type="button" class="readme-fold-toggle" data-readme-fold-toggle>
+        <span class="readme-fold-line"></span><span class="readme-fold-dots">&hellip;</span><span class="readme-fold-line"></span>
+      </button>
+    </div>`;
+}
+
 // A bold, dark design system -- a muted purple backdrop with a handful
 // of saturated accents (pink/yellow/cyan/green/blue/red) reserved for
 // things that are actually signal: an action button, a status badge,
@@ -336,6 +370,7 @@ nav.links a:hover{color:var(--pink)}
 main{max-width:980px;margin:0 auto;padding:2rem 1.5rem 4rem}
 h1{font-size:1.5rem;margin:0 0 1.25rem}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.4rem;margin-bottom:1.25rem}
+.sub-tabs{background:none;border:none;border-radius:0;padding:0;margin:0}
 .card h2{margin:0 0 .6rem;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
 .stack>*+*{margin-top:.75rem}
 .row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;line-height:1.5}
@@ -424,6 +459,12 @@ select.role-select{appearance:none;-webkit-appearance:none;background-color:tran
 select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08)}
 .split{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
 .split>div,.split>details{flex:1 1 16rem;min-width:0}
+.readme-fold:not(.readme-fold-clip):not(.is-expanded) .readme-fold-content{display:none}
+.readme-fold-clip:not(.is-expanded) .readme-fold-content{max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,#000 60%,transparent 100%);mask-image:linear-gradient(to bottom,#000 60%,transparent 100%)}
+.readme-fold-toggle{display:flex;align-items:center;gap:.6rem;width:100%;background:none;border:none;color:var(--muted);cursor:pointer;padding:.3rem 0;font-size:.85rem;font-family:inherit}
+.readme-fold-toggle:hover{color:var(--fg)}
+.readme-fold-line{flex:1;height:1px;background:var(--border)}
+.readme-fold-dots{flex:none;letter-spacing:.15em}
 .align-right{text-align:right}
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
@@ -898,6 +939,17 @@ document.querySelectorAll('[data-live-panel]').forEach(function (el) {
       .catch(function () { inFlight = false; });
   }
   setInterval(poll, zzLivePollMs);
+});
+
+// README fold (readmeFoldHtml) -- a plain toggle, not <details>: the
+// clipped-but-visible "fade" preview (readme-fold-clip, the no-marker
+// case) needs its content to stay in the DOM and visible even while
+// collapsed, which <details> can't do (its own UA stylesheet fully
+// hides non-summary children until [open]).
+document.querySelectorAll('[data-readme-fold-toggle]').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    btn.closest('[data-readme-fold]').classList.toggle('is-expanded');
+  });
 });
 `;
 
@@ -2042,20 +2094,6 @@ async function doSetVisibility(env: WebEnv, actor: Agent, repoSlug: string, visi
   }
 }
 
-/** Same two-places-at-once shape doSetVisibility already uses (zz-meta's meta.json is the real source of truth; the D1 column is a read-side cache the repo page and every listing/search query actually read from) -- description was previously set once at creation (doCreateRepo) and never editable again. */
-async function doSetDescription(env: WebEnv, actor: Agent, repoSlug: string, description: string): Promise<void> {
-  const repo = await getRepoBySlug(env.DB, repoSlug);
-  if (!repo) throw new ApiError(404, "no such Lane");
-  using artifactsRepo = await env.ARTIFACTS.get(repo.artifacts_name);
-  const token = await artifactsRepo.createToken("write", 3600);
-  const info = await artifactsRepo.info();
-  const { meta, roles } = await readRepoMetaAndRoles(info.remote, token);
-  if (!meta) throw new ApiError(404, "Lane has no metadata yet");
-  await requireLaneOwner(env, repo, roles, actor, repoSlug);
-  await writeRepoMeta(info.remote, token, { ...meta, description });
-  await updateRepoDescription(env.DB, repo.slug, description);
-}
-
 /** Ownership transfer keeps the repo's URL (slug) unchanged -- the slug is frozen at creation time off the ORIGINAL owner's username, same as a GitHub repo's path staying put after a transfer within the same org would. The new owner gets an explicit "owner" grant in roles.json; the previous owner's own grant is left as-is (not stripped), so transferring doesn't silently revoke their access -- they can demote themselves separately via the roles list if that's what they want. */
 async function doTransferOwnership(env: WebEnv, actor: Agent, repoSlug: string, newOwnerUsername: string): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
@@ -2950,18 +2988,6 @@ async function handleVisibilityForm(repoSlug: string, request: Request, env: Web
   return redirect(`/${repoSlug}/settings`);
 }
 
-async function handleDescriptionForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
-  const me = await resolveRequestAgent(request, env);
-  if (!me) return redirect("/login");
-  const form = await request.formData();
-  try {
-    await doSetDescription(env, me, repoSlug, String(form.get("description") ?? "").trim());
-  } catch (err) {
-    if (err instanceof ApiError) return new Response(err.message, { status: err.status });
-    throw err;
-  }
-  return redirect(`/${repoSlug}/settings`);
-}
 
 async function handleTransferForm(repoSlug: string, request: Request, env: WebEnv): Promise<Response> {
   const me = await resolveRequestAgent(request, env);
@@ -3820,10 +3846,26 @@ function parseBasicAuth(request: Request): { username: string; password: string 
   }
 }
 
+/**
+ * A real, previously-undiscovered bug found live while verifying #67's
+ * test push: `zz credential-helper`'s own output (and the
+ * x-token-auth-over-Basic convention it follows, same as GitHub's
+ * personal-access-token-over-HTTPS) always sends username="x-token-
+ * auth" (a fixed placeholder, never empty) with the real token in
+ * password -- so `basic.username || basic.password` picked the
+ * placeholder every single time, never the actual token, and every
+ * git push authenticated this way failed closed (hashed "x-token-
+ * auth" itself, which naturally never matches a real row) --
+ * confirmed directly against D1: the real token's hash WAS an active,
+ * unrevoked row, just never the string this function hashed. Prefers
+ * password now (where the real token lives under that convention),
+ * falling back to username only for the other common convention
+ * (`https://<token>@host/...`, token as username, password empty).
+ */
 async function resolveGitAuthPrincipal(request: Request, env: WebEnv): Promise<string | null> {
   const basic = parseBasicAuth(request);
   if (!basic) return null;
-  const candidate = basic.username || basic.password;
+  const candidate = basic.password || basic.username;
   if (!candidate) return null;
   const token = await findActiveAgentToken(env.DB, hashAgentToken(candidate));
   if (!token) return null;
@@ -4101,8 +4143,14 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
     { id: "git", label: "Git", html: gitDetailsHtml },
   ];
 
+  // #62 follow-up: a sub-tab group (Feed/Lanes/Asks inside Activity,
+  // e.g.) is NOT its own nested .card -- that gave it a second,
+  // indented/bordered frame sitting inside the main tab's own card,
+  // which read as a box-inside-a-box instead of one continuous
+  // surface. Plain, full-width, no border/padding of its own -- only
+  // the top-level mainTabGroup below still gets the card treatment.
   const tabGroup = (groupId: string, tabs: { id: string; label: string; html: string }[]): string => `
-    <div class="card" data-tabs>
+    <div class="sub-tabs" data-tabs>
       <div class="tab-bar">${tabs.map((t, i) => `<button type="button" class="tab-btn${i === 0 ? " active" : ""}" data-target="${groupId}-${t.id}">${esc(t.label)}</button>`).join("")}</div>
       ${tabs.map((t, i) => `<div id="${groupId}-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
     </div>`;
@@ -4113,12 +4161,16 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
       ${tabs.map((t, i) => `<div id="main-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
     </div>`;
 
-  // The page's own short description: the Ladder's root rung (the
-  // repo-wide "_repo" node, shared across every same-repo Lane), not
-  // this one Lane's own objective -- "what this whole thing is",
-  // falling back to the stored repo description for a repo too new (or
-  // too old) to have a Ladder root rung yet.
-  const shortDescription = ladder?.summary ?? meta?.description ?? repoRow.description ?? "";
+  // #67: the README IS the description now -- readmeFoldHtml (above
+  // the fold always visible, the rest behind a plain toggle) replaces
+  // the old separate "description" field + its own distinct "Read
+  // more" block entirely. Falls back to the Ladder's own root rung, or
+  // the one-time-seed description, only for a Lane with no README at
+  // all (readme === null) -- there's nothing to fold in that case, no
+  // toggle shown.
+  const descriptionHtml = readme
+    ? readmeFoldHtml(readme, repoSlug, info.defaultBranch)
+    : `<p>${autolinkText(ladder?.summary ?? meta?.description ?? repoRow.description ?? "")}</p>`;
 
   const activityActionsHtml = `<div class="field-row" style="flex-wrap:nowrap">
       <div class="clone-row" style="flex:1;margin:0">
@@ -4149,7 +4201,7 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
     `<div class="card">
        ${repoRow.ingest_status === "ingesting" ? `<p><span class="badge badge-yellow">⏳ ingesting</span> <span class="muted">still importing -- content below may be incomplete until this finishes.</span></p>` : ""}
        <div class="card-head">
-         <p>${autolinkText(shortDescription)}</p>
+         <div></div>
          ${
            me && !isOwner
              ? `<form method="post" action="/${esc(repoSlug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this Lane" : "Track this Lane"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
@@ -4157,19 +4209,7 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
          }
          ${isOwner ? `<a href="/${esc(repoSlug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
-       ${
-         // #62 follow-up: README as a "Read more" fold under the
-         // description, not a tab competing for attention with Activity
-         // or buried under Context -- shortDescription (the Ladder's
-         // own root rung, above) is "above the fold"; this is
-         // everything else. Deliberately NOT deduplicated against the
-         // description yet (they may well repeat each other right now)
-         // -- a real README/description-sync design (an HTML-comment-
-         // embedded summary, kept in sync with the Ladder rung how
-         // exactly, and whether at all once a human's hand-edited it)
-         // is still an open question, not resolved here (#67).
-         readme ? `<details class="summary-detail"><summary>Read more...</summary><div class="md">${renderMarkdown(readme, repoSlug, info.defaultBranch)}</div></details>` : ""
-       }
+       ${descriptionHtml}
        <div class="split">
          <details class="summary-detail" style="flex:1"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
          ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
@@ -4275,14 +4315,6 @@ async function handleRepoSettings(slug: string, request: Request, env: WebEnv): 
     `${slug} settings`,
     me,
     `${card(
-      "Description",
-      `<form method="post" action="/${esc(slug)}/settings/description" class="stack">
-        <textarea name="description" rows="2" placeholder="What is this Lane?" style="width:100%">${esc(meta?.description ?? "")}</textarea>
-        <button type="submit" class="secondary" style="align-self:flex-start">Save</button>
-      </form>`,
-    )}
-
-     ${card(
       "Roles",
       `<ul class="list">${roleRows || '<li class="empty">No grants yet.</li>'}</ul>`,
       { addModal: "modal-add-role" },
@@ -4856,10 +4888,6 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/visibility$/);
     if (m && request.method === "POST") return handleVisibilityForm(`${m[1]}/${m[2]}`, request, env);
-  }
-  {
-    const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/description$/);
-    if (m && request.method === "POST") return handleDescriptionForm(`${m[1]}/${m[2]}`, request, env);
   }
   {
     const m = path.match(/^\/([^/]+)\/([^/]+)\/settings\/transfer$/);
