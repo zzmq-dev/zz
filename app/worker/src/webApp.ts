@@ -1620,15 +1620,33 @@ function buildInitialLadderRungs(opts: { description: string | null; ownerName: 
   return [repoRung, readmeRung, ...(licenseRung ? [licenseRung] : []), changesetRung];
 }
 
+// #66: temporary timing instrumentation -- doCreateRepo is confirmed
+// live to take 10+ seconds for a single, brand-new, empty repo, and
+// nobody's actually measured where that time goes yet (the step
+// sequence below is a real guess at the likely dominant costs, not a
+// profile). Logs one line per step so a real wrangler tail session
+// against a real create can show the actual breakdown before anyone
+// reorders/parallelizes anything based on a guess. Remove once #66's
+// real bottleneck is found and fixed.
+async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    console.log(`[doCreateRepo timing] ${label}: ${Date.now() - start}ms`);
+  }
+}
+
 async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description: string | null, licenseKey: string | null): Promise<RepoRow> {
   if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new ApiError(400, "name must match [A-Za-z0-9._-]+");
   const artifactsName = shortId("repo");
   const slug = `${ownerUrlSegment(owner)}/${slugify(name)}`;
   const license = licenseKey ? LICENSES[licenseKey] : null;
+  const overallStart = Date.now();
 
-  const created = await env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" });
-  using repo = await env.ARTIFACTS.get(artifactsName);
-  const token = await repo.createToken("write", 3600);
+  const created = await timed("ARTIFACTS.create", () => env.ARTIFACTS.create(artifactsName, { description: description ?? undefined, setDefaultBranch: "main" }));
+  using repo = await timed("ARTIFACTS.get", () => env.ARTIFACTS.get(artifactsName));
+  const token = await timed("repo.createToken", () => repo.createToken("write", 3600));
   // commit_changeset (and anything else that anchors to a commit) needs
   // a parent to diff against -- a brand new repo has none, so seed one.
   const readmeContent = `# ${name}\n\n${description ?? ""}\n`;
@@ -1646,20 +1664,20 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // it has no separate contact email on file -- a real, resolvable
   // address, not a fake placeholder.
   const ownerFallbackEmail = ownerParsedDid ? `${ownerParsedDid.name ?? "root"}@${ownerParsedDid.domain}` : `${owner.username}@zz.local`;
-  const sha = await createInitialCommit(created.remote, token, files, { name: ownerDisplayName, email: owner.email ?? ownerFallbackEmail });
-  await ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username });
-  const row = await upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username });
-  await syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]);
+  const sha = await timed("createInitialCommit", () => createInitialCommit(created.remote, token, files, { name: ownerDisplayName, email: owner.email ?? ownerFallbackEmail }));
+  await timed("ensureMeta", () => ensureMeta(created.remote, token, { description: description ?? "", owner: owner.username }));
+  const row = await timed("upsertRepo", () => upsertRepo(env.DB, { slug, artifactsName, description, ownerUsername: owner.username }));
+  await timed("syncRepoRoleCache", () => syncRepoRoleCache(env.DB, row.slug, [{ principal: owner.username, role: "owner", granted_by: "system", at: row.created_at }]));
   // Tracking is just a personal bookmark (trackRepo's own doc comment),
   // not an RBAC grant -- but a repo its own creator can't see in `zz
   // top` without a separate manual `zz repo track` first is a bad
   // default, confirmed live as a real surprise.
-  await trackRepo(env.DB, owner.username, row.slug);
+  await timed("trackRepo", () => trackRepo(env.DB, owner.username, row.slug));
 
   const rungs = buildInitialLadderRungs({ description, ownerName: ownerDisplayName, repoName: name, sha, license });
   const stub = doStub(env, artifactsName);
-  await stub.configure(artifactsName);
-  await stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs });
+  await timed("stub.configure", () => stub.configure(artifactsName));
+  await timed("ladder_write_rung", () => stub.callTool("ladder_write_rung", { repo: artifactsName, rung: rungs }));
   // The repo's own long-lived root Lane -- matches cli/commands/
   // ladder-build.ts's identical bootstrap for the local onboarding
   // path. Without this, lane_list on a brand-new repo returned []
@@ -1675,7 +1693,10 @@ async function doCreateRepo(env: WebEnv, owner: Agent, name: string, description
   // silently still "worked" purely by that coincidence -- confirmed
   // live, caught by this exact call producing a Lane id of "_repo"
   // after the rename instead of the new "origin".
-  await stub.callTool("lane_propose", { repo: artifactsName, id: ORIGIN_LANE_ID, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username, owners: [owner.username] });
+  await timed("lane_propose", () =>
+    stub.callTool("lane_propose", { repo: artifactsName, id: ORIGIN_LANE_ID, name: slug, objective: `the ${slug} repository`, scope: ["**"], actor: owner.username, owners: [owner.username] }),
+  );
+  console.log(`[doCreateRepo timing] TOTAL: ${Date.now() - overallStart}ms`);
 
   return row;
 }
