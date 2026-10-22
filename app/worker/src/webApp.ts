@@ -457,8 +457,6 @@ dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;marg
 .tab-btn:hover{color:var(--fg);background:none}
 select.role-select{appearance:none;-webkit-appearance:none;background-color:transparent;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23B4A3D6' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .45rem center;background-size:.6em;border:1px solid var(--border);color:var(--fg);padding:.2rem 1.4rem .2rem .5rem;border-radius:6px;font-size:.85rem}
 select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08)}
-.split{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
-.split>div,.split>details{flex:1 1 16rem;min-width:0}
 .readme-fold:not(.readme-fold-clip):not(.is-expanded) .readme-fold-content{display:none}
 .readme-fold-clip:not(.is-expanded) .readme-fold-content{max-height:9em;overflow:hidden;-webkit-mask-image:linear-gradient(to bottom,#000 60%,transparent 100%);mask-image:linear-gradient(to bottom,#000 60%,transparent 100%)}
 .readme-fold-toggle{display:flex;align-items:center;gap:.6rem;width:100%;background:none;border:none;color:var(--muted);cursor:pointer;padding:.3rem 0;font-size:.85rem;font-family:inherit}
@@ -4221,10 +4219,8 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
          ${isOwner ? `<a href="/${esc(repoSlug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
        ${descriptionHtml}
-       <div class="split">
-         <details class="summary-detail"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
-         ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
-       </div>
+       <details class="summary-detail"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
+       ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
      </div>
 
      ${mainTabGroup([
