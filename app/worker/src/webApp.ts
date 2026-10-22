@@ -2574,7 +2574,7 @@ async function handleWorkPage(request: Request, env: WebEnv): Promise<Response> 
 
 function workInstructions(repoSlug: string, laneId: string, askId: string, ask: AskEntry): string {
   if (ask.kind === "changeset_review") {
-    return `<pre>zz review --repos ${esc(repoSlug)}</pre>
+    return `<pre>zz review --lanes ${esc(repoSlug)}</pre>
       <p class="hint">Walks you through every changeset_review Ask you can approve, one at a time -- approve, request changes, or skip.</p>`;
   }
   return `<pre>zz repo clone ${esc(repoSlug)}
@@ -4091,7 +4091,7 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
 
   const cloneUrl = `${origin}/${repoSlug}`;
   const checkoutCmd = `zz lane checkout ${repoSlug}`;
-  const workCmd = `zz work --repos ${repoSlug}`;
+  const workCmd = `zz work --lanes ${repoSlug}`;
 
   const gitDetailsHtml = `<div class="clone-row" style="margin:0 0 .75rem">
       <div class="pre-wrap">

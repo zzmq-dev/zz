@@ -10,7 +10,7 @@ import { apiFetch } from "./api.js";
 import { listRunningRepos } from "./processRegistry.js";
 import type { BackendMode } from "./backendMode.js";
 
-/** No explicit config/--repos, local mode: union whatever other local `zz work`/`zz review` processes are watching with the current directory, if it's an onboarded GitHub-backed repo. Prints onboarding guidance and returns null (meaning "nothing to show, caller should exit/show empty") rather than ever pretending there's something to watch. */
+/** No explicit config/--lanes, local mode: union whatever other local `zz work`/`zz review` processes are watching with the current directory, if it's an onboarded GitHub-backed repo. Prints onboarding guidance and returns null (meaning "nothing to show, caller should exit/show empty") rather than ever pretending there's something to watch. */
 async function discoverLocalRepos(): Promise<string[] | null> {
   const running = listRunningRepos();
   const cwdSlug = inferGitHubSlugFromCwd();
@@ -43,7 +43,7 @@ function cwdSlugLooksLikeGitRepo(): boolean {
 }
 
 /**
- * Priority: --repos (explicit, always wins) > the server's own
+ * Priority: --lanes (explicit, always wins) > the server's own
  * per-identity list, if logged in (never mixed with a local config file
  * that isn't scoped per-identity -- confirmed live: logging in as a
  * second account still showed the first account's repos, because

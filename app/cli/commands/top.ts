@@ -3,7 +3,7 @@
 // Remote by default, like work/review; --local stays fully supported
 // for the demo/local-backend path. Unlike work/review, `top` is
 // read-only and has to work with ZERO config: no ~/.zz/config.json,
-// no --repos, no login (remote) or other running zz process (local)
+// no --lanes, no login (remote) or other running zz process (local)
 // all mean "show an empty/starter dashboard, not a crash" -- the
 // repo-resolution chain (lib/watchedRepoResolution.ts, shared with
 // `zz work --assist`'s own ask picker) is what makes that true, and

@@ -1,6 +1,6 @@
 // A lightweight "who else is running zz right now, and on what" --
 // the local-mode equivalent of remote mode's `/api/me/repos`: `zz top
-// --local` with no config/`--repos` has no server to ask, so it asks
+// --local` with no config/`--lanes` has no server to ask, so it asks
 // the filesystem instead. One file per process (keyed by pid, so a
 // second process never collides with or overwrites the first's),
 // written on start and removed on clean exit; `zz top` unions
