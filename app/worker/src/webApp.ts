@@ -423,7 +423,7 @@ dialog.modal .modal-actions{display:flex;justify-content:flex-end;gap:.5rem;marg
 select.role-select{appearance:none;-webkit-appearance:none;background-color:transparent;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23B4A3D6' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .45rem center;background-size:.6em;border:1px solid var(--border);color:var(--fg);padding:.2rem 1.4rem .2rem .5rem;border-radius:6px;font-size:.85rem}
 select.role-select:disabled{opacity:1;color:var(--fg);border-color:transparent;background-color:rgba(180,163,214,.08)}
 .split{display:flex;justify-content:space-between;gap:1.5rem;flex-wrap:wrap}
-.split>div{flex:1 1 16rem;min-width:0}
+.split>div,.split>details{flex:1 1 16rem;min-width:0}
 .align-right{text-align:right}
 .align-right pre{text-align:left}
 .danger-zone{border-color:rgba(255,68,102,.4)}
@@ -3986,7 +3986,14 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
   const checkoutCmd = `zz lane checkout ${repoSlug}`;
   const workCmd = `zz work --repos ${repoSlug}`;
 
-  const gitDetailsHtml = `<ul class="list">
+  const gitDetailsHtml = `<div class="clone-row" style="margin:0 0 .75rem">
+      <div class="pre-wrap">
+        <pre>git clone ${esc(cloneUrl)}</pre>
+        <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
+      </div>
+    </div>
+    <p class="hint">Plain git, no zz credential helper -- works with a token embedded in the URL or entered when git prompts, same as any other host. <code>zz lane checkout</code> (above) sets up the short-lived credential helper instead, so you don't have to.</p>
+    <ul class="list">
       <li class="row"><span class="rung">remote</span> <span class="mono">${esc(cloneUrl)}</span></li>
       <li class="row"><span class="rung">default branch</span> <span class="mono">${esc(info.defaultBranch)}</span></li>
       ${KNOWN_LADDER_NOTES_REFS.map((r) => `<li class="row"><span class="rung">Ladder notes</span> <span class="mono">${esc(r)}</span></li>`).join("")}
@@ -4006,24 +4013,22 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
     },
   ];
 
-  const contextTabs = [
-    { id: "readme", label: "README", html: readme ? `<div class="md">${renderMarkdown(readme, repoSlug, info.defaultBranch)}</div>` : '<div class="empty">No README.</div>' },
-    {
-      id: "graph",
-      label: "Graph",
-      html: `<div class="ladder-filter-bar" data-ladder-filter-bar>
-               <input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
-               <select class="ladder-kind-select" data-ladder-kind-filter onchange="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
-                 <option value="">all kinds</option>
-                 ${Object.keys(LADDER_KIND_ORDER)
-                   .map((k) => `<option value="${esc(k)}">${esc(k)}</option>`)
-                   .join("")}
-               </select>
-             </div>
-             <ul class="list list-scroll" data-live-panel="graph">${ladder ? renderLadderNode(repoSlug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
-    },
-    { id: "insights", label: "Insights", html: `<ul class="list" data-live-panel="insights">${insightsHtml || '<li class="empty">No Insights posted yet.</li>'}</ul>` },
-  ];
+  // #62 follow-up: Context is now just the Graph, no sub-tabs of its
+  // own -- README moved to a "Read more" fold under the description
+  // (card-head, below) instead of competing for a tab slot, and
+  // Insights lifted to its own main tab instead of hiding under this
+  // one. ladderGraphHtml is a plain value (not a {id,label,html} tab
+  // list) since there's nothing left to switch between here.
+  const ladderGraphHtml = `<div class="ladder-filter-bar" data-ladder-filter-bar>
+      <input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
+      <select class="ladder-kind-select" data-ladder-kind-filter onchange="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
+        <option value="">all kinds</option>
+        ${Object.keys(LADDER_KIND_ORDER)
+          .map((k) => `<option value="${esc(k)}">${esc(k)}</option>`)
+          .join("")}
+      </select>
+    </div>
+    <ul class="list list-scroll" data-live-panel="graph">${ladder ? renderLadderNode(repoSlug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`;
 
   const codeTabs = [
     { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>` },
@@ -4050,23 +4055,27 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
   // too old) to have a Ladder root rung yet.
   const shortDescription = ladder?.summary ?? meta?.description ?? repoRow.description ?? "";
 
-  const activityActionsHtml = `<div class="clone-row">
-      <div class="pre-wrap">
-        <pre>${esc(workCmd)}</pre>
-        <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+  const activityActionsHtml = `<div class="field-row" style="flex-wrap:nowrap">
+      <div class="clone-row" style="flex:1;margin:0">
+        <div class="pre-wrap">
+          <pre>${esc(workCmd)}</pre>
+          <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+        </div>
       </div>
+      <a href="/docs/install/" style="flex:none"><button class="secondary">Install zz</button></a>
     </div>
-    <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this Lane's Asks, same as any other agent.</p>
-    <a href="/docs/install/"><button class="secondary">Install zz</button></a>`;
+    <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this Lane's Asks, same as any other agent.</p>`;
 
-  const codeActionsHtml = `<div class="clone-row">
-      <div class="pre-wrap">
-        <pre>${esc(checkoutCmd)}</pre>
-        <button class="secondary icon-btn" data-copy="${esc(checkoutCmd)}" title="Copy">⧉</button>
+  const codeActionsHtml = `<div class="field-row" style="flex-wrap:nowrap">
+      <div class="clone-row" style="flex:1;margin:0">
+        <div class="pre-wrap">
+          <pre>${esc(checkoutCmd)}</pre>
+          <button class="secondary icon-btn" data-copy="${esc(checkoutCmd)}" title="Copy">⧉</button>
+        </div>
       </div>
+      <a href="${origin}/${esc(repoSlug)}/archive.zip" style="flex:none"><button class="secondary">Download .zip</button></a>
     </div>
-    <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz lane checkout ${esc(repoSlug)}</code> does this automatically when logged in via the CLI.</p>
-    <a href="${origin}/${esc(repoSlug)}/archive.zip"><button class="secondary">Download .zip</button></a>`;
+    <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz lane checkout ${esc(repoSlug)}</code> does this automatically when logged in via the CLI.</p>`;
 
   const [ownerUsername] = repoSlug.split("/");
   return layout(
@@ -4083,6 +4092,19 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
          }
          ${isOwner ? `<a href="/${esc(repoSlug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
+       ${
+         // #62 follow-up: README as a "Read more" fold under the
+         // description, not a tab competing for attention with Activity
+         // or buried under Context -- shortDescription (the Ladder's
+         // own root rung, above) is "above the fold"; this is
+         // everything else. Deliberately NOT deduplicated against the
+         // description yet (they may well repeat each other right now)
+         // -- a real README/description-sync design (an HTML-comment-
+         // embedded summary, kept in sync with the Ladder rung how
+         // exactly, and whether at all once a human's hand-edited it)
+         // is still an open question, not resolved here.
+         readme ? `<details class="summary-detail"><summary>Read more...</summary><div class="md">${renderMarkdown(readme, repoSlug, info.defaultBranch)}</div></details>` : ""
+       }
        <div class="split">
          <details class="summary-detail" style="flex:1"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
          ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
@@ -4091,7 +4113,8 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
 
      ${mainTabGroup([
        { id: "activity", label: "Activity", html: `${activityActionsHtml}${tabGroup("activity", activityTabs)}` },
-       { id: "context", label: "Context", html: tabGroup("context", contextTabs) },
+       { id: "context", label: "Context Graph", html: ladderGraphHtml },
+       { id: "insights", label: "Insights", html: `<ul class="list" data-live-panel="insights">${insightsHtml || '<li class="empty">No Insights posted yet.</li>'}</ul>` },
        { id: "code", label: "Code", html: `${codeActionsHtml}${tabGroup("code", codeTabs)}` },
      ])}`,
     {
