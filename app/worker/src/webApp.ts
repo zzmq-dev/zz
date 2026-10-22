@@ -934,7 +934,18 @@ document.querySelectorAll('[data-live-panel]').forEach(function (el) {
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (text) {
         inFlight = false;
-        if (text !== null) el.innerHTML = text;
+        if (text === null) return;
+        el.innerHTML = text;
+        // The Graph panel's filter bar (zzFilterLadder) is the
+        // live-panel's own previous sibling, outside the swapped
+        // innerHTML -- so the input/select keep whatever the viewer
+        // typed, but the li.hidden state the LAST filter run set is
+        // gone (every row was just replaced with fresh, unfiltered
+        // markup). Re-run it against the freshly-fetched rows so a
+        // live update doesn't silently undo an active filter while
+        // leaving its own input looking like it's still applied.
+        var filterBar = el.previousElementSibling;
+        if (filterBar && filterBar.hasAttribute('data-ladder-filter-bar')) zzFilterLadder(filterBar);
       })
       .catch(function () { inFlight = false; });
   }
@@ -4211,7 +4222,7 @@ async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string
        </div>
        ${descriptionHtml}
        <div class="split">
-         <details class="summary-detail" style="flex:1"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
+         <details class="summary-detail"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
          ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
        </div>
      </div>
