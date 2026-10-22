@@ -82,12 +82,25 @@ export class MaintainerDO extends DurableObject<Env> {
   private async syncLaneCache(lane: Lane): Promise<void> {
     const repoRow = await this.env.DB.prepare("SELECT slug FROM repos WHERE artifacts_name = ?").bind(this.artifactsName).first<{ slug: string }>();
     if (!repoRow) return;
+    // A real, pre-existing bug found while verifying #62 live: this
+    // column is named origin_repo_slug and every reader (laneOriginKey,
+    // webApp.ts -- already used by Explore/profile's own "related Lane"
+    // grouping before #62 ever existed) treats it as one, but
+    // lane.origin.repo is always the artifacts_name (confirmed earlier
+    // this session, #43's own origin_repo fix) -- storing it unresolved
+    // meant this column never actually held a real slug for any Lane
+    // with a real origin, same-repo child or cross-repo fork alike,
+    // silently breaking the rollup everywhere it was ever used. Same
+    // slug lookup this function already does for its own repo_slug
+    // above, just resolving the ORIGIN's own artifacts_name instead of
+    // this DO's.
+    const originRepoRow = lane.origin ? await this.env.DB.prepare("SELECT slug FROM repos WHERE artifacts_name = ?").bind(lane.origin.repo).first<{ slug: string }>() : null;
     const now = new Date().toISOString();
     await this.env.DB.batch([
       this.env.DB.prepare(
         "INSERT INTO lanes (repo_slug, lane_id, name, objective, status, origin_repo_slug, origin_lane_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (repo_slug, lane_id) DO UPDATE SET name = excluded.name, objective = excluded.objective, status = excluded.status, origin_repo_slug = excluded.origin_repo_slug, origin_lane_id = excluded.origin_lane_id, updated_at = excluded.updated_at",
-      ).bind(repoRow.slug, lane.id, lane.name, lane.objective, lane.status, lane.origin?.repo ?? null, lane.origin?.lane ?? null, now),
+      ).bind(repoRow.slug, lane.id, lane.name, lane.objective, lane.status, originRepoRow?.slug ?? null, lane.origin?.lane ?? null, now),
       this.env.DB.prepare("DELETE FROM lane_principals WHERE repo_slug = ? AND lane_id = ?").bind(repoRow.slug, lane.id),
       ...(["owner", "coordinator", "viewer", "committee"] as const).flatMap((role) =>
         lane[role === "owner" ? "owners" : role === "committee" ? "committee" : role === "coordinator" ? "coordinators" : "viewers"].map((principal) =>

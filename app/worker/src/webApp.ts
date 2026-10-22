@@ -58,6 +58,7 @@ import {
   listMyRepos,
   listRecentLanes,
   findReposByLaneId,
+  listLanesByOrigin,
   listRecentRepos,
   listRepoRolesForAgent,
   listReposOwnedBy,
@@ -151,10 +152,14 @@ function kindCode(kind: string): string {
   return `<code class="kind-code" style="color:hsl(${stringToHue(kind)},70%,68%)">${esc(kind)}</code>`;
 }
 
-/** A Lane id, in its own skewed tag (see .lane-tag) instead of the same plain badge-muted pill every other secondary detail gets -- a Lane is a distinct noun here, not just a label. Links to that Lane's own row in the Lanes tab (cross-repo, with repoSlug, when rendered somewhere other than that Lane's own repo page -- same convention as askIdLink). */
-function laneTagHtml(laneId: string, repoSlug?: string): string {
-  const href = repoSlug ? `/${esc(repoSlug)}#lane-${esc(laneId)}` : `#lane-${esc(laneId)}`;
-  return `<a href="${href}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
+/** #62: every Lane's own standalone page -- the origin Lane (id "origin") IS that repo's own page; any other lane_id in the same repo gets its own nested URL, since it has no separate backing repo/slug of its own. */
+function laneUrl(repoSlug: string, laneId: string): string {
+  return laneId === ORIGIN_LANE_ID ? `/${esc(repoSlug)}` : `/${esc(repoSlug)}/lane/${esc(laneId)}`;
+}
+
+/** A Lane id, in its own skewed tag (see .lane-tag) instead of the same plain badge-muted pill every other secondary detail gets -- a Lane is a distinct noun here, not just a label. Links to that Lane's own standalone page (#62) -- repoSlug is required now that every Lane has one, not just an in-page anchor on whichever page happens to be rendering this. */
+function laneTagHtml(laneId: string, repoSlug: string): string {
+  return `<a href="${laneUrl(repoSlug, laneId)}" class="lane-tag-link"><code class="lane-tag"><span class="text">${esc(laneId)}</span></code></a>`;
 }
 
 /**
@@ -175,10 +180,10 @@ function formatAgentId(username: string): string {
   return `<a href="/${esc(username)}" class="agent-id">${display}</a>`;
 }
 
-/** An Ask id as a link to its own entry in the Asks tab (where askEntryHtml below gives it a matching `id` anchor) -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
-/** `repoSlug` is needed anywhere this doesn't already sit on that Ask's own repo page -- a profile's cross-repo Activity feed (agentActivityHtml), unlike a repo page's own Activity/Asks tabs, since a bare "#ask-id" hash only scrolls within the CURRENT page, it doesn't know which repo to go to first. */
-function askIdLink(askId: string, repoSlug?: string): string {
-  const href = repoSlug ? `/${esc(repoSlug)}#${esc(askId)}` : `#${esc(askId)}`;
+/** An Ask id as a link to its own entry in that Lane's own Asks sub-tab -- same mono styling `.mono` uses elsewhere on the page, just without that class's own pill background/padding, which would be visual noise this densely packed inline. */
+/** `repoSlug`/`laneId` are needed anywhere this doesn't already sit on that Ask's own Lane page -- a profile's cross-repo Activity feed (agentActivityHtml), unlike a Lane page's own Feed/Asks sub-tabs, since a bare "#ask-id" hash only scrolls within the CURRENT page, it doesn't know which page to go to first. laneId defaults to the origin Lane when omitted -- the common case before #62 (every Ask lived on one repo-wide page); pass it explicitly for an Ask that lives on a non-origin Lane. */
+function askIdLink(askId: string, repoSlug?: string, laneId: string = ORIGIN_LANE_ID): string {
+  const href = repoSlug ? `${laneUrl(repoSlug, laneId)}#${esc(askId)}` : `#${esc(askId)}`;
   return `<a href="${href}" class="ask-id-link">${esc(askId)}</a>`;
 }
 
@@ -587,8 +592,27 @@ const WEB_JS = `
 // ask-id link, e.g.) only ever changes location.hash, it doesn't
 // reload the page, so this needs to be callable again on its own, on
 // 'hashchange', not just once at load.
+//
+// #62: a Lane page nests a tab group (Feed/Lanes/Asks, etc.) inside
+// each top-level tab's own panel (Activity/Context/Code) -- a plain
+// container.querySelectorAll('.tab-btn'/'.tab-panel') isn't scoped to
+// DIRECT children, so the outer container's own init/hash handling
+// used to also pick up every inner group's buttons and panels,
+// confirmed live: clicking an inner sub-tab also fired the outer
+// container's click handler (same button, two listeners), which hid
+// every panel under the outer container -- including the inner
+// group's own container panel itself -- blanking the whole page.
+// zzOwnTabBtns/zzOwnTabPanels fix this by keeping only the elements
+// whose NEAREST [data-tabs] ancestor is this exact container, not some
+// nested one.
+function zzOwnTabBtns(container) {
+  return Array.prototype.filter.call(container.querySelectorAll('.tab-btn'), function (b) { return b.closest('[data-tabs]') === container; });
+}
+function zzOwnTabPanels(container) {
+  return Array.prototype.filter.call(container.querySelectorAll('.tab-panel'), function (p) { return p.closest('[data-tabs]') === container; });
+}
 function zzApplyHash(container) {
-  var btns = container.querySelectorAll('.tab-btn');
+  var btns = zzOwnTabBtns(container);
   var hash = location.hash.slice(1);
   // A hash naming a specific element inside one of this container's
   // panels (an Ask's own id="ask-..." anchor, e.g.) needs THAT
@@ -611,12 +635,12 @@ function zzApplyHash(container) {
   if (targetEl) targetEl.scrollIntoView({ block: 'center' });
 }
 function zzInitTabs(container) {
-  var btns = container.querySelectorAll('.tab-btn');
+  var btns = zzOwnTabBtns(container);
   btns.forEach(function (btn) {
     btn.addEventListener('click', function () {
       btns.forEach(function (b) { b.classList.remove('active'); });
       btn.classList.add('active');
-      container.querySelectorAll('.tab-panel').forEach(function (p) { p.hidden = true; });
+      zzOwnTabPanels(container).forEach(function (p) { p.hidden = true; });
       document.getElementById(btn.dataset.target).hidden = false;
     });
   });
@@ -797,6 +821,48 @@ if (createRepoForm) {
         progressEl.hidden = true;
         errEl.textContent = "Couldn't reach the server -- try again.";
         errEl.hidden = false;
+      });
+  });
+}
+
+// #62: the Lane page's own inline "post an ask" form (Asks sub-tab) --
+// posts to the same JSON API the CLI already uses (/api/repos/:slug/ask),
+// same-origin session cookie works here the same way it works for the
+// create-Lane form above. Reloads the page on success rather than
+// patching just the Asks panel in place -- this Lane page has no live-
+// polling layer yet (a separate, later piece), so a full reload is the
+// correct way to show the newly posted ask right now.
+var postAskForm = document.querySelector('[data-post-ask-form]');
+if (postAskForm) {
+  postAskForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var input = postAskForm.querySelector('input[name="description"]');
+    var btn = postAskForm.querySelector('button[type="submit"]');
+    var repoSlug = postAskForm.dataset.postAskRepo;
+    var laneId = postAskForm.dataset.postAskLane;
+    var description = input.value.trim();
+    if (!description) return;
+    btn.disabled = true;
+    input.disabled = true;
+    fetch('/api/repos/' + repoSlug + '/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ description: description, lane_id: laneId }),
+    })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (result) {
+        if (result.ok) {
+          window.location.reload();
+          return;
+        }
+        btn.disabled = false;
+        input.disabled = false;
+        alert(result.body.error || 'Something went wrong -- try again.');
+      })
+      .catch(function () {
+        btn.disabled = false;
+        input.disabled = false;
+        alert("Couldn't reach the server -- try again.");
       });
   });
 }
@@ -2454,14 +2520,14 @@ async function handleWorkClaimForm(request: Request, env: WebEnv): Promise<Respo
     "Claimed",
     me,
     `<div class="card stack">
-       <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane ${laneTagHtml(laneId)}).</p>
+       <p>Claimed <span class="badge badge-yellow">${esc(resolvedAsk?.kind ?? "?")}</span> on <a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a> (lane ${laneTagHtml(laneId, repoSlug)}).</p>
        ${resolvedAsk ? workInstructions(repoSlug, laneId, askId, resolvedAsk) : '<p class="hint">Could not load this Ask\'s details -- check its own page\'s Asks tab.</p>'}
        <p><a href="/work">&larr; Back to Work</a></p>
      </div>`,
   );
 }
 
-async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string, decompose?: boolean): Promise<void> {
+async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, description: string, decompose?: boolean, laneId: string = ORIGIN_LANE_ID): Promise<void> {
   const repo = await getRepoBySlug(env.DB, repoSlug);
   if (!repo) throw new ApiError(404, "no such Lane");
   const stub = env.MAINTAINER_DO.get(env.MAINTAINER_DO.idFromName(repo.artifacts_name));
@@ -2475,11 +2541,15 @@ async function doPostAsk(env: WebEnv, actor: Agent, repoSlug: string, descriptio
   // created before this fix too, not just new ones. (These two used to
   // collide on the same bare "_repo" literal with no name of its own
   // for either sense -- see https://github.com/zzmq-dev/zz/issues/35.)
-  const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID });
-  if (!existingLane) {
-    await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username, owners: [repo.owner_username] });
+  // Only for the origin Lane specifically -- a non-origin lane_id is
+  // never this repo's own bootstrap-missing case, it's just a bad id.
+  if (laneId === ORIGIN_LANE_ID) {
+    const existingLane = await stub.callTool("lane_get", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID });
+    if (!existingLane) {
+      await stub.callTool("lane_propose", { repo: repo.artifacts_name, id: ORIGIN_LANE_ID, name: repo.slug, objective: `the ${repo.slug} repository`, scope: ["**"], actor: repo.owner_username, owners: [repo.owner_username] });
+    }
   }
-  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: ORIGIN_LANE_ID, kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
+  await stub.callTool("ask_post", { repo: repo.artifacts_name, lane_id: laneId, kind: "work", from: actor.username, payload: { description, ...(decompose ? { decompose: true } : {}) } });
 }
 
 // --- Agent profile: /<username> is BOTH the public view (anyone) and
@@ -2577,9 +2647,9 @@ async function agentActivityHtml(agent: Agent, repos: RepoRow[], env: WebEnv): P
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
       const rest =
         e.type === "ASK"
-          ? `${kindCode(e.kind ?? "?")} ${askIdLink(e.id, repoSlug)}`
+          ? `${kindCode(e.kind ?? "?")} ${askIdLink(e.id, repoSlug, laneId)}`
           : e.type === "ANSWER"
-            ? `${kindCode(e.action ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug)}`
+            ? `${kindCode(e.action ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug, laneId)}`
             : `${kindCode(e.kind)}: ${esc(e.text)}`;
       return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;<a href="/${esc(repoSlug)}" class="mono" style="color:var(--pink)">${esc(repoSlug)}</a>&nbsp;&nbsp;${laneTagHtml(laneId, repoSlug)}&nbsp;&nbsp;${rest}</div>`;
     })
@@ -3381,9 +3451,9 @@ async function handleApiShard(slug: string, request: Request, env: WebEnv): Prom
 async function handleApiPostAsk(slug: string, request: Request, env: WebEnv): Promise<Response> {
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
-    const body = (await request.json()) as { description?: string; decompose?: boolean };
+    const body = (await request.json()) as { description?: string; decompose?: boolean; lane_id?: string };
     if (!body.description) throw new ApiError(400, "description is required");
-    await doPostAsk(env, me, slug, body.description, body.decompose);
+    await doPostAsk(env, me, slug, body.description, body.decompose, body.lane_id);
     return json({ ok: true });
   });
 }
@@ -3428,9 +3498,9 @@ function repoResultHtml(r: RepoRow): string {
   return `<li class="row">${repoRowHtml(r)}</li>`;
 }
 
-/** A Lane's own row -- links to its anchor on its repo's own page (Lanes don't have a standalone page of their own yet; that's the one place "repo" still shows up structurally here, not as copy). */
+/** A Lane's own row -- links to its own standalone page (#62). */
 function laneRowHtml(l: LaneRow): string {
-  return `<span class="badge badge-pink">LANE</span> <a href="/${esc(l.repo_slug)}#lane-${esc(l.lane_id)}" class="name mono">${esc(l.name)}</a> <span class="badge">${esc(l.status)}</span>${l.objective ? ` <span class="desc muted">${autolinkText(l.objective)}</span>` : ""}`;
+  return `<span class="badge badge-pink">LANE</span> <a href="${laneUrl(l.repo_slug, l.lane_id)}" class="name mono">${esc(l.name)}</a> <span class="badge">${esc(l.status)}</span>${l.objective ? ` <span class="desc muted">${autolinkText(l.objective)}</span>` : ""}`;
 }
 
 const laneKey = (l: LaneRow): string => `${l.repo_slug}/${l.lane_id}`;
@@ -3479,6 +3549,13 @@ function shardGroupedListHtml<T>(rows: T[], slugOf: (t: T) => string, parentSlug
 async function listShardTreeFlat(env: WebEnv, rootSlug: string): Promise<RepoRow[]> {
   const direct = await listShardsOf(env.DB, rootSlug);
   const deeper = await Promise.all(direct.map((s) => listShardTreeFlat(env, s.slug)));
+  return [...direct, ...deeper.flat()];
+}
+
+/** #62: every descendant Lane of (rootRepoSlug, rootLaneId), at any depth, as one flat list (not including the root itself) -- the Lane-level generalization of listShardTreeFlat above, walking lanes.origin_repo_slug/origin_lane_id instead of repos.shard_of_slug, so it covers both a same-repo child Lane and a cross-repo forked one identically (both set this same pointer, see doForkRepo/ensureShard's own lane_propose call). Feeds a Lane's own standalone page's "Lanes" sub-tab (the rollup). */
+async function listLaneDescendantsFlat(env: WebEnv, rootRepoSlug: string, rootLaneId: string): Promise<LaneRow[]> {
+  const direct = await listLanesByOrigin(env.DB, rootRepoSlug, rootLaneId);
+  const deeper = await Promise.all(direct.map((l) => listLaneDescendantsFlat(env, l.repo_slug, l.lane_id)));
   return [...direct, ...deeper.flat()];
 }
 
@@ -3747,20 +3824,47 @@ function needGitAuthResponse(): Response {
   return new Response("authentication required\n", { status: 401, headers: { "www-authenticate": 'Basic realm="zz"' } });
 }
 
-async function handleRepoPage(me: Agent | null, slug: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
-  const ctx = await getRepoAccessContext(slug, env);
+// #62: known, fixed git-notes ref namespaces (cloudflareLadderBackend.ts's
+// own notesRefFor) -- shown as-is in the Git sub-tab rather than a live
+// ref enumeration against Artifacts, which has no confirmed API for
+// listing refs/branches beyond what repo.log/readTree already expose
+// for the default branch specifically.
+const KNOWN_LADDER_NOTES_REFS = ["refs/notes/zz/ladder/code", "refs/notes/zz/ladder/changeset", "refs/notes/zz/ladder/release"];
+
+/**
+ * #62: a Lane's own standalone page -- every Lane gets one now, not
+ * just the origin Lane (which still IS this same repo's own top-level
+ * URL, laneId defaulting to ORIGIN_LANE_ID; a non-origin lane_id within
+ * the SAME repo gets the nested /lane/<id> URL instead, see laneUrl).
+ * CODE-tab content (Files/Commits/Git) is always this REPO's own --
+ * shared by every same-repo Lane, since there's only one git history to
+ * show regardless of which lane_id you're viewing; a forked Lane has
+ * its own separate repo/slug entirely, reached by visiting that slug's
+ * own page, not a special case here. ACTIVITY/CONTEXT-tab content
+ * (Feed/Asks/Insights) is THIS LANE's own history only, never
+ * aggregated across its rollup -- the Lanes sub-tab is where the
+ * rollup itself lives, as a navigable tree, not inlined activity.
+ */
+async function handleLanePage(me: Agent | null, repoSlug: string, laneId: string, request: Request, env: WebEnv, origin: string): Promise<Response> {
+  const ctx = await getRepoAccessContext(repoSlug, env);
   if (!ctx) return new Response("no such Lane", { status: 404 });
   if (!(await canReadRepo(request, env, ctx.meta, ctx.lane))) return new Response("no such Lane", { status: 404 });
-  const { repoRow, meta, lane } = ctx;
+  const { repoRow, meta } = ctx;
 
   // Started here, awaited down below where they're actually used --
-  // neither depends on anything from the git-content reads that
-  // follow (they only need artifacts_name, already in hand), so
-  // there's no reason the DO/Ladder round-trip should wait for the
-  // Artifacts round-trip to finish first, or vice versa.
+  // none of these three depend on anything from the git-content reads
+  // that follow (they only need repoRow/artifacts_name, already in
+  // hand), so there's no reason the DO/Ladder/D1-rollup round-trips
+  // should wait for the Artifacts round-trip to finish first, or vice
+  // versa.
   const lanesAndLadder = Promise.all([getAllLanes(env, repoRow.artifacts_name), getLadderTree(env, repoRow.artifacts_name)]);
-  const shardTree = listShardTreeFlat(env, slug);
-  const trackingCheck = me ? isTrackingRepo(env.DB, me.username, slug) : Promise.resolve(false);
+  const descendantsPromise = listLaneDescendantsFlat(env, repoSlug, laneId);
+  const trackingCheck = me ? isTrackingRepo(env.DB, me.username, repoSlug) : Promise.resolve(false);
+
+  const [allLanes, ladder] = await lanesAndLadder;
+  const lane = laneId === ctx.lane.id ? ctx.lane : allLanes.find((l) => l.id === laneId);
+  if (!lane) return new Response("no such Lane", { status: 404 });
+  const isOriginLane = laneId === ORIGIN_LANE_ID;
 
   using repo = await env.ARTIFACTS.get(repoRow.artifacts_name);
   const info = await repo.info();
@@ -3782,106 +3886,131 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
   const hasMoreCommits = commitsFetched.length > COMMITS_PAGE_SIZE;
   const commits = hasMoreCommits ? commitsFetched.slice(0, COMMITS_PAGE_SIZE) : commitsFetched;
 
-  const fileListHtml = fileListRowsHtml(slug, info.defaultBranch, "", tree);
+  const fileListHtml = fileListRowsHtml(repoSlug, info.defaultBranch, "", tree);
 
-  const rolesHtml = [
-    ...lane.owners.map((p) => `<li class="row">${roleBadge("owner", formatAgentId(p))}</li>`),
-    ...lane.coordinators.map((p) => `<li class="row">${roleBadge("coordinator", formatAgentId(p))}</li>`),
-    ...lane.viewers.map((p) => `<li class="row">${roleBadge("viewer", formatAgentId(p))}</li>`),
-  ].join("");
+  // "Actors" (renamed from "Roles"): the origin-tier Role breakdown on
+  // the origin Lane's own page (meaningful only there -- an ordinary
+  // Lane's own owners/viewers are always empty, see engine/types.ts's
+  // Lane.owners doc comment); a non-origin Lane's own coordinators/
+  // committee otherwise -- who can actually act on THIS Lane
+  // specifically, not the whole repo.
+  const actorsHtml = isOriginLane
+    ? [
+        ...lane.owners.map((p) => `<li class="row">${roleBadge("owner", formatAgentId(p))}</li>`),
+        ...lane.coordinators.map((p) => `<li class="row">${roleBadge("coordinator", formatAgentId(p))}</li>`),
+        ...lane.viewers.map((p) => `<li class="row">${roleBadge("viewer", formatAgentId(p))}</li>`),
+      ].join("")
+    : [
+        ...lane.coordinators.map((p) => `<li class="row">${roleBadge("coordinator", formatAgentId(p))}</li>`),
+        ...lane.committee.filter((p) => !lane.coordinators.includes(p)).map((p) => `<li class="row">${roleBadge("committee", formatAgentId(p))}</li>`),
+      ].join("");
   const visibility = meta?.policy.visibility ?? "public";
-  const isOwner = !!me && laneHasOwner(lane, me.username);
+  const isOwner = !!me && laneHasOwner(ctx.lane, me.username);
   const tracking = !isOwner && (await trackingCheck);
 
-  const [lanes, ladder] = await lanesAndLadder;
-
-  // One entry per Ask, its own Answer(s) nested inside instead of
-  // listed separately -- this used to repeat almost everything
-  // Activity already shows, one flat row per ASK/ANSWER/INSIGHT, just
-  // reordered; grouping by the thing an Answer actually answers is
-  // what Activity (a live-feed-style read, deliberately flat and
-  // chronological) can't do and this tab exists to. Every Lane, not
-  // just the origin Lane -- a governance Lane's own vote_request/changeset_review
-  // Asks live elsewhere, and this used to only ever show the root one.
-  const flatProtocol = flattenProtocol(lanes);
+  // This Lane's own history only -- Feed/Asks/Insights never aggregate
+  // across its rollup (that's what the Lanes sub-tab, a navigable
+  // tree, is for instead).
+  const history = lane.history;
   const answersByAsk = new Map<string, AnswerEntry[]>();
-  for (const { entry } of flatProtocol) {
+  for (const entry of history) {
     if (entry.type !== "ANSWER") continue;
     const list = answersByAsk.get(entry.ask) ?? [];
     list.push(entry);
     answersByAsk.set(entry.ask, list);
   }
-  const asksHtml = flatProtocol
-    .filter((e): e is { laneId: string; entry: AskEntry } => e.entry.type === "ASK")
-    .map(({ laneId, entry: e }) => {
+  const asksHtml = history
+    .filter((e): e is AskEntry => e.type === "ASK")
+    .map((e) => {
       const answersHtml = (answersByAsk.get(e.id) ?? [])
         .map((a) => `<div class="row ask-answer-row">${timestampStackHtml(a.at)}<span class="badge badge-green">ANSWER</span> ${kindCode(a.action)} by ${formatAgentId(a.from)}</div>${jsonBlock(a.payload)}`)
         .join("");
-      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)} ${laneTagHtml(laneId)}</div>${jsonBlock(e.payload)}${answersHtml}</li>`;
+      return `<li class="stack" id="${esc(e.id)}"><div class="row"><span class="badge badge-yellow">ASK</span> ${timestampStackHtml(e.at)}${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")}</div>${jsonBlock(e.payload)}${answersHtml}</li>`;
     })
     .join("");
 
-  // A separate tab, not folded into Asks -- an Insight doesn't answer
-  // anything, it's a standalone observation (a norm worth recording, a
-  // trap worth warning the next reader about), so grouping it under an
-  // Ask the way an Answer groups under its own Ask would be forcing a
-  // relationship that doesn't exist. Still in Activity too (that tab's
-  // whole point is the complete, flat, chronological trail -- this one
-  // exists so Insights are findable without scrolling past everything
-  // else).
-  const insightsHtml = flatProtocol
-    .filter((e): e is { laneId: string; entry: InsightEntry } => e.entry.type === "INSIGHT")
-    .map(({ laneId, entry: e }) => `<li class="stack"><div class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)} ${laneTagHtml(laneId)}</div>${textBlock(e.text)}</li>`)
+  // A separate sub-tab, not folded into Asks -- an Insight doesn't
+  // answer anything, it's a standalone observation (a norm worth
+  // recording, a trap worth warning the next reader about), so
+  // grouping it under an Ask the way an Answer groups under its own
+  // Ask would be forcing a relationship that doesn't exist. Still in
+  // Feed too (that sub-tab's whole point is the complete, flat,
+  // chronological trail -- this one exists so Insights are findable
+  // without scrolling past everything else).
+  const insightsHtml = history
+    .filter((e): e is InsightEntry => e.type === "INSIGHT")
+    .map((e) => `<li class="stack"><div class="row"><span class="badge badge-cyan">INSIGHT</span> ${timestampStackHtml(e.at)}${kindCode(e.kind)} from ${formatAgentId(e.from)}</div>${textBlock(e.text)}</li>`)
     .join("");
 
-  const lanesHtml = lanes
-    .map((l) => {
-      const coordHtml = (l.coordinators ?? []).map(formatAgentId).join(", ");
-      return `<li class="row" id="lane-${esc(l.id)}">${laneTagHtml(l.id)} ${laneStatusCode(l.status)} <span class="scope">${coordHtml ? `${coordHtml} ` : ""}coordinator</span>${coordHtml ? "" : ' <span class="muted">none</span>'}</li>`;
-    })
-    .join("");
-
-  // "Activity" -- the closest thing a static page has to the CLI's own
-  // activity feed: there's no server-side record of raw tool-call
-  // traffic (the TUI's activity tab reads a live process's in-memory
-  // LogBuffer, which only exists while `zz work` is actually running),
-  // so this is the full persisted protocol trail instead, styled as a
-  // dense log feed rather than badge-decorated rows to read the way a
-  // live feed does.
-  const logFeedHtml = flattenProtocol(lanes)
+  // Feed -- the closest thing a static page has to the TUI's own
+  // protocol tab, scoped to this one Lane (not the whole repo the way
+  // the pre-#62 Activity tab was).
+  const feedHtml = [...history]
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
     .slice(0, 150)
-    .map(({ laneId, entry: e }) => {
+    .map((e) => {
       const cls = e.type === "ASK" ? "t-ask" : e.type === "ANSWER" ? "t-answer" : "t-insight";
       const rest =
         e.type === "ASK"
-          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id)}`
+          ? `${kindCode(e.kind ?? "?")} from ${formatAgentId(e.from ?? "?")} ${askIdLink(e.id, repoSlug, laneId)}`
           : e.type === "ANSWER"
-            ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?")}`
+            ? `${kindCode(e.action ?? "?")} by ${formatAgentId(e.from ?? "?")} on ${askIdLink(e.ask ?? "?", repoSlug, laneId)}`
             : `${kindCode(e.kind)} from ${formatAgentId(e.from)}: ${esc(e.text)}`;
-      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;${laneTagHtml(laneId)}&nbsp;&nbsp;${rest}</div>`;
+      return `<div class="log-line">${timestampStackHtml(e.at)}<span class="${cls}">${esc(e.type)}</span>&nbsp;&nbsp;${rest}</div>`;
     })
     .join("");
 
+  // The rollup -- every Lane (same-repo child or cross-repo fork)
+  // whose own origin chain traces back to this one, nested exactly
+  // like repos.shard_of_slug already nests a repo's own shards.
+  const descendants = await descendantsPromise;
+  const lanesHtml = `<ul class="list">${shardGroupedListHtml(descendants, laneKey, laneOriginKey, laneRowHtml, "related Lane") || '<li class="empty">No related Lanes yet.</li>'}</ul>`;
+
   const commitsHtml = commits
-    .map((c) => `<li class="row"><a href="/${esc(slug)}/commit/${esc(c.hash)}" class="mono">${esc(c.hash.slice(0, 8))}</a> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
+    .map((c) => `<li class="row"><a href="/${esc(repoSlug)}/commit/${esc(c.hash)}" class="mono">${esc(c.hash.slice(0, 8))}</a> ${esc(c.message.split("\n")[0])} <span class="muted">${esc(c.author.name)} ${esc(new Date(c.authoredAt * 1000).toISOString())}</span></li>`)
     .join("");
 
   // #commits (restored on load by zzInitTabs below) keeps the Commits
-  // tab open across a prev/next reload -- without it, a page link
-  // would land back on whichever tab renders first (readme/ladder),
-  // losing your place every single click.
+  // sub-tab open across a prev/next reload -- without it, a page link
+  // would land back on whichever tab renders first, losing your place
+  // every single click.
+  const pageUrl = laneUrl(repoSlug, laneId);
   const commitsPagerHtml = commitsPage > 1 || hasMoreCommits
     ? `<div class="commit-nav">
-        ${commitsPage > 1 ? `<a href="/${esc(slug)}?commitsPage=${commitsPage - 1}#commits" class="mono">&larr; newer</a>` : "<span></span>"}
-        ${hasMoreCommits ? `<a href="/${esc(slug)}?commitsPage=${commitsPage + 1}#commits" class="mono">older &rarr;</a>` : "<span></span>"}
+        ${commitsPage > 1 ? `<a href="${pageUrl}?commitsPage=${commitsPage - 1}#commits" class="mono">&larr; newer</a>` : "<span></span>"}
+        ${hasMoreCommits ? `<a href="${pageUrl}?commitsPage=${commitsPage + 1}#commits" class="mono">older &rarr;</a>` : "<span></span>"}
       </div>`
     : "";
 
-  const fileTabs = [
-    readme ? { id: "readme", label: "README", html: `<div class="md">${renderMarkdown(readme, slug, info.defaultBranch)}</div>` } : null,
+  const cloneUrl = `${origin}/${repoSlug}`;
+  const checkoutCmd = `zz lane checkout ${repoSlug}`;
+  const workCmd = `zz work --repos ${repoSlug}`;
+
+  const gitDetailsHtml = `<ul class="list">
+      <li class="row"><span class="rung">remote</span> <span class="mono">${esc(cloneUrl)}</span></li>
+      <li class="row"><span class="rung">default branch</span> <span class="mono">${esc(info.defaultBranch)}</span></li>
+      ${KNOWN_LADDER_NOTES_REFS.map((r) => `<li class="row"><span class="rung">Ladder notes</span> <span class="mono">${esc(r)}</span></li>`).join("")}
+    </ul>`;
+
+  const activityTabs = [
+    { id: "feed", label: "Feed", html: `<div class="log-feed" data-live-panel="feed">${feedHtml || '<div class="empty">No activity yet.</div>'}</div>` },
+    { id: "lanes", label: "Lanes", html: `<div data-live-panel="lanes">${lanesHtml}</div>` },
     {
-      id: "ladder",
-      label: "Ladder",
+      id: "asks",
+      label: "Asks",
+      html: `<form class="field-row" data-post-ask-form data-post-ask-repo="${esc(repoSlug)}" data-post-ask-lane="${esc(laneId)}">
+               <input name="description" placeholder="describe a task..." style="flex:3" required>
+               <button type="submit">Post</button>
+             </form>
+             <div data-live-panel="asks"><ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul></div>`,
+    },
+  ];
+
+  const contextTabs = [
+    { id: "readme", label: "README", html: readme ? `<div class="md">${renderMarkdown(readme, repoSlug, info.defaultBranch)}</div>` : '<div class="empty">No README.</div>' },
+    {
+      id: "graph",
+      label: "Graph",
       html: `<div class="ladder-filter-bar" data-ladder-filter-bar>
                <input type="search" class="ladder-search" placeholder="filter..." data-ladder-search oninput="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
                <select class="ladder-kind-select" data-ladder-kind-filter onchange="zzFilterLadder(this.closest('[data-ladder-filter-bar]'))">
@@ -3891,17 +4020,15 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
                    .join("")}
                </select>
              </div>
-             <ul class="list list-scroll">${ladder ? renderLadderNode(slug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
+             <ul class="list list-scroll" data-live-panel="graph">${ladder ? renderLadderNode(repoSlug, ladder, info.defaultBranch) : '<li class="empty">No Ladder content yet.</li>'}</ul>`,
     },
-    { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>` },
-    { id: "commits", label: "Commits", html: `<ul class="list">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
-  ].filter((t): t is { id: string; label: string; html: string } => t !== null);
+    { id: "insights", label: "Insights", html: `<ul class="list" data-live-panel="insights">${insightsHtml || '<li class="empty">No Insights posted yet.</li>'}</ul>` },
+  ];
 
-  const activityTabs = [
-    { id: "activity", label: "Activity", html: `<div class="log-feed">${logFeedHtml || '<div class="empty">No activity yet.</div>'}</div>` },
-    { id: "asks", label: "Asks", html: `<ul class="list">${asksHtml || '<li class="empty">No Asks posted yet.</li>'}</ul>` },
-    { id: "insights", label: "Insights", html: `<ul class="list">${insightsHtml || '<li class="empty">No Insights posted yet.</li>'}</ul>` },
-    { id: "lanes", label: "Lanes", html: `<ul class="list">${lanesHtml || '<li class="empty">No Lanes yet.</li>'}</ul>` },
+  const codeTabs = [
+    { id: "files", label: "Files", html: `<ul class="list">${fileListHtml || '<li class="empty">Empty.</li>'}</ul>` },
+    { id: "commits", label: "Commits", html: `<ul class="list" data-live-panel="commits">${commitsHtml || '<li class="empty">No commits yet.</li>'}</ul>${commitsPagerHtml}` },
+    { id: "git", label: "Git", html: gitDetailsHtml },
   ];
 
   const tabGroup = (groupId: string, tabs: { id: string; label: string; html: string }[]): string => `
@@ -3910,54 +4037,65 @@ async function handleRepoPage(me: Agent | null, slug: string, request: Request, 
       ${tabs.map((t, i) => `<div id="${groupId}-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
     </div>`;
 
-  const cloneUrl = `${origin}/${slug}`;
-  const workCmd = `zz work --repos ${slug}`;
+  const mainTabGroup = (tabs: { id: string; label: string; html: string }[]): string => `
+    <div class="card" data-tabs>
+      <div class="tab-bar main-tab-bar">${tabs.map((t, i) => `<button type="button" class="tab-btn${i === 0 ? " active" : ""}" data-target="main-${t.id}">${esc(t.label)}</button>`).join("")}</div>
+      ${tabs.map((t, i) => `<div id="main-${t.id}" class="tab-panel"${i === 0 ? "" : " hidden"}>${t.html}</div>`).join("")}
+    </div>`;
 
-  const resolvedShardTree = await shardTree;
-  const shardsHtml =
-    resolvedShardTree.length > 0
-      ? `<details class="summary-detail"><summary>Related Lanes</summary><ul class="list">${shardGroupedListHtml(resolvedShardTree, (r) => r.slug, (r) => r.shard_of_slug, repoRowHtml, "related Lane")}</ul></details>`
-      : "";
+  // The page's own short description: the Ladder's root rung (the
+  // repo-wide "_repo" node, shared across every same-repo Lane), not
+  // this one Lane's own objective -- "what this whole thing is",
+  // falling back to the stored repo description for a repo too new (or
+  // too old) to have a Ladder root rung yet.
+  const shortDescription = ladder?.summary ?? meta?.description ?? repoRow.description ?? "";
 
-  const [ownerUsername, repoNameSegment] = slug.split("/");
+  const activityActionsHtml = `<div class="clone-row">
+      <div class="pre-wrap">
+        <pre>${esc(workCmd)}</pre>
+        <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
+      </div>
+    </div>
+    <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this Lane's Asks, same as any other agent.</p>
+    <a href="/docs/install/"><button class="secondary">Install zz</button></a>`;
+
+  const codeActionsHtml = `<div class="clone-row">
+      <div class="pre-wrap">
+        <pre>${esc(checkoutCmd)}</pre>
+        <button class="secondary icon-btn" data-copy="${esc(checkoutCmd)}" title="Copy">⧉</button>
+      </div>
+    </div>
+    <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz lane checkout ${esc(repoSlug)}</code> does this automatically when logged in via the CLI.</p>
+    <a href="${origin}/${esc(repoSlug)}/archive.zip"><button class="secondary">Download .zip</button></a>`;
+
+  const [ownerUsername] = repoSlug.split("/");
   return layout(
-    slug,
+    `${repoSlug}${isOriginLane ? "" : `/${lane.id}`}`,
     me,
     `<div class="card">
        ${repoRow.ingest_status === "ingesting" ? `<p><span class="badge badge-yellow">⏳ ingesting</span> <span class="muted">still importing -- content below may be incomplete until this finishes.</span></p>` : ""}
        <div class="card-head">
-         <p>${autolinkText(meta?.description ?? repoRow.description ?? "")}</p>
+         <p>${autolinkText(shortDescription)}</p>
          ${
            me && !isOwner
-             ? `<form method="post" action="/${esc(slug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this Lane" : "Track this Lane"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
+             ? `<form method="post" action="/${esc(repoSlug)}/${tracking ? "untrack" : "track"}" class="inline"><button type="submit" class="secondary" title="${tracking ? "Stop tracking this Lane" : "Track this Lane"}">${tracking ? "★ Tracking" : "☆ Track"}</button></form>`
              : ""
          }
-         ${isOwner ? `<a href="/${esc(slug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
+         ${isOwner ? `<a href="/${esc(repoSlug)}/settings"><button class="icon-btn" title="Settings">⚙</button></a>` : ""}
        </div>
-       <div class="clone-row">
-         <div class="pre-wrap">
-           <pre>git clone ${esc(cloneUrl)}</pre>
-           <button class="secondary icon-btn" data-copy="${esc(`git clone ${cloneUrl}`)}" title="Copy clone command">⧉</button>
-         </div>
+       <div class="split">
+         <details class="summary-detail" style="flex:1"><summary>Actors</summary><ul class="list">${actorsHtml || '<li class="empty">None.</li>'}</ul></details>
+         ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
        </div>
-       <div class="clone-row">
-         <div class="pre-wrap">
-           <pre>${esc(workCmd)}</pre>
-           <button class="secondary icon-btn" data-copy="${esc(workCmd)}" title="Copy">⧉</button>
-         </div>
-       </div>
-       <p class="hint">To push: issue yourself (or a managed agent) a token on <a href="${me ? `/${esc(me.username)}` : "/login"}">your profile</a> (needs at least Coordinator). <code>zz lane checkout ${esc(slug)}</code> does this automatically when logged in via the CLI.</p>
-       <p class="hint">Join as a worker: run that from a terminal logged in via <code>zz login</code> to pick up and work this Lane's Asks, same as any other agent.</p>
-       <a href="${origin}/${esc(slug)}/archive.zip" style="display:inline-block;margin-bottom:.75rem"><button class="secondary">Download .zip</button></a>
-       <details class="summary-detail"><summary>Roles</summary><ul class="list">${rolesHtml}</ul></details>
-       ${policyPanelHtml(meta ? normalizePolicy(meta.policy) : DEFAULT_REPO_POLICY)}
-       ${shardsHtml}
      </div>
 
-     ${tabGroup("files", fileTabs)}
-     ${tabGroup("act", activityTabs)}`,
+     ${mainTabGroup([
+       { id: "activity", label: "Activity", html: `${activityActionsHtml}${tabGroup("activity", activityTabs)}` },
+       { id: "context", label: "Context", html: tabGroup("context", contextTabs) },
+       { id: "code", label: "Code", html: `${codeActionsHtml}${tabGroup("code", codeTabs)}` },
+     ])}`,
     {
-      h1Html: `<a href="/${esc(ownerUsername)}">${esc(ownerUsername)}</a>/${esc(repoNameSegment)}`,
+      h1Html: `<a href="/${esc(ownerUsername)}">${esc(ownerUsername)}</a>/${esc(repoSlug.split("/")[1])}${isOriginLane ? "" : ` <span class="lane-tag"><span class="text">${esc(lane.id)}</span></span>`}`,
       titleHtml: `<span class="badge badge-${visibility === "private" ? "red" : "muted"}">${esc(visibility)}</span>`,
     },
   );
@@ -4626,10 +4764,21 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
     if (m) return handleGitPack("git-receive-pack", `${m[1]}/${m[2]}`, request, env);
   }
   {
+    // #62: a non-origin lane_id within this same repo -- its own
+    // standalone page, not just an anchor on the repo's own. Matched
+    // before the bare two-segment route below, same necessity as every
+    // other specific-suffix route above it.
+    const m = path.match(/^\/([^/]+)\/([^/]+)\/lane\/([^/]+)$/);
+    if (m && request.method === "GET") {
+      const me = await resolveRequestAgent(request, env);
+      return handleLanePage(me, `${m[1]}/${m[2]}`, m[3], request, env, origin);
+    }
+  }
+  {
     const m = path.match(/^\/([^/]+)\/([^/]+)$/);
     if (m) {
       const me = await resolveRequestAgent(request, env);
-      return handleRepoPage(me, `${m[1]}/${m[2]}`, request, env, origin);
+      return handleLanePage(me, `${m[1]}/${m[2]}`, ORIGIN_LANE_ID, request, env, origin);
     }
   }
   {

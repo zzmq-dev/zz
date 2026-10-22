@@ -334,6 +334,12 @@ export interface LaneRow {
   updated_at: string;
 }
 
+/** #62: every Lane whose own origin pointer names (originRepoSlug, originLaneId) directly -- same-repo child Lanes and cross-repo forked Lanes alike, since both set this pointer identically (doForkRepo/ensureShard's own lane_propose call). One level only; listLaneDescendantsFlat (webApp.ts) walks this recursively to build a root Lane's full rollup tree, the same way listShardTreeFlat already does for repos.shard_of_slug. */
+export async function listLanesByOrigin(db: D1Database, originRepoSlug: string, originLaneId: string): Promise<LaneRow[]> {
+  const result = await db.prepare("SELECT * FROM lanes WHERE origin_repo_slug = ? AND origin_lane_id = ?").bind(originRepoSlug, originLaneId).all<LaneRow>();
+  return result.results;
+}
+
 // Lanes rank below their own repo's visibility, exactly like repos
 // themselves (see VISIBILITY_CLAUSE/INGEST_VISIBLE_CLAUSE above) --
 // there's no separate per-Lane visibility concept; a Lane is visible
@@ -423,6 +429,16 @@ export async function deleteRepoRow(db: D1Database, slug: string, artifactsName:
   await db.prepare("DELETE FROM repo_roles WHERE repo_slug = ?").bind(slug).run();
   await db.prepare("DELETE FROM repo_tracking WHERE repo_slug = ?").bind(slug).run();
   await db.prepare("DELETE FROM ladder_index WHERE artifacts_name = ?").bind(artifactsName).run();
+  // A real, pre-existing gap found while verifying #62 live: these two
+  // tables (migration 0018, added after this function was first
+  // written) both carry a real FK back to repos(slug)/lanes(repo_slug,
+  // lane_id) -- deleting the repos row first threw a raw, unhandled
+  // SQLITE_CONSTRAINT_FOREIGNKEY (confirmed live) for any repo with
+  // more than just its origin Lane in the index. lane_principals before
+  // lanes, same FK-respecting order the rest of this function already
+  // follows for repo_roles/repo_tracking.
+  await db.prepare("DELETE FROM lane_principals WHERE repo_slug = ?").bind(slug).run();
+  await db.prepare("DELETE FROM lanes WHERE repo_slug = ?").bind(slug).run();
   await db.prepare("DELETE FROM repos WHERE slug = ?").bind(slug).run();
 }
 
