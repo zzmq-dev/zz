@@ -82,6 +82,19 @@ export async function agentRotateKey(usernameOrId: string): Promise<void> {
   console.log(`Rotated ${agent.username}'s operational key.`);
 }
 
+/**
+ * Fully releases a managed agent to independence -- every current
+ * guardian relinquishes, leaving it ownerless. One-way: there's no
+ * "undo" short of a brand-new guardian_transfer onto an already-
+ * orphaned identity, which needs that new guardian's own consent same
+ * as any other transfer -- this doesn't offer that path itself.
+ */
+export async function agentRelinquish(usernameOrId: string): Promise<void> {
+  usernameOrId = resolveMe(usernameOrId);
+  const { agent } = await apiFetch<{ agent: Agent; document: unknown }>("POST", `/api/agents/${encodeURIComponent(usernameOrId)}/relinquish`);
+  console.log(`Relinquished every guardian of ${agent.username} -- it's now ownerless.`);
+}
+
 export async function agentList(): Promise<void> {
   const { you, created } = await apiFetch<{ you: Agent; created: Agent[] }>("GET", "/api/agents");
   console.log(`${you.username} -- you`);

@@ -23,7 +23,7 @@ import { askPost } from "./commands/ask-post.js";
 import { review } from "./commands/review.js";
 import { login, whoami } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import { agentCreate, agentToken, agentList, agentDelete, agentRotateKey } from "./commands/agent.js";
+import { agentCreate, agentToken, agentList, agentDelete, agentRotateKey, agentRelinquish } from "./commands/agent.js";
 import { laneCreate, laneList, laneAccessGrant, laneCheckout, laneDelete } from "./commands/lane.js";
 import { credentialHelper } from "./commands/credential-helper.js";
 import { laneSubmit } from "./commands/lane-submit.js";
@@ -369,6 +369,13 @@ agentCmd
   .description("rotate an Agent's own custodied did:guardian operational key -- yourself, or one you created. A different credential than a bearer token (zz agent token): this is the real cryptographic identity key, so existing tokens keep working, but anything relying on the OLD key to verify a FUTURE signed operation won't.")
   .action(async (username: string) => {
     await agentRotateKey(username);
+  });
+
+agentCmd
+  .command("relinquish <username>")
+  .description("fully release a managed agent to independence -- every current guardian relinquishes, leaving it ownerless. One-way; needs a fresh guardian_transfer (its own incoming party's consent) to ever get a guardian again.")
+  .action(async (username: string) => {
+    await agentRelinquish(username);
   });
 
 agentCmd

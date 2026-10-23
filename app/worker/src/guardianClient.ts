@@ -192,6 +192,37 @@ export async function rotateGuardianKey(env: GuardianFetchEnv & { GUARDIAN_OIDC_
   }
 }
 
+/**
+ * Full self-abdication -- every current guardian of `name` relinquishes,
+ * leaving it ownerless. Same shape as rotateGuardianKey (a trusted-client
+ * credential, the registrar signs with whichever current guardians it
+ * itself custodies), same caller-side precondition: this expects the
+ * caller to have already verified it's currently allowed to do this
+ * (requireTokenMintAuthority's own live guardian check, or equivalent)
+ * before ever reaching here -- this function has no authority logic of
+ * its own, same as rotateGuardianKey.
+ */
+export async function relinquishGuardian(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string): Promise<RotateGuardianKeyResult> {
+  if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) {
+    return { ok: false, message: "zz's own registrar client credential isn't configured" };
+  }
+  try {
+    const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
+    const resp = await guardianFetch(env, `/.well-known/guardian/${name}/relinquish`, {
+      method: "POST",
+      headers: { authorization: `Basic ${basic}` },
+    });
+    if (!resp.ok) {
+      const body = (await resp.json().catch(() => null)) as { error?: string } | null;
+      return { ok: false, message: body?.error ?? `relinquish failed (${resp.status})` };
+    }
+    const body = (await resp.json()) as { document: unknown };
+    return { ok: true, document: body.document };
+  } catch (e) {
+    return { ok: false, message: `couldn't reach the registrar: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
 export async function setGuardianContactEmail(env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string }, name: string, forwardTo: string): Promise<void> {
   if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) return;
   try {

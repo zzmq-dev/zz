@@ -20,7 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, relinquishGuardian, GUARDIAN_NAME_RE } from "./guardianClient.js";
 import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
@@ -1009,6 +1009,33 @@ class ApiError extends Error {
 // --- Auth ---
 
 /** Session cookie (browser) OR bearer token (CLI, bots, git -- see resolveGitAuthPrincipal) -- same identity model either way, just two ways to present a credential for the same kind of entity. */
+/**
+ * EXPERIMENTAL -- live-reverifies a managed agent's guardian on every
+ * single authenticated bearer-token request, not just at token-mint
+ * time (requireTokenMintAuthority). Closes the real gap discussed
+ * alongside that fix: a token minted under an old guardian
+ * relationship used to keep working on every ordinary call forever,
+ * even after that relationship was transferred or relinquished
+ * directly through did:guardian (zz never got told). Cheap in theory
+ * -- zzmq.dev's own registrar call goes over a service binding
+ * (guardianOidc.ts's own guardianFetch), not a public fetch, backed
+ * by two small D1 reads -- but this is a live test of that theory
+ * under real request volume, not yet a settled design: in particular
+ * it fails CLOSED (rejects the request) if the registrar call itself
+ * fails for any reason, including its own transient unavailability,
+ * which trades availability for the stronger guarantee. Scoped to
+ * managed agents only (created_by set) -- a login account (a human,
+ * created_by null) has no "guardian of the account that created it"
+ * relationship to even check here.
+ */
+async function wardGuardianStillValid(env: WebEnv, agent: Agent): Promise<boolean> {
+  if (!agent.created_by) return true;
+  const parsed = splitGuardianDid(agent.username);
+  if (!parsed) return true;
+  const guardians = await currentGuardians(env, parsed.name, parsed.domain);
+  return !!guardians?.includes(agent.created_by);
+}
+
 async function resolveRequestAgent(request: Request, env: WebEnv): Promise<Agent | null> {
   const sessionId = readSessionCookie(request);
   if (sessionId) {
@@ -1020,7 +1047,9 @@ async function resolveRequestAgent(request: Request, env: WebEnv): Promise<Agent
     const token = await findActiveAgentToken(env.DB, hashAgentToken(bearer));
     if (token) {
       await touchAgentToken(env.DB, token.id);
-      return getAgent(env.DB, token.agent_username);
+      const agent = await getAgent(env.DB, token.agent_username);
+      if (agent && !(await wardGuardianStillValid(env, agent))) return null;
+      return agent;
     }
   }
   return null;
@@ -1596,6 +1625,23 @@ async function doRotateKey(env: WebEnv, actor: Agent, targetUsername: string): P
   const name = ownGuardianName(target.username);
   if (!name) throw new ApiError(400, `"${target.username}" isn't a zzmq.dev-registered identity -- its key rotation (if any) is its own registrar's concern`);
   const result = await rotateGuardianKey(env, name);
+  if (!result.ok) throw new ApiError(502, result.message);
+  return { agent: target, document: result.document };
+}
+
+/**
+ * Fully releases a managed agent to independence -- every current
+ * guardian relinquishes, leaving it ownerless (same operation the CLI's
+ * own "delegated Lane promoted to its own independent one" help text
+ * already refers to, now with a real mechanism behind it). Same
+ * requireTokenMintAuthority bar as rotating its key or minting it a new
+ * token -- you must currently be one of its guardians, checked live.
+ */
+async function doRelinquishGuardian(env: WebEnv, actor: Agent, targetUsername: string): Promise<{ agent: Agent; document: unknown }> {
+  const target = await requireTokenMintAuthority(env, actor, targetUsername);
+  const name = ownGuardianName(target.username);
+  if (!name) throw new ApiError(400, `"${target.username}" isn't a zzmq.dev-registered identity -- its guardians (if any) are its own registrar's concern`);
+  const result = await relinquishGuardian(env, name);
   if (!result.ok) throw new ApiError(502, result.message);
   return { agent: target, document: result.document };
 }
@@ -3153,6 +3199,15 @@ async function handleApiRotateKey(username: string, request: Request, env: WebEn
   return withApi(async () => {
     const me = await requireApiAgent(request, env);
     const { agent, document } = await doRotateKey(env, me, username);
+    return json({ agent, document });
+  });
+}
+
+/** `zz agent relinquish <username>` -- see doRelinquishGuardian. */
+async function handleApiRelinquishGuardian(username: string, request: Request, env: WebEnv): Promise<Response> {
+  return withApi(async () => {
+    const me = await requireApiAgent(request, env);
+    const { agent, document } = await doRelinquishGuardian(env, me, username);
     return json({ agent, document });
   });
 }
@@ -4841,6 +4896,10 @@ export async function handleWebRequest(request: Request, env: WebEnv): Promise<R
   {
     const m = path.match(/^\/api\/agents\/([^/]+)\/rotate-key$/);
     if (m && request.method === "POST") return handleApiRotateKey(m[1], request, env);
+  }
+  {
+    const m = path.match(/^\/api\/agents\/([^/]+)\/relinquish$/);
+    if (m && request.method === "POST") return handleApiRelinquishGuardian(m[1], request, env);
   }
   {
     const m = path.match(/^\/api\/agents\/([^/]+)$/);
