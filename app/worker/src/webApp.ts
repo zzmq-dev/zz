@@ -1546,11 +1546,27 @@ async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | 
   return { agent, token };
 }
 
-/** Minting a token for an agent is allowed for the agent itself (re-authenticating with an existing token/session) or whoever created it -- a practical bootstrap allowance (a brand-new agent has no credential yet, so someone has to issue its first one), not a general override. */
+/**
+ * Minting a token for an agent is allowed for the agent itself (re-
+ * authenticating with an existing token/session) or a CURRENT
+ * guardian of it -- checked live against its own DID document, same
+ * mechanism `zz work --as` already uses (doResolveManagedIdentity),
+ * never zz's own `created_by` column. That column is provenance for
+ * display only (this file's own opening comment says so), not an
+ * authority relationship -- a `created_by`-based check here would
+ * silently keep working for the original creator even after
+ * guardianship of this ward was transferred or relinquished entirely
+ * through did:guardian directly, since nothing would ever re-check it
+ * again. One source of truth for "can you act as this ward" instead
+ * of two that can drift apart.
+ */
 async function requireTokenMintAuthority(env: WebEnv, actor: Agent, targetUsername: string): Promise<Agent> {
   const target = await getAgent(env.DB, targetUsername);
   if (!target) throw new ApiError(404, "no such agent");
-  if (target.username !== actor.username && target.created_by !== actor.username) throw new ApiError(403, "you can only mint tokens for yourself or an agent you created");
+  if (target.username === actor.username) return target;
+  const parsed = splitGuardianDid(target.username);
+  const guardians = parsed ? await currentGuardians(env, parsed.name, parsed.domain) : null;
+  if (!guardians?.includes(actor.username)) throw new ApiError(403, "you can only mint tokens for yourself or a ward you're currently a guardian of");
   return target;
 }
 
