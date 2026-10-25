@@ -137,23 +137,45 @@ export interface GuardianIdentity {
  * not exposed as a convenience field on the DID Document itself (method-
  * internal state, per the spec), but derivable from data that's already
  * fully public regardless: the operation log (GET .../log), which already
- * carries every guardian_transfer's own incoming/outgoing DIDs in plain
- * content. This is a plain reducer over that log, not a new disclosure --
- * no cryptographic verification needed for this read-only check, the same
- * trust zz already extends to its own registrar calls elsewhere. Needed for
- * `zz work --as`'s own live guardian check (spec §4.8: a live reference,
- * never a cached snapshot).
+ * carries every guardian-affecting op's own content in plain. This is a
+ * plain reducer over that log, not a new disclosure -- no cryptographic
+ * verification needed for this read-only check, the same trust zz already
+ * extends to its own registrar calls elsewhere. Needed for `zz work --as`'s
+ * own live guardian check (formal spec REQ-4-2: a live reference, never a
+ * cached snapshot).
+ *
+ * did:guardian v0.2 replaced the single `guardian_transfer` op with
+ * `guardian_add`/`guardian_remove`, and genesis
+ * now always starts guardian-less -- a brand-new managed identity's own log
+ * is `custodial_create` (incoming always []) immediately followed by a
+ * `guardian_add` naming its real guardian, not a single op carrying it
+ * directly the way it used to. `guardian_transfer` is still handled, for
+ * any already-accepted history predating that change, never produced by a
+ * registrar for a new registration going forward.
+ *
+ * Known limitation, shared with this function's own pre-v0.2 shape: a
+ * nullified branch (REQ-6-8 through REQ-6-11) is not detected here -- a
+ * plain linear scan, not the chain-reconstruction-aware replay
+ * @did-guardian/lib's own document.ts does. A guardian_add/guardian_remove
+ * that happened to fall on a branch a later recovery rotation superseded
+ * would be counted here when it shouldn't be. Rare (nullification is an
+ * infrequent guardian-initiated recovery path, not ordinary operation), and
+ * not introduced by this fix -- worth revisiting if/when zz depends on
+ * @did-guardian/lib directly rather than re-deriving this independently.
  */
 export async function currentGuardians(env: GuardianFetchEnv, name: string | null, domain: string): Promise<string[] | null> {
   try {
     const path = `/.well-known/guardian/${name ?? "_"}/log`;
     const resp = await guardianFetch(env, `https://${domain}${path}`);
     if (!resp.ok) return null;
-    const log = (await resp.json()) as { op: { type: string; incoming?: string[] } }[];
+    const log = (await resp.json()) as { op: { type: string; incoming?: string | string[]; outgoing?: string } }[];
     let guardians: string[] = [];
     for (const entry of log) {
-      if (entry.op.type === "custodial_create" || entry.op.type === "guardian_transfer") guardians = entry.op.incoming ?? [];
-      else if (entry.op.type === "guardian_relinquish") guardians = [];
+      const op = entry.op;
+      if (op.type === "custodial_create" || op.type === "guardian_transfer") guardians = (op.incoming as string[] | undefined) ?? [];
+      else if (op.type === "guardian_add" && op.incoming) guardians = [...guardians, op.incoming as string];
+      else if (op.type === "guardian_remove" && op.outgoing) guardians = guardians.filter((d) => d !== op.outgoing);
+      else if (op.type === "guardian_relinquish") guardians = [];
     }
     return guardians;
   } catch {

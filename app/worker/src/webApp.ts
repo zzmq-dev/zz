@@ -20,7 +20,7 @@
 // vars) need updating alongside a Dashboard change.
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
-import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, relinquishGuardian, GUARDIAN_NAME_RE } from "./guardianClient.js";
+import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, relinquishGuardian, isValidGuardianName } from "./guardianClient.js";
 import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
@@ -1430,7 +1430,7 @@ async function handleGuardianNameFormPost(request: Request, env: WebEnv): Promis
   const cliNonce = new URL(request.url).searchParams.get("cli_nonce") ?? "";
   const form = await request.formData();
   const name = String(form.get("name") ?? "").trim().toLowerCase();
-  if (!GUARDIAN_NAME_RE.test(name)) {
+  if (!isValidGuardianName(name)) {
     return guardianNameForm(name || "alice", "That name must be 3-32 lowercase letters, digits, or hyphens, starting and ending with a letter or digit.", cliNonce);
   }
 

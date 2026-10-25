@@ -55,8 +55,19 @@ export async function registerGuardianName(env: GuardianFetchEnv, name: string):
   }
 }
 
-/** Client-side pre-check mirroring the registrar's own name ABNF (packages/server/src/registrar.ts's NAME_RE) -- UX sugar only, the registrar stays authoritative. */
-export const GUARDIAN_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
+/**
+ * Client-side pre-check mirroring the formal spec's own name syntax
+ * (REQ-2-1, @did-guardian/lib's isValidName) -- UX sugar only, the
+ * registrar stays authoritative. A single regex can't cleanly express
+ * "3-32 chars, no double hyphen" at once (the no-double-hyphen pattern has
+ * variable-width repetitions, so repetition count alone doesn't bound
+ * total length) -- same reason the registrar's own isValidName checks
+ * length and shape separately rather than folding both into one pattern.
+ */
+const GUARDIAN_NAME_SHAPE_RE = /^[a-z0-9](?:-?[a-z0-9])*$/;
+export function isValidGuardianName(name: string): boolean {
+  return name.length >= 3 && name.length <= 32 && GUARDIAN_NAME_SHAPE_RE.test(name);
+}
 
 export type RegisterManagedResult = { ok: true; did: string; name: string; login_secret: string } | { ok: false; message: string };
 
@@ -90,7 +101,7 @@ export async function registerManagedGuardianIdentity(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 32);
-  const base = slugified && GUARDIAN_NAME_RE.test(slugified) ? slugified : `agent-${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+  const base = slugified && isValidGuardianName(slugified) ? slugified : `agent-${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
   let candidate = base;
   for (let attempt = 0, n = 2; attempt < 20; attempt++) {
     try {
