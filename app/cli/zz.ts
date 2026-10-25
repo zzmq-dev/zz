@@ -373,7 +373,7 @@ agentCmd
 
 agentCmd
   .command("relinquish <username>")
-  .description("fully release a managed agent to independence -- every current guardian relinquishes, leaving it ownerless. One-way; needs a fresh guardian_transfer (its own incoming party's consent) to ever get a guardian again.")
+  .description("fully release a managed agent to independence -- every current guardian relinquishes, leaving it ownerless. One-way; needs a fresh guardian_add (its own incoming party's consent) to ever get a guardian again.")
   .action(async (username: string) => {
     await agentRelinquish(username);
   });

@@ -85,9 +85,10 @@ export async function agentRotateKey(usernameOrId: string): Promise<void> {
 /**
  * Fully releases a managed agent to independence -- every current
  * guardian relinquishes, leaving it ownerless. One-way: there's no
- * "undo" short of a brand-new guardian_transfer onto an already-
- * orphaned identity, which needs that new guardian's own consent same
- * as any other transfer -- this doesn't offer that path itself.
+ * "undo" short of a brand-new guardian_add onto an already-orphaned
+ * identity, which needs that new guardian's own consent (plus the
+ * ward's own operational key, since the guardian set is empty --
+ * REQ-7.2-5) -- this doesn't offer that path itself.
  */
 export async function agentRelinquish(usernameOrId: string): Promise<void> {
   usernameOrId = resolveMe(usernameOrId);
