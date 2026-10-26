@@ -4,8 +4,11 @@
 // configuration, not hardcoded to zzmq.dev -- a relying party asks for
 // a name@domain identifier, discovers that domain's own endpoints, and
 // proceeds with an ordinary OIDC authorization-code flow against them.
-// zz is a confidential client (holds a client_secret) wherever it has
-// one, so this never needs PKCE.
+//
+// PKCE is mandatory on the registrar side (OAuth 2.1 baseline, required
+// of every client -- confidential ones too, not just public ones), so
+// this always generates and sends a code_challenge/code_verifier pair,
+// regardless of zz holding a client_secret for the domain in question.
 //
 // zz only holds a pre-registered client credential for an explicit,
 // small set of domains (see credentialFor below) -- federating to any
@@ -100,7 +103,22 @@ export function credentialFor(env: GuardianCredentialEnv, domain: string): Guard
   return null;
 }
 
-export type GuardianAuthorizeResult = { ok: true; url: string } | { ok: false; reason: string };
+export type GuardianAuthorizeResult = { ok: true; url: string; codeVerifier: string } | { ok: false; reason: string };
+
+function b64url(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** PKCE S256: a random code_verifier, and code_challenge = base64url(sha256(code_verifier)). The verifier has to survive the redirect round-trip -- the caller stores it (zz does this the same way it already stores `state`: an HttpOnly cookie set alongside the redirect, read back in the callback) and passes it to exchangeGuardianCode. */
+async function generatePkcePair(): Promise<{ codeVerifier: string; codeChallenge: string }> {
+  const verifierBytes = new Uint8Array(32);
+  crypto.getRandomValues(verifierBytes);
+  const codeVerifier = b64url(verifierBytes);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+  return { codeVerifier, codeChallenge: b64url(new Uint8Array(digest)) };
+}
 
 export async function buildGuardianAuthorizeUrl(
   env: GuardianCredentialEnv & GuardianFetchEnv,
@@ -113,19 +131,22 @@ export async function buildGuardianAuthorizeUrl(
   if (!credential) return { ok: false, reason: `zz isn't a registered sign-in client for "${domain}" yet -- its operator would need to add zz as one first.` };
   const discovery = await discover(env, domain);
   if (!discovery) return { ok: false, reason: `couldn't reach a did:guardian registrar at "${domain}".` };
+  const { codeVerifier, codeChallenge } = await generatePkcePair();
   const url = new URL(discovery.authorization_endpoint);
   url.searchParams.set("client_id", credential.clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "openid");
   url.searchParams.set("state", state);
+  url.searchParams.set("code_challenge", codeChallenge);
+  url.searchParams.set("code_challenge_method", "S256");
   // Standard OIDC authentication request parameter -- we already parsed
   // "name@domain" on our own login page, so pass just the name along
   // rather than making the registrar's own login form ask the person
   // to type the same thing again in a different shape (confirmed live
   // this was a real point of confusion).
   if (loginHint) url.searchParams.set("login_hint", loginHint);
-  return { ok: true, url: url.toString() };
+  return { ok: true, url: url.toString(), codeVerifier };
 }
 
 export interface GuardianIdentity {
@@ -183,7 +204,13 @@ export async function currentGuardians(env: GuardianFetchEnv, name: string | nul
   }
 }
 
-export async function exchangeGuardianCode(env: GuardianCredentialEnv & GuardianFetchEnv, domain: string, code: string, redirectUri: string): Promise<GuardianIdentity | null> {
+export async function exchangeGuardianCode(
+  env: GuardianCredentialEnv & GuardianFetchEnv,
+  domain: string,
+  code: string,
+  redirectUri: string,
+  codeVerifier: string,
+): Promise<GuardianIdentity | null> {
   const credential = credentialFor(env, domain);
   if (!credential) return null;
   const discovery = await discover(env, domain);
@@ -192,7 +219,14 @@ export async function exchangeGuardianCode(env: GuardianCredentialEnv & Guardian
   const tokenResp = await guardianFetch(env, discovery.token_endpoint, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", authorization: `Basic ${basic}` },
-    body: new URLSearchParams({ grant_type: "authorization_code", code, redirect_uri: redirectUri, client_id: credential.clientId, client_secret: credential.clientSecret }),
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: credential.clientId,
+      client_secret: credential.clientSecret,
+      code_verifier: codeVerifier,
+    }),
   });
   if (!tokenResp.ok) return null;
   const tokenJson = (await tokenResp.json()) as { access_token?: string };

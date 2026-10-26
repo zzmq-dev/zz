@@ -1358,6 +1358,9 @@ async function handleGuardianStart(request: Request, env: WebEnv): Promise<Respo
   const cookies = [
     `zz_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
     `zz_guardian_domain=${encodeURIComponent(parsed.domain)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
+    // PKCE is mandatory on the registrar side now -- the code_verifier has
+    // to survive the redirect round-trip the same way `state` already does.
+    `zz_oauth_verifier=${result.codeVerifier}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`,
   ];
   if (cliNonce) cookies.push(`zz_cli_nonce=${cliNonce}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=600`);
   return redirect(result.url, { cookies });
@@ -1371,12 +1374,13 @@ async function handleGuardianAuthCallback(request: Request, env: WebEnv): Promis
   const cookieState = cookieHeader.match(/zz_oauth_state=([^;]+)/)?.[1];
   const domain = cookieHeader.match(/zz_guardian_domain=([^;]+)/)?.[1];
   const cliNonce = cookieHeader.match(/zz_cli_nonce=([^;]+)/)?.[1];
-  if (!code || !state || !domain || state !== cookieState) {
+  const codeVerifier = cookieHeader.match(/zz_oauth_verifier=([^;]+)/)?.[1];
+  if (!code || !state || !domain || state !== cookieState || !codeVerifier) {
     return new Response("Sign-in state mismatch or missing code -- please try again.", { status: 400 });
   }
 
   const redirectUri = `${url.origin}/auth/callback/didguardian`;
-  const identity = await exchangeGuardianCode(env, decodeURIComponent(domain), code, redirectUri);
+  const identity = await exchangeGuardianCode(env, decodeURIComponent(domain), code, redirectUri, codeVerifier);
   if (!identity) {
     return notFoundInterstitial(`Couldn't verify that Guardian ID against ${decodeURIComponent(domain)}.`, cliNonce, readPendingLink(request) !== null);
   }
