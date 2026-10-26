@@ -21,7 +21,7 @@
 import { zipSync } from "fflate";
 import { createInitialCommit } from "./cloudflareGitBackend.js";
 import { registerGuardianName, setGuardianContactEmail, registerManagedGuardianIdentity, reissueGuardianLoginSecret, rotateGuardianKey, relinquishGuardian, isValidGuardianName } from "./guardianClient.js";
-import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians } from "./guardianOidc.js";
+import { parseGuardianIdentifier, buildGuardianAuthorizeUrl, exchangeGuardianCode, currentGuardians, refreshGuardianAccessToken } from "./guardianOidc.js";
 import type { MaintainerDO } from "./MaintainerDO.js";
 // Artifacts/ArtifactsRepo are ambient globals from @cloudflare/workers-types
 // (no import needed/possible -- see cloudflareGitBackend.ts's header for
@@ -1386,6 +1386,28 @@ async function handleGuardianAuthCallback(request: Request, env: WebEnv): Promis
   }
 
   const agent = await resolveOrCreateAgentForDid(env, identity.did);
+
+  // Persist the access/refresh token this login just earned -- previously
+  // discarded the moment the /userinfo call finished. Needed now that
+  // Guardian logins request create:managed-identity alongside openid
+  // (guardianOidc.ts's own buildGuardianAuthorizeUrl): doRegisterManagedIdentity
+  // mints a fresh access token from this stored refresh token later, rather
+  // than redirecting through a fresh interactive /authorize every time --
+  // necessary for a CLI-driven action with no browser in the loop. Same
+  // provider/token-storage pattern (agent_identities, createAgentIdentity/
+  // updateIdentityTokens) every other OAuth login here already uses --
+  // provider_subject is identity.did, which for a Guardian agent is also
+  // its own agent.username, so this is a lookup by the agent's own DID.
+  const accessTokenEnc = await encryptSecret(env, identity.accessToken);
+  const refreshTokenEnc = identity.refreshToken ? await encryptSecret(env, identity.refreshToken) : null;
+  const expiresAt = identity.expiresInSeconds ? new Date(Date.now() + identity.expiresInSeconds * 1000).toISOString() : null;
+  const existingGuardianIdentity = await findAgentIdentity(env.DB, "didguardian", identity.did);
+  if (existingGuardianIdentity) {
+    await updateIdentityTokens(env.DB, existingGuardianIdentity.id, { accessTokenEnc, refreshTokenEnc, expiresAt });
+  } else {
+    await createAgentIdentity(env.DB, agent.username, "didguardian", identity.did, { accessTokenEnc, refreshTokenEnc, expiresAt });
+  }
+
   const pendingLink = readPendingLink(request);
   if (pendingLink) {
     await bindProviderIdentity(env, agent, pendingLink);
@@ -1662,8 +1684,36 @@ async function doRelinquishGuardian(env: WebEnv, actor: Agent, targetUsername: s
  * names later" convention stays intact regardless of what name the
  * registrar actually negotiated.
  */
+/**
+ * Mints a fresh access token carrying create:managed-identity, from the
+ * actor's own stored Guardian refresh token (earned the last time they
+ * logged in via did:guardian -- guardianOidc.ts's own buildGuardianAuthorizeUrl
+ * requests this scope on every Guardian login now, not a separate
+ * "connect" step). No stored token at all means this actor has never
+ * logged in via Guardian since that scope was added -- a real, honest
+ * failure, not something to silently fall back past. Refresh tokens
+ * rotate on use (registrar API spec §5.4): the new one is persisted
+ * immediately, or the next refresh would fail with reuse-detection.
+ */
+async function getManagedIdentityAccessToken(env: WebEnv, actorUsername: string): Promise<{ ok: true; accessToken: string } | { ok: false; message: string }> {
+  const stored = await findAgentIdentity(env.DB, "didguardian", actorUsername);
+  if (!stored || !stored.refresh_token_enc) {
+    return { ok: false, message: "sign in with did:guardian again to enable managed identity creation (needed once, to grant the create:managed-identity scope)" };
+  }
+  const refreshToken = await decryptSecret(env, stored.refresh_token_enc);
+  const refreshed = await refreshGuardianAccessToken(env, "zzmq.dev", refreshToken);
+  if (!refreshed.ok) {
+    return { ok: false, message: `couldn't refresh your Guardian access token (${refreshed.reason}) -- sign in with did:guardian again` };
+  }
+  const refreshTokenEnc = refreshed.refreshToken ? await encryptSecret(env, refreshed.refreshToken) : null;
+  await updateIdentityTokens(env.DB, stored.id, { accessTokenEnc: await encryptSecret(env, refreshed.accessToken), refreshTokenEnc, expiresAt: null });
+  return { ok: true, accessToken: refreshed.accessToken };
+}
+
 async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: string | undefined, displayName = ""): Promise<{ agent: Agent; token: string; did: string }> {
-  const result = await registerManagedGuardianIdentity(env, actor.username, seedName);
+  const tokenResult = await getManagedIdentityAccessToken(env, actor.username);
+  if (!tokenResult.ok) throw new ApiError(403, tokenResult.message);
+  const result = await registerManagedGuardianIdentity(env, tokenResult.accessToken, seedName);
   if (!result.ok) throw new ApiError(502, result.message);
   const agent = await createAgent(env.DB, result.did, displayName, null, actor.username);
   const token = generateAgentToken();

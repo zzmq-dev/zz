@@ -72,25 +72,23 @@ export function isValidGuardianName(name: string): boolean {
 export type RegisterManagedResult = { ok: true; did: string; name: string; login_secret: string } | { ok: false; message: string };
 
 /**
- * `zz work --register`: a brand-new managed identity, the caller's own
- * guardian_did as its real, signed guardian from day one (the atomic
- * registrar capability, authenticated the same way as setGuardianContactEmail
- * above). `seedName` is a proposed name, negotiated for uniqueness here
- * (auto-suffixed on a 409, same pattern as accountsDb.ts's own
+ * `zz work --register`: a brand-new managed identity, with the acting
+ * human as its real, signed guardian from day one. Authenticated with a
+ * real access token (Bearer), not zz's own static client credential plus
+ * a free-text guardian_did -- the registrar derives the guardian from
+ * that token's own `sub`, never from a field a client supplies (registrar
+ * API spec §9's own Managed Identity API; a real consent gap existed here
+ * before this -- see that section's own history). The caller is
+ * responsible for obtaining a token carrying the `create:managed-identity`
+ * scope (see webApp.ts's own doRegisterManagedIdentity, which mints one
+ * from the agent's stored Guardian refresh token) before calling this. `seedName` is a proposed name, negotiated for uniqueness
+ * here (auto-suffixed on a 409, same pattern as accountsDb.ts's own
  * uniqueUsername) rather than failing outright on the first collision --
  * omitted, a random candidate is generated the same way. Bounded to 20
  * attempts; a 409 storm that long is not a real-world case this needs to
  * handle gracefully, just not hang forever on.
  */
-export async function registerManagedGuardianIdentity(
-  env: GuardianFetchEnv & { GUARDIAN_OIDC_CLIENT_ID?: string; GUARDIAN_OIDC_CLIENT_SECRET?: string },
-  guardianDid: string,
-  seedName?: string,
-): Promise<RegisterManagedResult> {
-  if (!env.GUARDIAN_OIDC_CLIENT_ID || !env.GUARDIAN_OIDC_CLIENT_SECRET) {
-    return { ok: false, message: "zz's own registrar client credential isn't configured" };
-  }
-  const basic = btoa(`${env.GUARDIAN_OIDC_CLIENT_ID}:${env.GUARDIAN_OIDC_CLIENT_SECRET}`);
+export async function registerManagedGuardianIdentity(env: GuardianFetchEnv, accessToken: string, seedName?: string): Promise<RegisterManagedResult> {
   // Slugify a given seed rather than discarding it outright the moment it
   // isn't already did:guardian-name-shaped (spaces, capitals, punctuation
   // are all a normal thing to type as a display name) -- "Claude Code"
@@ -107,8 +105,8 @@ export async function registerManagedGuardianIdentity(
     try {
       const resp = await guardianFetch(env, "/register", {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Basic ${basic}` },
-        body: JSON.stringify({ name: candidate, guardian_did: guardianDid }),
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ name: candidate }),
       });
       if (resp.status === 409) {
         candidate = `${base}-${n}`;

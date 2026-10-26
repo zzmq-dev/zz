@@ -11,14 +11,15 @@
 // regardless of zz holding a client_secret for the domain in question.
 //
 // zz only holds a pre-registered client credential for an explicit,
-// small set of domains (see credentialFor below) -- federating to any
-// OTHER registrar requires that operator to have manually pre-
-// registered zz as an OIDC client there first (did:guardian's own OIDC
-// layer has no dynamic/self-service client registration, a deliberate
-// v1 decision, not an oversight). Attempting login against a domain zz
-// holds no credential for fails with a clear, zz-rendered message
-// before any redirect -- never bouncing the user into a foreign
-// domain's own raw OIDC error page.
+// small set of domains (see credentialFor below) -- did:guardian does
+// now support self-service dynamic client registration, but zz's own
+// credential for zzmq.dev/guardianspec.org is still a fixed, long-lived
+// one rather than re-registered per deployment. Federating to any
+// OTHER registrar still requires that operator to have added zz as a
+// client there first (or zz registering itself dynamically, not done
+// today). Attempting login against a domain zz holds no credential for
+// fails with a clear, zz-rendered message before any redirect -- never
+// bouncing the user into a foreign domain's own raw OIDC error page.
 
 export interface GuardianIdentifier {
   name: string | null; // null for a bare-domain identity ("@acme.com")
@@ -136,7 +137,16 @@ export async function buildGuardianAuthorizeUrl(
   url.searchParams.set("client_id", credential.clientId);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", "openid");
+  // create:managed-identity alongside the ordinary openid login scope --
+  // requested on every Guardian login, not a separate "connect" step,
+  // so the one real consent moment (the registrar's own /authorize
+  // screen, which names this scope plainly) covers both "sign in" and
+  // "let zz create managed identities with you as their guardian" at
+  // once. The refresh token this earns (exchangeGuardianCode, persisted
+  // in handleGuardianAuthCallback) is what lets zz use this capability
+  // later without a fresh interactive round-trip every time --
+  // necessary for a CLI-driven action with no browser in the loop.
+  url.searchParams.set("scope", "openid create:managed-identity");
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
@@ -151,6 +161,9 @@ export async function buildGuardianAuthorizeUrl(
 
 export interface GuardianIdentity {
   did: string; // the verified sub claim -- the full did:guardian:... string
+  accessToken: string;
+  refreshToken: string | null;
+  expiresInSeconds: number | null;
 }
 
 /**
@@ -229,11 +242,52 @@ export async function exchangeGuardianCode(
     }),
   });
   if (!tokenResp.ok) return null;
-  const tokenJson = (await tokenResp.json()) as { access_token?: string };
+  const tokenJson = (await tokenResp.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
   if (!tokenJson.access_token) return null;
   const userResp = await guardianFetch(env, discovery.userinfo_endpoint, { headers: { authorization: `Bearer ${tokenJson.access_token}` } });
   if (!userResp.ok) return null;
   const userJson = (await userResp.json()) as { sub?: string };
   if (!userJson.sub) return null;
-  return { did: userJson.sub };
+  return {
+    did: userJson.sub,
+    accessToken: tokenJson.access_token,
+    refreshToken: tokenJson.refresh_token ?? null,
+    expiresInSeconds: typeof tokenJson.expires_in === "number" ? tokenJson.expires_in : null,
+  };
+}
+
+export type RefreshAccessTokenResult = { ok: true; accessToken: string; refreshToken: string | null } | { ok: false; reason: string };
+
+/**
+ * Mints a fresh access token from a stored refresh token -- what lets the
+ * managed-identity-creation flow (doRegisterManagedIdentity) use the
+ * create:managed-identity scope a prior interactive Guardian login
+ * already earned, without redirecting through a fresh /authorize round
+ * trip every time (which a CLI-driven action has no browser to do
+ * anyway). Refresh tokens rotate on use (registrar API spec §5.4) --
+ * the caller must persist the new one returned here, or the next refresh
+ * will fail with reuse-detection once this one is spent.
+ */
+export async function refreshGuardianAccessToken(
+  env: GuardianCredentialEnv & GuardianFetchEnv,
+  domain: string,
+  refreshToken: string,
+): Promise<RefreshAccessTokenResult> {
+  const credential = credentialFor(env, domain);
+  if (!credential) return { ok: false, reason: `zz isn't a registered sign-in client for "${domain}".` };
+  const discovery = await discover(env, domain);
+  if (!discovery) return { ok: false, reason: `couldn't reach a did:guardian registrar at "${domain}".` };
+  const basic = btoa(`${credential.clientId}:${credential.clientSecret}`);
+  const tokenResp = await guardianFetch(env, discovery.token_endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", authorization: `Basic ${basic}` },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: credential.clientId, client_secret: credential.clientSecret }),
+  });
+  if (!tokenResp.ok) {
+    const body = (await tokenResp.json().catch(() => null)) as { error?: string } | null;
+    return { ok: false, reason: body?.error ?? `refresh failed (${tokenResp.status})` };
+  }
+  const tokenJson = (await tokenResp.json()) as { access_token?: string; refresh_token?: string };
+  if (!tokenJson.access_token) return { ok: false, reason: "refresh response had no access_token" };
+  return { ok: true, accessToken: tokenJson.access_token, refreshToken: tokenJson.refresh_token ?? null };
 }
