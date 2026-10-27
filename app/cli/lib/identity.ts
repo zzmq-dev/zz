@@ -112,18 +112,20 @@ export async function releaseIdentity(identity: ResolvedIdentity | null): Promis
  * for each one. #26: a bare name is no longer "a managed agent chained
  * off whoever's running the command" -- did:guardian names are scoped
  * per *registrar*, not per creator, so "alice" always means
- * did:guardian:alice:zzmq.dev, regardless of who's asking. A pure,
+ * did:guardian:zzmq.dev:alice, regardless of who's asking. A pure,
  * offline string construction (same shape `parseGuardianIdentifier`
  * builds server-side) -- no guardian/permission check here, this is
  * only naming who's on a committee, not authorizing anything by itself.
  * A value that's already a full "did:guardian:..." string passes
- * through unchanged.
+ * through unchanged. Domain-first (did:guardian:<domain>:<name>),
+ * matching did:guardian's own current convention -- the "name@domain"
+ * shorthand input stays name-first, a separate, deliberate convention.
  */
 export function expandAgentId(raw: string): string {
   if (raw.startsWith("did:guardian:")) return raw;
   const at = raw.indexOf("@");
-  if (at === -1) return `did:guardian:${raw}:zzmq.dev`;
+  if (at === -1) return `did:guardian:zzmq.dev:${raw}`;
   const name = raw.slice(0, at);
   const domain = raw.slice(at + 1);
-  return name ? `did:guardian:${name}:${domain}` : `did:guardian:${domain}`;
+  return name ? `did:guardian:${domain}:${name}` : `did:guardian:${domain}`;
 }

@@ -1215,12 +1215,12 @@ async function bindProviderIdentity(env: WebEnv, agent: Agent, link: PendingLink
   });
 }
 
-/** A did:guardian identifier's own name/domain, parsed locally just for a reasonable fallback display name on a lazily-created agent -- not the authoritative parse (that's the registrar's own job); good enough for "alice" out of "did:guardian:alice:acme.com", or the bare domain itself for a root identity. */
+/** A did:guardian identifier's own domain/name, parsed locally just for a reasonable fallback display name on a lazily-created agent -- not the authoritative parse (that's the registrar's own job); good enough for "alice" out of "did:guardian:acme.com:alice", or the bare domain itself for a root identity. Domain-first, matching did:guardian's own current (domain-first) convention -- see did-method-guardian's own packages/lib/src/resolve.ts parseDid for the authoritative version of this same parse. */
 function splitGuardianDid(did: string): { name: string | null; domain: string } | null {
   const parts = did.split(":");
   if (parts[0] !== "did" || parts[1] !== "guardian" || parts.length < 3) return null;
   const rest = parts.slice(2);
-  return rest.length === 1 ? { name: null, domain: rest[0] } : { name: rest[0], domain: rest[1] };
+  return rest.length === 1 ? { name: null, domain: rest[0] } : { name: rest[1], domain: rest[0] };
 }
 
 /**
@@ -1237,7 +1237,7 @@ function identifierToDid(raw: string): string {
   if (raw.startsWith("did:guardian:")) return raw;
   const parsed = parseGuardianIdentifier(raw);
   if (!parsed) return raw;
-  return parsed.name ? `did:guardian:${parsed.name}:${parsed.domain}` : `did:guardian:${parsed.domain}`;
+  return parsed.name ? `did:guardian:${parsed.domain}:${parsed.name}` : `did:guardian:${parsed.domain}`;
 }
 
 /** Finds the local agent for a did:guardian identity, or -- for one zz has never seen before (always a foreign, non-zzmq.dev identity in practice, since every zzmq.dev identity is created through /onboard/guardian-name, which always creates its own local row first) -- lazily creates a minimal one. Reuses all of zz's existing agents-table machinery (tokens, Role grants, attribution) unchanged; no separate identity model for a foreign id. */
@@ -1737,7 +1737,7 @@ async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: st
 async function doResolveManagedIdentity(env: WebEnv, actor: Agent, identifier: string): Promise<{ agent: Agent; token: string }> {
   const parsed = parseGuardianIdentifier(identifier.includes("@") ? identifier : `${identifier}@zzmq.dev`);
   if (!parsed) throw new ApiError(400, `"${identifier}" doesn't look like a valid id`);
-  const did = parsed.name ? `did:guardian:${parsed.name}:${parsed.domain}` : `did:guardian:${parsed.domain}`;
+  const did = parsed.name ? `did:guardian:${parsed.domain}:${parsed.name}` : `did:guardian:${parsed.domain}`;
 
   let agent = await getAgent(env.DB, did);
   if (!agent) {
