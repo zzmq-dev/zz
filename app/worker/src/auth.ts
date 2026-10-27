@@ -45,6 +45,12 @@ export interface OAuthEnv {
   // fixed authorizeUrl/tokenUrl the way cloudflare/google/github do here).
   GUARDIAN_OIDC_CLIENT_ID?: string;
   GUARDIAN_OIDC_CLIENT_SECRET?: string;
+  // zz's own self-registered OIDC client credential against guardianspec.org
+  // (RFC 7591, registered once a human whose guardian identity lives there
+  // actually needed to sign into zz) -- see guardianOidc.ts's own
+  // credentialFor for why each federated domain needs its own entry here.
+  GUARDIANSPEC_OIDC_CLIENT_ID?: string;
+  GUARDIANSPEC_OIDC_CLIENT_SECRET?: string;
 }
 
 export type Provider = "cloudflare" | "google" | "github";

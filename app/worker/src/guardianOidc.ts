@@ -90,16 +90,26 @@ export interface GuardianCredential {
 export interface GuardianCredentialEnv {
   GUARDIAN_OIDC_CLIENT_ID?: string;
   GUARDIAN_OIDC_CLIENT_SECRET?: string;
+  GUARDIANSPEC_OIDC_CLIENT_ID?: string;
+  GUARDIANSPEC_OIDC_CLIENT_SECRET?: string;
 }
 
-/** zz's own pre-registered OIDC client credential for a given registrar domain, or null if zz holds none there -- see this file's own header for why that's a clear failure, not a fallback attempt. */
+/**
+ * zz's own pre-registered OIDC client credential for a given registrar
+ * domain, or null if zz holds none there -- see this file's own header for
+ * why that's a clear failure, not a fallback attempt. zzmq.dev is zz's own
+ * instance; guardianspec.org is this project's own second/reference
+ * registrar, self-registered via RFC 7591 (POST /oauth/register-client)
+ * once there was a real need for a human whose guardian identity lives
+ * there to sign into zz -- the second real entry this function's own
+ * header always said to add when one actually existed, not before.
+ */
 export function credentialFor(env: GuardianCredentialEnv, domain: string): GuardianCredential | null {
-  // zzmq.dev is zz's own instance -- the only domain with a credential
-  // today. A second real entry (another operator who has manually
-  // pre-registered zz) is a case to add here when it actually exists,
-  // not a lookup structure to build speculatively ahead of one.
   if (domain === "zzmq.dev" && env.GUARDIAN_OIDC_CLIENT_ID && env.GUARDIAN_OIDC_CLIENT_SECRET) {
     return { clientId: env.GUARDIAN_OIDC_CLIENT_ID, clientSecret: env.GUARDIAN_OIDC_CLIENT_SECRET };
+  }
+  if (domain === "guardianspec.org" && env.GUARDIANSPEC_OIDC_CLIENT_ID && env.GUARDIANSPEC_OIDC_CLIENT_SECRET) {
+    return { clientId: env.GUARDIANSPEC_OIDC_CLIENT_ID, clientSecret: env.GUARDIANSPEC_OIDC_CLIENT_SECRET };
   }
   return null;
 }
