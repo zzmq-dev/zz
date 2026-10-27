@@ -69,7 +69,9 @@ export function isValidGuardianName(name: string): boolean {
   return name.length >= 3 && name.length <= 32 && GUARDIAN_NAME_SHAPE_RE.test(name);
 }
 
-export type RegisterManagedResult = { ok: true; did: string; name: string; login_secret: string } | { ok: false; message: string };
+export type RegisterManagedResult =
+  | { ok: true; did: string; name: string; login_secret: string; pendingGuardianAddId?: string }
+  | { ok: false; message: string };
 
 /**
  * `zz work --register`: a brand-new managed identity, with the acting
@@ -117,8 +119,8 @@ export async function registerManagedGuardianIdentity(env: GuardianFetchEnv, acc
         const body = (await resp.json().catch(() => null)) as { error?: string } | null;
         return { ok: false, message: body?.error ?? `registration failed (${resp.status})` };
       }
-      const body = (await resp.json()) as { did: string; login_secret: string };
-      return { ok: true, did: body.did, name: candidate, login_secret: body.login_secret };
+      const body = (await resp.json()) as { did: string; login_secret: string; pending_guardian_add?: { id: string } };
+      return { ok: true, did: body.did, name: candidate, login_secret: body.login_secret, pendingGuardianAddId: body.pending_guardian_add?.id };
     } catch (e) {
       return { ok: false, message: `couldn't reach the registrar: ${e instanceof Error ? e.message : String(e)}` };
     }

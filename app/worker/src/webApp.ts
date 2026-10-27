@@ -1595,10 +1595,10 @@ async function handleApiLoginPoll(request: Request, env: WebEnv): Promise<Respon
 // "unnamed," gated into choosing its own real name the first time it
 // actually runs (zz work's own bootstrap, agent_set_name), rather
 // than a human being required to supply one up front.
-async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | null | undefined): Promise<{ agent: Agent; token: string }> {
+async function doCreateAgent(env: WebEnv, creator: Agent, displayName: string | null | undefined): Promise<{ agent: Agent; token: string; pendingGuardianAddId?: string }> {
   const trimmed = displayName?.trim() ?? "";
-  const { agent, token } = await doRegisterManagedIdentity(env, creator, trimmed || undefined, trimmed);
-  return { agent, token };
+  const { agent, token, pendingGuardianAddId } = await doRegisterManagedIdentity(env, creator, trimmed || undefined, trimmed);
+  return { agent, token, pendingGuardianAddId };
 }
 
 /**
@@ -1700,8 +1700,15 @@ async function getManagedIdentityAccessToken(env: WebEnv, actorUsername: string)
   if (!stored || !stored.refresh_token_enc) {
     return { ok: false, message: "sign in with did:guardian again to enable managed identity creation (needed once, to grant the create:managed-identity scope)" };
   }
+  // The refresh token was issued by whichever registrar actually hosts
+  // this guardian's own identity -- not necessarily zzmq.dev, now that a
+  // guardian can be signed in from any federated registrar (guardianOidc.ts's
+  // own credentialFor). Derived from provider_subject (the DID itself),
+  // never assumed.
+  const parsed = splitGuardianDid(stored.provider_subject);
+  if (!parsed) return { ok: false, message: `stored identity "${stored.provider_subject}" isn't a valid did:guardian id` };
   const refreshToken = await decryptSecret(env, stored.refresh_token_enc);
-  const refreshed = await refreshGuardianAccessToken(env, "zzmq.dev", refreshToken);
+  const refreshed = await refreshGuardianAccessToken(env, parsed.domain, refreshToken);
   if (!refreshed.ok) {
     return { ok: false, message: `couldn't refresh your Guardian access token (${refreshed.reason}) -- sign in with did:guardian again` };
   }
@@ -1710,7 +1717,21 @@ async function getManagedIdentityAccessToken(env: WebEnv, actorUsername: string)
   return { ok: true, accessToken: refreshed.accessToken };
 }
 
-async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: string | undefined, displayName = ""): Promise<{ agent: Agent; token: string; did: string }> {
+/**
+ * `pendingGuardianAddId` is set when `actor`'s own did:guardian identity
+ * lives on a different registrar than the new agent's -- the registrar
+ * can only produce the new agent's own signature on guardian_add, not
+ * the foreign guardian's, so it's proposed, not finalized (registrar API
+ * spec §9). The agent exists and is usable immediately either way; it's
+ * just guardian-less until `actor` signs that pending operation on their
+ * own registrar's own pending-op page.
+ */
+async function doRegisterManagedIdentity(
+  env: WebEnv,
+  actor: Agent,
+  seedName: string | undefined,
+  displayName = "",
+): Promise<{ agent: Agent; token: string; did: string; pendingGuardianAddId?: string }> {
   const tokenResult = await getManagedIdentityAccessToken(env, actor.username);
   if (!tokenResult.ok) throw new ApiError(403, tokenResult.message);
   const result = await registerManagedGuardianIdentity(env, tokenResult.accessToken, seedName);
@@ -1718,7 +1739,7 @@ async function doRegisterManagedIdentity(env: WebEnv, actor: Agent, seedName: st
   const agent = await createAgent(env.DB, result.did, displayName, null, actor.username);
   const token = generateAgentToken();
   await createAgentToken(env.DB, agent.username, hashAgentToken(token));
-  return { agent, token, did: result.did };
+  return { agent, token, did: result.did, pendingGuardianAddId: result.pendingGuardianAddId };
 }
 
 /**
@@ -3018,14 +3039,21 @@ async function handleTokenAddForm(request: Request, env: WebEnv): Promise<Respon
   const value = String(form.get("agent") ?? "").trim();
   try {
     const existing = await getAgent(env.DB, value);
-    const { agent, token } = existing ? await doMintToken(env, me, existing.username) : await doCreateAgent(env, me, value);
+    const { agent, token, pendingGuardianAddId } = existing
+      ? { ...(await doMintToken(env, me, existing.username)), pendingGuardianAddId: undefined as string | undefined }
+      : await doCreateAgent(env, me, value);
     const zzId = `${agent.username}:${token}`;
+    const parsedAgent = splitGuardianDid(agent.username);
+    const pendingNotice = pendingGuardianAddId
+      ? `<p class="hint">Your own guardian identity lives on a different registrar than ${esc(parsedAgent?.domain ?? "this agent's own")} -- its own key can't be produced here, so establishing you as guardian is still pending your own signature. <a href="https://${esc(parsedAgent?.domain ?? "")}/.well-known/guardian/${esc(parsedAgent?.name ?? "")}/pending/${esc(pendingGuardianAddId)}">View the pending operation</a>.</p>`
+      : "";
     return layout(
       "New token",
       me,
       `<div class="card stack">
          <p>Token for ${formatAgentId(agent.username)} -- copy it now, it won't be shown again:</p>
          <div class="clone-row"><pre>${esc(token)}</pre><button class="secondary icon-btn" data-copy="${esc(token)}" title="Copy">⧉</button></div>
+         ${pendingNotice}
          <p><a href="/${esc(me.username)}">&larr; Back to profile</a></p>
        </div>
        ${card(
